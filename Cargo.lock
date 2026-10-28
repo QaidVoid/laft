@@ -521,6 +521,7 @@ dependencies = [
  "blake3",
  "clap",
  "laft-core",
+ "laft-fetch",
  "laft-index",
  "laft-pkg",
  "laft-resolve",
