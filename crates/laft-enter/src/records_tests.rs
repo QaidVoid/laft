@@ -153,3 +153,32 @@ fn the_current_link_must_name_a_version_beside_it() {
         assert_eq!(version_link(target), None, "{target:?}");
     }
 }
+
+#[test]
+fn a_view_of_twenty_thousand_densely_linked_packages_can_be_entered() {
+    let reasons: Vec<String> = (0..10)
+        .map(|i| {
+            format!(r#"{{"kind": "dependency", "by": "dependent-package-{i}", "dep": "so:libexample-{i}.so.1"}}"#)
+        })
+        .collect();
+    let packages: Vec<String> = (0..20_000)
+        .map(|i| {
+            format!(
+                r#"{{"name": "package-{i}", "version": "1.2.3", "rev": 1, "variant": "default",
+                "id": "b3:0123456789abcdef0123456789abcdef0123456789abcdef", "dir": "package-{i}-1.2.3-1-0123456789abcdef0123456789abcdef",
+                "reasons": [{}]}}"#,
+                reasons.join(", ")
+            )
+        })
+        .collect();
+    let record = VIEW.replace(
+        r#""packages": []"#,
+        &format!(r#""packages": [{}]"#, packages.join(", ")),
+    );
+    let facts = FileFacts {
+        size: record.len() as u64,
+        ..TRUSTED
+    };
+    assert_eq!(check_file(facts, MAX_RECORD), Ok(()));
+    assert!(parse_view(record.as_bytes(), "dev", 7).is_ok());
+}

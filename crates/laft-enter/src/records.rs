@@ -9,7 +9,13 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 /// The largest `view.json` or `privileged.json` that is read.
-pub(crate) const MAX_RECORD: u64 = 1 << 20;
+///
+/// `view.json` lists every package with every reason it is in the view,
+/// and a library has one reason per package that depends on it. A view of
+/// 20,000 packages with ten reasons each takes about 25 MiB, so the limit
+/// leaves room for views far larger than any real one while still bounding
+/// what is read as root.
+pub(crate) const MAX_RECORD: u64 = 64 << 20;
 
 /// The format version of both records.
 const FORMAT: u32 = 1;
