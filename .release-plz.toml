@@ -18,10 +18,10 @@ git_release_body = """
 """
 
 [[package]]
-name = "laft"
+name = "laft-core"
 git_tag_name = "v{{ version }}"
 git_release_enable = true
-changelog_include = ["laft-core"]
+changelog_include = []
 changelog_path = "./CHANGELOG.md"
 
 [changelog]
