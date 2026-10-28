@@ -79,7 +79,8 @@ pub struct Rendered {
 pub struct Unit {
     /// The service's spec.
     pub spec: Spec,
-    /// The BLAKE3 hash of the spec file.
+    /// The spec hash, [`Spec::hash`]: the hash of the spec's canonical
+    /// JSON, which is the content of its spec file.
     pub spec_hash: Blake3Hash,
     /// The BLAKE3 hash of the backend files rendered for the service. For a
     /// service of the early boot graph, that is its line in stage 1.
@@ -117,9 +118,8 @@ pub fn render(set: &ServiceSet, generation: u64) -> Result<Rendered, Error> {
         .collect();
     let mut spec_hashes = BTreeMap::new();
     for (name, spec) in specs {
-        let bytes = spec.to_bytes()?;
-        spec_hashes.insert(name, Blake3Hash::of(&bytes));
-        file(format!("services/spec/{name}.json"), DATA, bytes);
+        spec_hashes.insert(name, spec.hash()?);
+        file(format!("services/spec/{name}.json"), DATA, spec.to_bytes()?);
     }
     for (name, spec) in specs {
         let unit_hash = match early_lines.get(name.as_str()) {
@@ -295,8 +295,8 @@ pub fn load_units(services_dir: &Path) -> Result<BTreeMap<String, Unit>, Error> 
         units.insert(
             name.to_owned(),
             Unit {
+                spec_hash: spec.hash()?,
                 spec,
-                spec_hash: Blake3Hash::of(&bytes),
                 unit_hash,
             },
         );

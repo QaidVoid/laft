@@ -287,3 +287,20 @@ fn shutdown_waits_for_the_longest_stop_timeout_but_at_least_the_default() {
     assert!(stage3(1).contains("sv -w 10 force-stop"));
     assert!(stage3(90).contains("sv -w 90 force-stop"));
 }
+
+#[test]
+fn the_spec_hash_depends_on_the_spec_not_on_its_encoding() {
+    let rendered = render(&valid(&example()), 3).expect("renders");
+    let dir = tempfile::tempdir().expect("can create a temporary directory");
+    rendered.write(dir.path()).expect("writes");
+    let path = dir.path().join("services/spec/myapp.json");
+    let spec = &rendered.units()["myapp"].spec;
+    fs::remove_file(&path).expect("remove");
+    fs::write(&path, serde_json::to_vec_pretty(spec).expect("encodes")).expect("write");
+    let loaded = load_units(&dir.path().join("services")).expect("loads");
+    assert_eq!(
+        loaded["myapp"].spec_hash,
+        rendered.units()["myapp"].spec_hash
+    );
+    assert_eq!(loaded["myapp"].spec_hash, spec.hash().expect("hashes"));
+}

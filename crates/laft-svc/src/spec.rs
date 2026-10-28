@@ -188,7 +188,10 @@ impl Spec {
         serde_json::from_slice(bytes).map_err(|e| corrupt(path, e.to_string()))
     }
 
-    /// The spec hash: the BLAKE3 hash of the spec file's bytes.
+    /// The spec hash: the BLAKE3 hash of the spec's canonical JSON, the
+    /// bytes its spec file holds. A spec read from a file hashes the same
+    /// however that file was encoded, so the hash changes only when the
+    /// spec does.
     ///
     /// # Errors
     ///
