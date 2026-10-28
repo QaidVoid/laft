@@ -58,7 +58,7 @@ fn entries_are_sorted_with_parents_and_fixed_metadata() {
     archive.add("/bin/sh", 0o777, Kind::Symlink("busybox".into()));
     archive.add("/dev/console", 0o600, Kind::CharDevice(5, 1));
     archive.add("/proc", 0o755, Kind::Dir);
-    let bytes = archive.to_bytes();
+    let bytes = archive.to_bytes().unwrap();
     let entries = parse(&bytes);
     let names: Vec<&str> = entries.iter().map(|e| e.0.as_str()).collect();
     assert_eq!(
@@ -111,7 +111,7 @@ fn the_same_entries_give_the_same_bytes() {
         for (path, data) in order {
             archive.add(path, 0o644, Kind::File(data.to_vec()));
         }
-        archive.to_bytes()
+        archive.to_bytes().unwrap()
     };
     let a = build(&[("a/x", b"1"), ("b", b"22"), ("a/y", b"333")]);
     let b = build(&[("a/y", b"333"), ("b", b"22"), ("a/x", b"1")]);
@@ -120,7 +120,16 @@ fn the_same_entries_give_the_same_bytes() {
 
 #[test]
 fn an_empty_archive_holds_only_the_trailer() {
-    let entries = parse(&Archive::default().to_bytes());
+    let entries = parse(&Archive::default().to_bytes().unwrap());
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].0, "TRAILER!!!");
+}
+
+#[test]
+fn data_too_large_for_a_header_is_refused() {
+    let mut out = Vec::new();
+    let size = usize::try_from(u64::from(u32::MAX) + 1).unwrap();
+    let err = header(&mut out, 1, 0o100644, 1, size, (0, 0), "big").unwrap_err();
+    assert!(err.to_string().contains("big"), "{err}");
+    assert!(header(&mut out, 1, 0o100644, 1, u32::MAX as usize, (0, 0), "max").is_ok());
 }

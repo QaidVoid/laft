@@ -204,7 +204,7 @@ pub(crate) fn build(inputs: &Inputs<'_>) -> Result<BootRecord> {
     let release_dir = format!("usr/lib/modules/{release}");
     let index = read_index(inputs.tree, &release_dir)?;
 
-    let (names, dirs) = requested(inputs, &index, &release)?;
+    let (names, dirs) = requested(inputs.config, inputs.host, &index, &release)?;
     let order = index.select(&names, &dirs);
     let mut main = Archive::default();
     for dir in ["dev", "proc", "sys", "run", "newroot"] {
@@ -334,10 +334,14 @@ pub(crate) fn build(inputs: &Inputs<'_>) -> Result<BootRecord> {
     let mut bytes = if early.is_empty() {
         Vec::new()
     } else {
-        early.to_bytes()
+        early.to_bytes()?
     };
-    bytes.extend(compress(&main.to_bytes())?);
-    let initramfs = Blake3Hash::of(&bytes).to_string()[3..35].to_owned();
+    bytes.extend(compress(&main.to_bytes()?)?);
+    let initramfs = Blake3Hash::of(&bytes)
+        .to_string()
+        .get(3..35)
+        .expect("a hash renders as b3: and 64 hex digits")
+        .to_owned();
 
     let boot_dir = inputs.tree.join("boot");
     let target = boot_dir.join("initramfs");
@@ -424,23 +428,22 @@ fn read_index(tree: &Path, release_dir: &str) -> Result<ModuleIndex> {
 }
 
 /// The requested module names and module directories.
+///
+/// The configured modules, the drivers of the file systems the initramfs
+/// mounts and the device mapper modules for LUKS are required. Without them
+/// the system cannot boot, so each must be a module or built into the
+/// kernel. Keyboard and host modules are wanted when the kernel has them.
 fn requested<'a>(
-    inputs: &Inputs<'_>,
+    config: &BootConfig,
+    host: &Host,
     index: &ModuleIndex,
     release: &str,
 ) -> Result<(BTreeSet<String>, Vec<&'a str>)> {
-    let config = inputs.config;
     let initrd = &config.boot.initrd;
-    let mut names = BTreeSet::new();
+    let mut required = Vec::new();
     let mut dirs = Vec::new();
     for module in &initrd.modules {
-        let name = normalize(module);
-        if index.path(&name).is_none() && !index.is_builtin(&name) {
-            return Err(Error::Boot(format!(
-                "boot.initrd.modules: kernel {release} has no module {module}"
-            )));
-        }
-        names.insert(name);
+        required.push(("boot.initrd.modules".to_owned(), normalize(module)));
     }
     let mut mounts = vec!["/".to_owned(), config.boot.esp.clone()];
     if config.fs.contains_key("/laft") {
@@ -450,25 +453,34 @@ fn requested<'a>(
         let Some(fs) = config.fs.get(&mount) else {
             continue;
         };
-        match fs.fstype.as_str() {
-            "ext2" | "ext3" | "ext4" => {
-                names.insert("ext4".into());
-            }
-            "vfat" => {
-                names.extend(["vfat", "nls_cp437", "nls_iso8859_1"].map(String::from));
-            }
-            other => {
-                names.insert(normalize(other));
-            }
-        }
+        let modules = match fs.fstype.as_str() {
+            "ext2" | "ext3" | "ext4" => vec!["ext4".to_owned()],
+            "vfat" => ["vfat", "nls_cp437", "nls_iso8859_1"]
+                .map(String::from)
+                .to_vec(),
+            other => vec![normalize(other)],
+        };
+        let context = format!("the {} file system of {mount}", fs.fstype);
+        required.extend(modules.into_iter().map(|m| (context.clone(), m)));
     }
     if !config.luks.is_empty() {
-        names.extend(["dm_mod", "dm_crypt"].map(String::from));
+        for module in ["dm_mod", "dm_crypt"] {
+            required.push(("boot.luks".to_owned(), module.to_owned()));
+        }
         dirs.extend(CRYPTO_DIRS);
+    }
+    let mut names = BTreeSet::new();
+    for (context, name) in required {
+        if index.path(&name).is_none() && !index.is_builtin(&name) {
+            return Err(Error::Boot(format!(
+                "{context}: kernel {release} has no module {name}"
+            )));
+        }
+        names.insert(name);
     }
     names.extend(KEYBOARD.map(String::from));
     if initrd.hostonly {
-        names.extend(inputs.host.modules.iter().map(|m| normalize(m)));
+        names.extend(host.modules.iter().map(|m| normalize(m)));
     } else {
         dirs.extend(GENERIC_DIRS);
     }

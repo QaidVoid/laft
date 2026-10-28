@@ -66,7 +66,7 @@ fn linux(release: &str) -> Pkg {
         )
         .file(
             &format!("usr/lib/modules/{release}/modules.builtin"),
-            b"kernel/fs/vfat.ko\n",
+            b"kernel/fs/vfat.ko\nkernel/fs/nls/nls_cp437.ko\nkernel/fs/nls/nls_iso8859-1.ko\n",
         )
         .trigger("depmod")
 }

@@ -8,6 +8,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::error::{Error, Result};
+
 /// The magic number of a newc header.
 const MAGIC: &str = "070701";
 
@@ -60,7 +62,12 @@ impl Archive {
     }
 
     /// The archive's bytes, ending with the trailer entry.
-    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Fails with [`Error::Boot`] when an entry's data or path is too long
+    /// for the 32 bit size fields of the format.
+    pub(crate) fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         for (ino, (path, (mode, kind))) in (1u32..).zip(&self.entries) {
             let (format, nlink, data, rdev): (u32, u32, &[u8], (u32, u32)) = match kind {
@@ -69,16 +76,21 @@ impl Archive {
                 Kind::Symlink(target) => (0o120000, 1, target.as_bytes(), (0, 0)),
                 Kind::CharDevice(major, minor) => (0o020000, 1, &[], (*major, *minor)),
             };
-            header(&mut out, ino, format | mode, nlink, data.len(), rdev, path);
+            header(&mut out, ino, format | mode, nlink, data.len(), rdev, path)?;
             out.extend_from_slice(data);
             pad(&mut out);
         }
-        header(&mut out, 0, 0, 1, 0, (0, 0), TRAILER);
-        out
+        header(&mut out, 0, 0, 1, 0, (0, 0), TRAILER)?;
+        Ok(out)
     }
 }
 
 /// Appends a header with its name and the padding after the name.
+///
+/// # Errors
+///
+/// Fails with [`Error::Boot`] when `size` or the length of `name` does not
+/// fit a header field.
 fn header(
     out: &mut Vec<u8>,
     ino: u32,
@@ -87,21 +99,20 @@ fn header(
     size: usize,
     rdev: (u32, u32),
     name: &str,
-) {
+) -> Result<()> {
+    let too_long = |what| {
+        Error::Boot(format!(
+            "the initramfs entry {name}: its {what} is too long"
+        ))
+    };
+    let size = u32::try_from(size).map_err(|_| too_long("data"))?;
+    let name_size = name
+        .len()
+        .checked_add(1)
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or_else(|| too_long("path"))?;
     let fields = [
-        ino,
-        mode,
-        0,
-        0,
-        nlink,
-        0,
-        size as u32,
-        0,
-        0,
-        rdev.0,
-        rdev.1,
-        name.len() as u32 + 1,
-        0,
+        ino, mode, 0, 0, nlink, 0, size, 0, 0, rdev.0, rdev.1, name_size, 0,
     ];
     out.extend_from_slice(MAGIC.as_bytes());
     for field in fields {
@@ -110,6 +121,7 @@ fn header(
     out.extend_from_slice(name.as_bytes());
     out.push(0);
     pad(out);
+    Ok(())
 }
 
 /// Pads `out` with zero bytes to a multiple of 4.
