@@ -53,6 +53,20 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8], mode: u32, owner: Owner) -
     commit(&tmp, path)
 }
 
+/// Creates the new file `path` with `bytes` and exactly `mode`, without
+/// syncing. For files inside a tree that is published by a rename later.
+pub(crate) fn write_new(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(io(path))?;
+    file.write_all(bytes).map_err(io(path))?;
+    file.set_permissions(fs::Permissions::from_mode(mode))
+        .map_err(io(path))
+}
+
 /// Syncs a directory, so that renames and links inside it are durable.
 pub(crate) fn sync_dir(dir: &Path) -> Result<()> {
     File::open(dir).and_then(|d| d.sync_all()).map_err(io(dir))

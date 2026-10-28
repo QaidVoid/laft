@@ -368,11 +368,15 @@ dependencies = [
  "insta",
  "laft-core",
  "laft-pkg",
+ "laft-sandbox",
  "laft-store",
+ "laft-svc",
+ "object",
  "rustix",
  "serde",
  "serde_json",
  "tempfile",
+ "zstd",
 ]
 
 [[package]]

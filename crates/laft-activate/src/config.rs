@@ -192,3 +192,186 @@ pub struct Kernel {
     /// Module parameters by module, for example `power_save=1`.
     pub options: BTreeMap<String, String>,
 }
+
+/// The parts of the system configuration that shape the initramfs, the
+/// boot files and the boot menu.
+///
+/// Like [`EtcConfig`], it deserializes from the whole evaluated system
+/// value and ignores the fields of other subsystems.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct BootConfig {
+    /// The boot loader, kernel and boot counting settings.
+    pub boot: Boot,
+    /// The mounted filesystems, by mountpoint.
+    pub fs: BTreeMap<String, Fs>,
+    /// The LUKS devices unlocked in the initramfs, by device-mapper name.
+    pub luks: BTreeMap<String, Luks>,
+}
+
+/// The boot loader, kernel and boot counting settings.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Boot {
+    /// The boot loader. Only `limine` exists.
+    pub loader: String,
+    /// The mountpoint of the EFI system partition. Default `/boot`.
+    pub esp: String,
+    /// The package that provides the kernel. Default `linux`.
+    pub kernel: String,
+    /// The kernel command line after `laft.gen=<N>`. Default `quiet` and
+    /// `loglevel=3`.
+    pub cmdline: Vec<String>,
+    /// The menu timeout in seconds, or `None` to wait forever. Default 3.
+    pub timeout: Option<u32>,
+    /// Whether menu entries may be edited at boot. Default `false`.
+    pub editor: bool,
+    /// Boot attempts before falling back to the last good generation. 0
+    /// disables boot counting. Default 3.
+    pub tries: u32,
+    /// Which CPU microcode the initramfs carries. Default `auto`.
+    pub microcode: Microcode,
+    /// The initramfs settings.
+    pub initrd: Initrd,
+}
+
+impl Default for Boot {
+    fn default() -> Self {
+        Self {
+            loader: "limine".into(),
+            esp: "/boot".into(),
+            kernel: "linux".into(),
+            cmdline: vec!["quiet".into(), "loglevel=3".into()],
+            timeout: Some(3),
+            editor: false,
+            tries: 3,
+            microcode: Microcode::Auto,
+            initrd: Initrd::default(),
+        }
+    }
+}
+
+/// Which CPU microcode the initramfs carries.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Microcode {
+    /// The vendor of the machine running the assembly when the initramfs is
+    /// host only, otherwise both.
+    #[default]
+    Auto,
+    /// Intel microcode.
+    Intel,
+    /// AMD microcode.
+    Amd,
+    /// Intel and AMD microcode.
+    Both,
+    /// None.
+    Off,
+}
+
+/// The initramfs settings.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Initrd {
+    /// Extra kernel modules, by name.
+    pub modules: BTreeSet<String>,
+    /// Whether to include only the modules the boot devices of the
+    /// assembling machine need, instead of every storage and input driver.
+    /// Default `true`.
+    pub hostonly: bool,
+    /// Whether to include the emergency shell. Default `true`.
+    pub shell: bool,
+    /// Seconds to wait for the boot devices. Default 30.
+    pub root_wait: u32,
+}
+
+impl Default for Initrd {
+    fn default() -> Self {
+        Self {
+            modules: BTreeSet::new(),
+            hostonly: true,
+            shell: true,
+            root_wait: 30,
+        }
+    }
+}
+
+/// A mounted filesystem.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Fs {
+    /// The device, such as `UUID=...` or `/dev/mapper/cryptroot`.
+    pub device: Option<String>,
+    /// The filesystem type, such as `ext4` or `vfat`.
+    pub fstype: String,
+    /// The mount options.
+    pub options: Vec<String>,
+    /// Whether the filesystem is checked before it is mounted. With `None`,
+    /// true for ext2, ext3, ext4, f2fs and vfat.
+    pub fsck: Option<bool>,
+    /// Whether the filesystem is mounted at boot. Default `true`.
+    pub auto: bool,
+}
+
+impl Default for Fs {
+    fn default() -> Self {
+        Self {
+            device: None,
+            fstype: String::new(),
+            options: Vec::new(),
+            fsck: None,
+            auto: true,
+        }
+    }
+}
+
+/// A LUKS device unlocked in the initramfs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Luks {
+    /// The encrypted device, `UUID=...` or `/dev/...`.
+    pub device: String,
+    /// Options for the unlocked device: `discard`, `no-read-workqueue` and
+    /// `no-write-workqueue`.
+    pub options: BTreeSet<String>,
+}
+
+/// The security settings, the `security` field of the system
+/// configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Security {
+    /// The files that keep setuid, setgid or file capabilities in the
+    /// system generation, by absolute path.
+    pub privileged: BTreeMap<String, Privileged>,
+}
+
+/// A file that keeps setuid, setgid or file capabilities in the system
+/// generation.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Privileged {
+    /// Whether the entry applies. Default `true`.
+    pub enable: bool,
+    /// The owning user. Default `root`.
+    pub owner: String,
+    /// The owning group. Default `root`.
+    pub group: String,
+    /// The mode, at most `0o7777`. Default `0o4755`.
+    pub mode: u32,
+    /// File capabilities in the text syntax of `cap_from_text(3)`, such as
+    /// `cap_setuid=ep`.
+    pub caps: Option<String>,
+}
+
+impl Default for Privileged {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            owner: "root".into(),
+            group: "root".into(),
+            mode: 0o4755,
+            caps: None,
+        }
+    }
+}

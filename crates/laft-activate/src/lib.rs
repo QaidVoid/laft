@@ -1,5 +1,12 @@
-//! The static `/etc` tree of a Laft generation, the account databases and
-//! the activation of `/etc` on a live system.
+//! Assembly of Laft generations and their activation: the static `/etc`
+//! tree, the account databases, triggers, privileged copies, the initramfs
+//! and the boot files.
+//!
+//! [`assemble`] builds a complete generation inside a store transaction
+//! from resolved packages and the configuration as plain values: the
+//! system view with the outputs of its triggers and its privileged copies,
+//! `/etc`, the services, the accounts and the initramfs with its boot
+//! record.
 //!
 //! The configuration reaches this crate as plain values ([`EtcConfig`]).
 //! [`declare`] resolves the configured accounts into [`Declared`] accounts
@@ -23,14 +30,20 @@
 #![forbid(unsafe_code)]
 
 mod accounts;
+mod assemble;
 mod boot;
 mod config;
 mod error;
 mod etc;
+mod fault;
 mod format;
 mod fsx;
+mod initramfs;
+mod privileged;
 mod render;
 mod state;
+mod tree;
+mod trigger;
 
 #[cfg(test)]
 mod test_support;
@@ -39,8 +52,14 @@ pub use accounts::{
     AccountsReport, Allocations, Declared, DeclaredGroup, DeclaredUser, Password, apply_accounts,
     declare,
 };
+pub use assemble::{Assembled, Assembly, assemble};
 pub use boot::{BootActivation, activate_boot};
-pub use config::{EtcConfig, File, Group, Kernel, User, Users};
+pub use config::{
+    Boot, BootConfig, EtcConfig, File, Fs, Group, Initrd, Kernel, Luks, Microcode, Privileged,
+    Security, User, Users,
+};
 pub use error::{ConfigError, Conflict, ConflictKind, Error, Result, Warning};
 pub use etc::{EtcReport, OnConflict, check_etc, reconcile_etc, reset_etc};
+pub use initramfs::{BootRecord, Host};
+pub use privileged::{PRIVILEGED_FILE, PrivilegedFile, PrivilegedRecord, ViewPrivileges};
 pub use render::{EtcTree, Node, render};

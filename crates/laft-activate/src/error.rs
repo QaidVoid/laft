@@ -81,6 +81,29 @@ pub enum Error {
     /// A request that the current state does not allow. The message says
     /// which.
     Invalid(String),
+    /// A required trigger failed, or a trigger changed what it may not
+    /// change.
+    Trigger {
+        /// The trigger instance, such as `depmod:6.17.5-laft1`.
+        instance: String,
+        /// What went wrong, with the tool's standard error.
+        reason: String,
+    },
+    /// The sandbox of a required trigger could not be set up.
+    Sandbox {
+        /// The trigger instance.
+        instance: String,
+        /// The sandbox error.
+        source: laft_sandbox::Error,
+    },
+    /// The services could not be rendered.
+    Services(laft_svc::Error),
+    /// A file needed to boot is missing or malformed, such as the kernel,
+    /// a module index or a program of the initramfs.
+    Boot(String),
+    /// A failure injected by a test at a named point.
+    #[cfg(test)]
+    Injected(&'static str),
 }
 
 impl Error {
@@ -259,6 +282,16 @@ pub enum ConfigError {
     /// A sysctl value is not an integer, a string or a boolean. Code
     /// `C0434`.
     SysctlValue(String),
+    /// A privileged path is not an absolute, normalized path below
+    /// `/usr/bin/` or `/usr/lib/`.
+    PrivilegedPath(String),
+    /// The capabilities of a privileged file do not parse.
+    InvalidCaps {
+        /// The privileged path.
+        path: String,
+        /// The capability text.
+        caps: String,
+    },
 }
 
 impl ConfigError {
@@ -281,7 +314,11 @@ impl ConfigError {
             Self::SysctlKey(_) => "C0431",
             Self::BlacklistedModule(_) => "C0433",
             Self::SysctlValue(_) => "C0434",
-            Self::IdsExhausted { .. } | Self::UnknownAccount { .. } | Self::InvalidValue { .. } => {
+            Self::IdsExhausted { .. }
+            | Self::UnknownAccount { .. }
+            | Self::InvalidValue { .. }
+            | Self::PrivilegedPath(_)
+            | Self::InvalidCaps { .. } => {
                 return None;
             }
         })
@@ -354,6 +391,13 @@ impl fmt::Display for ConfigError {
                 f,
                 "sysctl {key:?}: the value must be an integer, a string or a boolean"
             ),
+            Self::PrivilegedPath(path) => write!(
+                f,
+                "privileged {path:?}: privileged files must live under /usr/bin or /usr/lib"
+            ),
+            Self::InvalidCaps { path, caps } => {
+                write!(f, "privileged {path:?}: invalid capability text {caps:?}")
+            }
         }
     }
 }
@@ -413,6 +457,14 @@ impl fmt::Display for Error {
             }
             Self::NotResettable { path, reason } => write!(f, "/etc/{path}: {reason}"),
             Self::Invalid(message) => f.write_str(message),
+            Self::Trigger { instance, reason } => write!(f, "trigger {instance}: {reason}"),
+            Self::Sandbox { instance, source } => {
+                write!(f, "trigger {instance}: cannot set up the sandbox: {source}")
+            }
+            Self::Services(e) => e.fmt(f),
+            Self::Boot(message) => f.write_str(message),
+            #[cfg(test)]
+            Self::Injected(point) => write!(f, "injected failure at {point}"),
         }
     }
 }
@@ -422,6 +474,8 @@ impl std::error::Error for Error {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Store(e) => Some(e),
+            Self::Sandbox { source, .. } => Some(source),
+            Self::Services(e) => Some(e),
             _ => None,
         }
     }
@@ -479,6 +533,19 @@ pub enum Warning {
         /// Its mode.
         mode: u32,
     },
+    /// An optional trigger failed. The generation has no output for it.
+    TriggerFailed {
+        /// The trigger instance.
+        instance: String,
+        /// Why, with the tool's standard error.
+        reason: String,
+    },
+    /// An enabled privileged entry names a path that is not a regular file
+    /// of the generation, so it has no effect.
+    InactivePrivileged(String),
+    /// Laft did not run as root, so the privileged copies were made and
+    /// recorded but keep the caller as owner and carry no capabilities.
+    PrivilegesNotApplied(Vec<String>),
 }
 
 impl fmt::Display for Warning {
@@ -496,6 +563,18 @@ impl fmt::Display for Warning {
             Self::PrivateFile { path, mode } => write!(
                 f,
                 "file {path:?} has mode {mode:o} but stays on disk in every generation that declares it. Keep secrets out of declared files."
+            ),
+            Self::TriggerFailed { instance, reason } => {
+                write!(f, "optional trigger {instance} failed: {reason}")
+            }
+            Self::InactivePrivileged(path) => write!(
+                f,
+                "privileged {path:?} is inactive: the generation has no regular file at that path"
+            ),
+            Self::PrivilegesNotApplied(paths) => write!(
+                f,
+                "not running as root: the owner and capabilities of {} were recorded in privileged.json but not applied",
+                paths.join(", ")
             ),
         }
     }

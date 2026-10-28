@@ -25,7 +25,13 @@ fn base() -> EtcConfig {
 }
 
 fn render_config(env: &Env, config: &EtcConfig, packages: &[String]) -> Result<EtcTree> {
-    render(config, &declared(config), &env.root.store(), packages)
+    render(
+        config,
+        &declared(config),
+        &env.root.store(),
+        packages,
+        &std::collections::BTreeMap::new(),
+    )
 }
 
 fn codes(err: Error) -> Vec<Option<&'static str>> {
