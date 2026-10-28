@@ -49,6 +49,16 @@ impl Accounts {
         Self::parse(&passwd_text, &passwd, &group_text, &group)
     }
 
+    /// Parses the contents of `/etc/passwd` and `/etc/group`, whose paths
+    /// are given for error messages.
+    ///
+    /// Empty lines are skipped. Of several entries with one name, the
+    /// first wins, as in every lookup through the C library.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a non-empty line does not have seven fields in `passwd`
+    /// or four in `group`, or when an id is not a number.
     pub(crate) fn parse(
         passwd: &str,
         passwd_path: &Path,

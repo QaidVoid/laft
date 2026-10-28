@@ -75,8 +75,9 @@ pub enum Ready {
     /// As soon as the service's command is executed.
     #[default]
     Immediate,
-    /// When the service writes a newline to file descriptor `fd` and closes
-    /// it.
+    /// When the service writes a newline to file descriptor `fd`. Closing
+    /// the descriptor afterwards is allowed but not required. Closing it
+    /// before a newline means the service never becomes ready.
     Notify {
         /// The descriptor the service writes to, 3 to 1023.
         fd: u32,
