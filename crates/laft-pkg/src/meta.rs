@@ -168,6 +168,11 @@ impl Meta {
     /// # Errors
     ///
     /// Fails when the metadata is not valid.
+    ///
+    /// # Panics
+    ///
+    /// Panics if valid metadata held an integer above 2^53, which
+    /// [`Self::validate`] rules out.
     pub fn to_json(&self) -> Result<Vec<u8>, Error> {
         self.validate()?;
         Ok(to_canonical_json(self)

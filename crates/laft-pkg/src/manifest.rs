@@ -361,6 +361,12 @@ impl Manifest {
     }
 
     /// The stored form: canonical JSON (RFC 8785).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the manifest holds an integer above 2^53, which cannot
+    /// happen because every manifest is validated when it is built or
+    /// parsed.
     pub fn to_json(&self) -> Vec<u8> {
         to_canonical_json(self)
             .expect("a valid manifest has no integer above 2^53, so it is canonical JSON")
