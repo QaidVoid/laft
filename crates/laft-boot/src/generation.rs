@@ -3,6 +3,7 @@
 //! Only the few fields of `gen.json` and `boot/boot.json` that booting needs
 //! are read. Every other field is ignored.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -100,6 +101,22 @@ pub(crate) fn read(gens: &Path, number: u64) -> Result<Generation, String> {
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
     let bytes = fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|e| format!("{} is invalid: {e}", path.display()))
+}
+
+/// The numbers of the generations in `gens`, the entries named by a
+/// number. Other entries, such as the `default` link, are skipped.
+///
+/// # Errors
+///
+/// Fails when `gens` cannot be listed completely.
+pub(crate) fn numbers(gens: &Path) -> io::Result<BTreeSet<u64>> {
+    let mut numbers = BTreeSet::new();
+    for entry in fs::read_dir(gens)? {
+        if let Some(number) = entry?.file_name().to_str().and_then(|n| n.parse().ok()) {
+            numbers.insert(number);
+        }
+    }
+    Ok(numbers)
 }
 
 /// The generation the symlink `link` names, or `None` when it is missing.

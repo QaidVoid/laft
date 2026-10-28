@@ -4,7 +4,6 @@
 //! the user leaves it. The decisions the steps take are made by the pure
 //! functions of the other modules. This module only carries them out.
 
-use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io;
 use std::os::unix::fs::MetadataExt;
@@ -347,8 +346,18 @@ impl Boot {
         }
     }
 
+    /// Writes the boot state, pruned to the generations that exist. When
+    /// they cannot be listed, nothing is pruned, so that a read error does
+    /// not erase the boot history.
     fn save(&mut self, mut state: BootState) {
-        state.prune(&existing_generations(&gens_dir()));
+        let gens = gens_dir();
+        match generation::numbers(&gens) {
+            Ok(existing) => state.prune(&existing),
+            Err(e) => self.log.warn(&format!(
+                "cannot list {}, so the boot state is not pruned: {e}",
+                gens.display()
+            )),
+        }
         let path = state_path();
         let written = state
             .to_json()
@@ -455,16 +464,6 @@ fn gens_dir() -> PathBuf {
 
 fn state_path() -> PathBuf {
     Path::new(NEWROOT).join("laft/state/boot.json")
-}
-
-/// The numbers of the generation directories in `gens`.
-fn existing_generations(gens: &Path) -> BTreeSet<u64> {
-    fs::read_dir(gens)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| e.file_name().to_str()?.parse().ok())
-        .collect()
 }
 
 /// Whether `path` is the root of a mount, because it lies on another

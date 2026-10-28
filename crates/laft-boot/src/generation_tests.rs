@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
-use super::{Generation, read, read_link, select};
+use super::{Generation, numbers, read, read_link, select};
 
 const RUNNING: &str = "6.17.5-laft1";
 
@@ -149,4 +149,16 @@ fn default_for_another_kernel_does_not_replace_an_invalid_request() {
 fn nothing_to_boot_is_an_error() {
     assert!(select(None, None, RUNNING, lookup(&[(1, RUNNING)])).is_err());
     assert!(select(None, Some(3), RUNNING, lookup(&[(1, RUNNING)])).is_err());
+}
+
+#[test]
+fn generation_numbers_are_listed_and_an_unreadable_directory_is_an_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gens = tmp.path().join("gens");
+    assert!(numbers(&gens).is_err());
+    write_generation(&gens, 41, RUNNING);
+    write_generation(&gens, 42, RUNNING);
+    fs::create_dir(gens.join("tmp")).unwrap();
+    symlink("42", gens.join("default")).unwrap();
+    assert_eq!(numbers(&gens).unwrap(), BTreeSet::from([41, 42]));
 }
