@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::config::{Config, Luks};
 use crate::probe::{PROBE_LEN, Probe, probe};
 
 /// How a boot device is named in `laft-boot.json`.
@@ -159,46 +158,6 @@ impl Devices {
             }
             return Ok(found.into_iter().flatten().collect());
         }
-    }
-
-    /// Waits as [`Self::wait`] does for the devices the boot needs before
-    /// unlocking: every LUKS device of `config`, and the root and `/laft`
-    /// filesystems unless they are unlocked devices themselves. Returns
-    /// every LUKS device of `config` in order, each with the node found
-    /// through its own spec.
-    ///
-    /// # Errors
-    ///
-    /// Fails when a device name is malformed or a device is missing when
-    /// the time is up.
-    pub(crate) fn wait_for_unlock<'a>(
-        &mut self,
-        config: &'a Config,
-        timeout: Duration,
-        interval: Duration,
-    ) -> Result<Vec<(&'a Luks, PathBuf)>, String> {
-        let mut luks = Vec::new();
-        for device in &config.luks {
-            luks.push((device, DeviceSpec::parse(&device.device)?));
-        }
-        let mut specs: Vec<DeviceSpec> = luks.iter().map(|(_, spec)| spec.clone()).collect();
-        for fs in [Some(&config.root), config.laft.as_ref()]
-            .into_iter()
-            .flatten()
-        {
-            match DeviceSpec::parse(&fs.device)? {
-                DeviceSpec::Mapper(_) => {}
-                spec => specs.push(spec),
-            }
-        }
-        self.wait(&specs, timeout, interval)?;
-        luks.into_iter()
-            .map(|(device, spec)| {
-                self.find(&spec)
-                    .map(|node| (device, node))
-                    .ok_or_else(|| format!("{spec} disappeared"))
-            })
-            .collect()
     }
 
     /// Every device seen, one per line, with its type and UUID when known.

@@ -182,7 +182,8 @@ impl Boot {
     /// unlocked yet.
     fn unlock(&mut self, config: &Config) -> Result<(), String> {
         let timeout = self.root_wait(config);
-        for (luks, device) in self.devices.wait_for_unlock(config, timeout, POLL)? {
+        let found = self.devices.wait(&config.unlock_specs()?, timeout, POLL)?;
+        for (luks, device) in config.luks.iter().zip(found) {
             let mapper = DeviceSpec::Mapper(luks.name.clone());
             if self.devices.find(&mapper).is_some() {
                 continue;

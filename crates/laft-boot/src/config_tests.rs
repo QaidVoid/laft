@@ -1,6 +1,7 @@
 use laft_core::LuksOption;
 
 use super::{Config, Filesystem, Luks};
+use crate::device::DeviceSpec;
 
 const EXAMPLE: &str = r#"{
   "esp": {"device": "UUID=4A2B-91C0", "options": "", "type": "vfat"},
@@ -87,6 +88,29 @@ fn every_luks_option_is_read() {
             LuksOption::Discard,
             LuksOption::NoReadWorkqueue,
             LuksOption::NoWriteWorkqueue
+        ]
+    );
+}
+
+#[test]
+fn unlocking_waits_for_the_luks_devices_then_root_and_laft_unless_unlocked() {
+    let mut config = Config::parse(EXAMPLE.as_bytes(), "6.17.5-laft1").expect("valid");
+    let spec = |text: &str| DeviceSpec::parse(text).unwrap();
+    assert_eq!(
+        config.unlock_specs().unwrap(),
+        [spec("UUID=6b1d0b3e-6f5c-4a62-9a3f-1f4f0c8b9e21")]
+    );
+    config.root.device = "UUID=11111111-1111-1111-1111-111111111111".into();
+    config.laft = Some(Filesystem {
+        device: "/dev/vdb1".into(),
+        ..config.root.clone()
+    });
+    assert_eq!(
+        config.unlock_specs().unwrap(),
+        [
+            spec("UUID=6b1d0b3e-6f5c-4a62-9a3f-1f4f0c8b9e21"),
+            spec("UUID=11111111-1111-1111-1111-111111111111"),
+            spec("/dev/vdb1"),
         ]
     );
 }

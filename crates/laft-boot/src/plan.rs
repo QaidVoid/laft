@@ -52,6 +52,14 @@ pub(crate) enum Op {
     /// Moves the mount at `source` to `target`. A move that an earlier
     /// attempt made, so that `source` is no longer a mount point but
     /// `target` is, is skipped.
+    ///
+    /// The skip does not check which mount is at `target`, because the
+    /// moved mount can no longer be compared with anything at `source`. A
+    /// mount that something else put at `target` therefore counts as moved,
+    /// and a mount point is seen only when it lies on another filesystem
+    /// than its parent, so a bind mount of the parent's filesystem is not.
+    /// Both are acceptable for the kernel filesystems of the initramfs,
+    /// which nothing but this program mounts below the new root.
     Move {
         /// The current mount point.
         source: PathBuf,

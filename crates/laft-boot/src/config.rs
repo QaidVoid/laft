@@ -74,6 +74,28 @@ struct Versioned {
 }
 
 impl Config {
+    /// The devices to wait for before unlocking: every LUKS device, in the
+    /// order of [`Self::luks`], then the root and `/laft` filesystems unless
+    /// they are unlocked devices themselves. The first `luks.len()` specs
+    /// are those of the LUKS devices.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a device name is malformed.
+    pub(crate) fn unlock_specs(&self) -> Result<Vec<DeviceSpec>, String> {
+        let mut specs = Vec::new();
+        for luks in &self.luks {
+            specs.push(DeviceSpec::parse(&luks.device)?);
+        }
+        for fs in [Some(&self.root), self.laft.as_ref()].into_iter().flatten() {
+            match DeviceSpec::parse(&fs.device)? {
+                DeviceSpec::Mapper(_) => {}
+                spec => specs.push(spec),
+            }
+        }
+        Ok(specs)
+    }
+
     /// Reads `laft-boot.json` from `bytes` for the running kernel `release`.
     ///
     /// # Errors
