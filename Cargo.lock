@@ -421,6 +421,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "laft-sandbox"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rustix",
+ "tempfile",
+]
+
+[[package]]
 name = "laft-store"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,18 @@
+[package]
+name = "laft-sandbox"
+description = "Namespaces and mounts for Laft build sandboxes and view entry"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+libc.workspace = true
+rustix = { workspace = true, features = ["fs", "mount", "pipe", "process", "system", "thread"] }
+
+[dev-dependencies]
+tempfile.workspace = true
