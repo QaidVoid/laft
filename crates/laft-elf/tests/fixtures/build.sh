@@ -36,6 +36,13 @@ cc $flags -shared -fPIC -o "$tmp/libversioned.so" libversioned.c \
 (cd "$tmp" && cc $flags -fPIE -pie -o "$fixtures/needs-path" \
   "$fixtures/program.c" ./libversioned.so)
 
+# A 32-bit program needs a 32-bit library to link against.
+# shellcheck disable=SC2086
+cc -m32 $flags -shared -fPIC -o "$tmp/libversioned32.so" libversioned.c \
+  -Wl,-soname,libversioned.so.1 -Wl,--version-script=libversioned.map
+# shellcheck disable=SC2086
+cc -m32 $flags -fPIE -pie -o program32 program32.c "$tmp/libversioned32.so"
+
 readelf --version-info --wide libversioned.so > "$tmp/versions"
 # readelf names GNU_IFUNC only for objects marked with the GNU OS ABI.
 readelf --dyn-syms --wide libversioned.so \

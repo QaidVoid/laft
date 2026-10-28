@@ -145,6 +145,24 @@ fn executable_reports_interpreter_needed_runpath_and_imports() {
 }
 
 #[test]
+fn elf32_executable_reports_class_machine_and_needed() {
+    const EM_386: u16 = 3;
+    let program = inspect("program32");
+    assert_eq!(program.class, Class::Elf32);
+    assert_eq!(program.kind, Kind::Executable);
+    assert_eq!(program.machine, EM_386);
+    assert_eq!(program.interpreter.as_deref(), Some("/lib/ld-linux.so.2"));
+    let needed: Vec<&str> = program.needed.iter().map(Library::as_str).collect();
+    assert_eq!(needed, ["libversioned.so.1"]);
+    assert!(
+        program.imports.iter().any(|import| import.name == "add"
+            && import.version.as_ref().is_some_and(|v| v.name == "VERS_2")),
+        "{:?}",
+        program.imports
+    );
+}
+
+#[test]
 fn needed_paths_are_reported_rather_than_rejected() {
     let program = inspect("needs-path");
     let path = Library::Path("./libversioned.so".into());
