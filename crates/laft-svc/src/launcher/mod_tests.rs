@@ -365,7 +365,12 @@ fn finish_stops_an_emulated_oneshot_with_its_down_command() {
     spec.down = sh(&format!("touch {}", flag.display()));
     spec.restart_delay_ms = 0;
     fixture.install(&spec);
-    fixture.launcher.finish("boot-complete", 100, 0).ok();
+    let control = fixture.supervise_control("boot-complete");
+    fixture
+        .launcher
+        .finish("boot-complete", 100, 0)
+        .expect("finishes");
+    assert_eq!(read(&control), "d", "a failed up is not restarted");
     assert!(!flag.exists(), "down runs only after a successful up");
     fixture.mark("boot-complete");
     fixture
