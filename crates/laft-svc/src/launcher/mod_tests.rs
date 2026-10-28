@@ -402,6 +402,27 @@ fn check_poller_marks_ready_once_the_check_passes() {
 }
 
 #[test]
+fn a_hanging_check_is_killed_at_the_timeout() {
+    let fixture = Fixture::new();
+    let spec = resolve("udevd", &Service::longrun(&["/bin/true"]));
+    let credentials = Credentials {
+        user: "root".into(),
+        uid: 0,
+        gid: 0,
+        groups: vec![0],
+        home: "/root".into(),
+        shell: "/bin/sh".into(),
+    };
+    let started = std::time::Instant::now();
+    let passed = fixture
+        .launcher
+        .poll_check(&spec, &credentials, &sh("sleep 30"), 1000, 300)
+        .expect("polls");
+    assert!(!passed && !fixture.ready("udevd"));
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[test]
 fn logger_directory_and_rotation_settings_are_written() {
     let fixture = Fixture::new();
     let (uid, gid) = (

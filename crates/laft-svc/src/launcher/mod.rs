@@ -647,7 +647,8 @@ impl Launcher {
     }
 
     /// Runs the check command until it succeeds, then creates the ready
-    /// marker. Returns whether it did before the timeout.
+    /// marker. Returns whether it did before the timeout. An attempt that
+    /// is still running at the timeout is killed and counts as failed.
     fn poll_check(
         &self,
         spec: &Spec,
@@ -662,14 +663,7 @@ impl Launcher {
             let mut check = command(spec, credentials, argv);
             check.stdin(Stdio::null()).stdout(Stdio::null());
             let passed = spawn_as(&spec.name, credentials, check)
-                .and_then(|mut child| {
-                    child.wait().map_err(|source| Error::Exec {
-                        name: spec.name.clone(),
-                        program: argv[0].clone(),
-                        source,
-                    })
-                })
-                .is_ok_and(|status| status.success());
+                .is_ok_and(|child| wait_until(child, deadline).is_some_and(|s| s.success()));
             if passed {
                 self.mark_ready(&spec.name)?;
                 return Ok(true);
@@ -844,6 +838,25 @@ fn create_parent(path: &Path) -> Result<(), Error> {
     match path.parent() {
         Some(dir) => fs::create_dir_all(dir).map_err(io(dir)),
         None => Ok(()),
+    }
+}
+
+/// Waits for `child` until `deadline`, then kills it. Returns how it
+/// exited, or `None` when it was killed or cannot be waited for.
+fn wait_until(mut child: std::process::Child, deadline: Instant) -> Option<ExitStatus> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => {}
+            Err(_) => return None,
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(left.min(POLL));
     }
 }
 
