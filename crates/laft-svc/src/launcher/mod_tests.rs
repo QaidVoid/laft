@@ -3,6 +3,7 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use tempfile::TempDir;
 
@@ -13,15 +14,21 @@ use crate::spec::{Spec, SpecDir};
 use crate::validate::resolve;
 use crate::{Error, Restart, Service, ServiceKind};
 
+/// Held by every fixture, because the launcher changes the process umask
+/// while it starts a command, and tests run on parallel threads.
+static UMASK: Mutex<()> = Mutex::new(());
+
 /// A temporary root with account databases in which `root` is uid 0 and
 /// `me` is the user running the tests.
 struct Fixture {
     dir: TempDir,
     launcher: Launcher,
+    _umask: MutexGuard<'static, ()>,
 }
 
 impl Fixture {
     fn new() -> Self {
+        let umask = UMASK.lock().unwrap_or_else(PoisonError::into_inner);
         let dir = tempfile::tempdir().expect("can create a temporary directory");
         let (uid, gid) = (
             rustix::process::getuid().as_raw(),
@@ -39,7 +46,11 @@ impl Fixture {
         )
         .expect("write");
         let launcher = Launcher::new(dir.path());
-        Self { dir, launcher }
+        Self {
+            dir,
+            launcher,
+            _umask: umask,
+        }
     }
 
     fn path(&self, relative: &str) -> PathBuf {
