@@ -46,7 +46,11 @@ pub struct Meta {
     /// The upstream home page, an `http` or `https` URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub homepage: Option<String>,
-    /// SPDX license identifiers, sorted.
+    /// License identifiers, sorted. Each is written like an SPDX license
+    /// identifier or a `LicenseRef-` reference: letters, digits, `.` and `-`,
+    /// optionally followed by `+`. Only that syntax is checked, not
+    /// membership in the SPDX license list, so identifiers added to the list
+    /// later stay valid.
     pub license: Vec<String>,
     /// Runtime dependencies, sorted by their text form.
     pub depends: Vec<Dep>,
@@ -202,13 +206,14 @@ impl Meta {
             check_url(homepage)?;
         }
         for license in &self.license {
-            if license.is_empty()
-                || !license
+            let id = license.strip_suffix('+').unwrap_or(license);
+            if id.is_empty()
+                || !id
                     .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
             {
                 return Err(Error::invalid(format!(
-                    "`license` entry {license:?} is not an SPDX license identifier"
+                    "`license` entry {license:?} is not one license identifier made of letters, digits, `.` and `-`, optionally followed by `+`"
                 )));
             }
         }

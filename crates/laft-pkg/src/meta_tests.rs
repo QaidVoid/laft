@@ -88,7 +88,32 @@ fn text_fields_are_checked() {
     assert!(rejected(|m| m.homepage = Some("ftp://example.org".into())).contains("homepage"));
     assert!(rejected(|m| m.homepage = Some("https://".into())).contains("homepage"));
     assert!(rejected(|m| m.homepage = Some("https://a b".into())).contains("homepage"));
-    assert!(rejected(|m| m.license = vec!["MIT OR Apache-2.0".into()]).contains("SPDX"));
+}
+
+#[test]
+fn license_entries_are_single_identifiers() {
+    for license in [
+        "GPL-2.0+",
+        "GPL-2.0-or-later",
+        "LicenseRef-Proprietary",
+        "bzip2-1.0.6",
+    ] {
+        let mut m = meta(0);
+        m.license = vec![license.into()];
+        assert!(m.validate().is_ok(), "{license}");
+    }
+    for license in [
+        "",
+        "+",
+        "MIT OR Apache-2.0",
+        "Apache 2",
+        "GPL+2",
+        "MIT++",
+        "MIT,BSD",
+    ] {
+        let err = rejected(|m| m.license = vec![license.into()]);
+        assert!(err.contains("license identifier"), "{license:?}: {err}");
+    }
 }
 
 #[test]
