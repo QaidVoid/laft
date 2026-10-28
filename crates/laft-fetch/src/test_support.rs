@@ -1,4 +1,4 @@
-//! A local HTTP server and sample packages for tests.
+//! A local HTTP server, signed sample repositories and packages for tests.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
@@ -8,11 +8,15 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
-use laft_core::{Blake3Hash, StoreId};
-use laft_index::IndexEntry;
+use laft_core::{Blake3Hash, StoreId, Timestamp};
+use laft_index::{Defaults, Index, IndexEntry, Keys, OnlineKey, PublicKey, Repo};
 use laft_pkg::{Arch, Meta};
 
 use crate::Config;
+
+/// A signing time all sample documents are built around.
+pub(crate) const T0: u64 = 1_761_652_800;
+pub(crate) const DAY: u64 = 86_400;
 
 /// What the server does with the next request for a path instead of
 /// answering normally.
@@ -72,8 +76,16 @@ impl Server {
         format!("http://{}", self.addr)
     }
 
+    pub(crate) fn put_all(&self, files: &BTreeMap<String, Vec<u8>>) {
+        self.lock().files.extend(files.clone());
+    }
+
     pub(crate) fn put(&self, path: &str, bytes: &[u8]) {
         self.lock().files.insert(path.into(), bytes.to_vec());
+    }
+
+    pub(crate) fn remove(&self, path: &str) {
+        self.lock().files.remove(path);
     }
 
     /// Queues `fault` for the next request of `path` that has no fault
@@ -94,6 +106,11 @@ impl Server {
             .filter(|l| l.path == path)
             .cloned()
             .collect()
+    }
+
+    /// The paths of every request so far, in the order they arrived.
+    pub(crate) fn paths(&self) -> Vec<String> {
+        self.lock().log.iter().map(|l| l.path.clone()).collect()
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -208,6 +225,129 @@ pub(crate) fn config(cache: &Path) -> Config {
         read_timeout: Duration::from_millis(500),
         retries: 2,
         retry_delay: Duration::from_millis(1),
+    }
+}
+
+/// A minisign key pair.
+pub(crate) struct TestKey {
+    pub(crate) public: PublicKey,
+    pk: minisign::PublicKey,
+    sk: minisign::SecretKey,
+}
+
+impl TestKey {
+    pub(crate) fn generate() -> Self {
+        let pair =
+            minisign::KeyPair::generate_unencrypted_keypair().expect("keys can be generated");
+        Self {
+            public: pair
+                .pk
+                .to_base64()
+                .parse()
+                .expect("minisign writes valid public keys"),
+            pk: pair.pk,
+            sk: pair.sk,
+        }
+    }
+
+    pub(crate) fn sign(&self, data: &[u8], comment: &str) -> Vec<u8> {
+        minisign::sign(Some(&self.pk), &self.sk, data, Some(comment), None)
+            .expect("an unencrypted key can sign")
+            .into_string()
+            .into_bytes()
+    }
+
+    /// The key as an online key valid for a year around [`T0`].
+    pub(crate) fn online(&self) -> OnlineKey {
+        OnlineKey {
+            id: self.public.id(),
+            public: self.public.clone(),
+            not_before: Timestamp::from_secs(T0 - 365 * DAY),
+            not_after: Timestamp::from_secs(T0 + 365 * DAY),
+        }
+    }
+}
+
+/// The configuration of `core` on channel `current` with root key `root`.
+pub(crate) fn repo(root: &TestKey) -> Repo {
+    Repo {
+        name: "core".parse().expect("valid name"),
+        channel: "current".parse().expect("valid name"),
+        arch: Arch::X86_64V3,
+        key: root.public.clone(),
+        keys: vec![],
+    }
+}
+
+/// A moment while every sample index of generation around [`T0`] is valid.
+pub(crate) fn now() -> Timestamp {
+    Timestamp::from_secs(T0 + DAY)
+}
+
+/// The directory of the sample channel below the repository base.
+pub(crate) const CHANNEL: &str = "channels/current/x86_64-v3";
+
+/// An empty index of `core`, signed `generation` seconds after the epoch
+/// and valid for 14 days.
+pub(crate) fn index(generation: u64) -> Index {
+    Index {
+        format: Index::FORMAT,
+        repo: "core".parse().expect("valid name"),
+        channel: "current".parse().expect("valid name"),
+        arch: Arch::X86_64V3,
+        generation,
+        timestamp: Timestamp::from_secs(generation),
+        expires: Timestamp::from_secs(generation + 14 * DAY),
+        defaults: Defaults::default(),
+        packages: vec![],
+        yanked: vec![],
+    }
+}
+
+/// The files of a repository publishing `index`. With `online`, a
+/// `keys.json` signed by `root` lists that key, which signs the index.
+/// Without, the repository runs in direct mode.
+pub(crate) fn publish(
+    root: &TestKey,
+    online: Option<&TestKey>,
+    index: &Index,
+) -> BTreeMap<String, Vec<u8>> {
+    let mut files = BTreeMap::new();
+    let signer = match online {
+        Some(key) => {
+            let keys = Keys {
+                format: Keys::FORMAT,
+                repo: "core".parse().expect("valid name"),
+                version: 1,
+                keys: vec![key.online()],
+                revoked: vec![],
+                generation_floor: None,
+            };
+            let json = keys.to_json().expect("sample keys are valid");
+            let signature = root.sign(&json, &keys.comment().to_string());
+            files.insert("keys.json".into(), json);
+            files.insert("keys.json.minisig".into(), signature);
+            key
+        }
+        None => root,
+    };
+    let bytes = index.encode().expect("sample indexes are valid");
+    let signature = signer.sign(&bytes, &index.comment().to_string());
+    let snapshot = format!("{CHANNEL}/snapshots/{}.json.zst", index.generation);
+    files.insert(format!("{snapshot}.minisig"), signature.clone());
+    files.insert(snapshot, bytes.clone());
+    files.insert(format!("{CHANNEL}/index.json.zst.minisig"), signature);
+    files.insert(format!("{CHANNEL}/index.json.zst"), bytes);
+    files
+}
+
+/// Writes `files` below `dir`.
+pub(crate) fn write_tree(dir: &Path, files: &BTreeMap<String, Vec<u8>>) {
+    for (path, bytes) in files {
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().expect("files are in a directory"))
+            .expect("the test directory is writable");
+        std::fs::write(path, bytes).expect("the test directory is writable");
     }
 }
 

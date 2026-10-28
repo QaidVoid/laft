@@ -1,8 +1,8 @@
 //! Crash-safe file helpers for the cache.
 
-use std::fs::{self, DirBuilder, File};
-use std::io;
-use std::os::unix::fs::DirBuilderExt;
+use std::fs::{self, DirBuilder, File, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use crate::Error;
@@ -28,6 +28,25 @@ pub(crate) fn create_dir(dir: &Path) -> Result<(), Error> {
         .mode(0o700)
         .create(dir)
         .map_err(io(dir))
+}
+
+/// Writes `bytes` to `path` so that a crash leaves either the old file or
+/// the new one: the bytes go to a `.part` file in the same directory, which
+/// is synced and renamed into place, then the directory is synced.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    let dir = parent(path);
+    create_dir(dir)?;
+    let part = part_path(path);
+    remove(&part)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(FILE_MODE)
+        .open(&part)
+        .map_err(io(&part))?;
+    file.write_all(bytes).map_err(io(&part))?;
+    file.sync_all().map_err(io(&part))?;
+    publish(&part, path)
 }
 
 /// Renames the synced file `part` to `path` and syncs the directory.

@@ -87,6 +87,9 @@ pub enum ErrorKind {
         /// The underlying error.
         source: io::Error,
     },
+    /// The repository's trust model rejected a downloaded document, or its
+    /// state records could not be read or written.
+    Trust(Box<laft_index::Error>),
     /// Every URL failed. The attempts are in the order they were made.
     AllFailed {
         /// What was being fetched, for example a path in the repository.
@@ -179,6 +182,7 @@ impl fmt::Display for ErrorKind {
                 write!(f, "expected BLAKE3 {expected}, got {actual}")
             }
             Self::Io { path, source } => write!(f, "cannot access {}: {source}", path.display()),
+            Self::Trust(e) => fmt::Display::fmt(e, f),
             Self::AllFailed { what, attempts } => {
                 write!(f, "every URL failed for {what}")?;
                 for attempt in attempts {
@@ -194,6 +198,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self.kind {
             ErrorKind::Io { source, .. } => Some(source),
+            ErrorKind::Trust(e) => Some(e.as_ref()),
             _ => None,
         }
     }
