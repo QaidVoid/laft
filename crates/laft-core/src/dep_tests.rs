@@ -218,6 +218,16 @@ fn constraints_with_revision_compare_it_on_equal_versions() {
     assert!(ge.matches(&version("1.3.2"), Some(1)));
     assert!(!ge.matches(&version("1.3.1"), Some(1)));
     assert!(constraint(Op::Lt, "1.3.1", Some(2)).matches(&version("1.3.1"), Some(1)));
+    let le = constraint(Op::Le, "1.3.1", Some(2));
+    assert!(le.matches(&version("1.3.1"), Some(2)));
+    assert!(le.matches(&version("1.3.1"), Some(1)));
+    assert!(!le.matches(&version("1.3.1"), Some(3)));
+    assert!(le.matches(&version("1.3"), Some(9)));
+    let gt = constraint(Op::Gt, "1.3.1", Some(2));
+    assert!(gt.matches(&version("1.3.1"), Some(3)));
+    assert!(!gt.matches(&version("1.3.1"), Some(2)));
+    assert!(gt.matches(&version("1.3.2"), Some(1)));
+    assert!(!gt.matches(&version("1.3"), Some(9)));
 }
 
 #[test]
