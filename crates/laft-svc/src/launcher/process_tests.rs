@@ -31,6 +31,7 @@ fn environment_is_minimal_and_the_service_may_override_it() {
         groups: vec![101],
         home: "/var/lib/myapp".into(),
         shell: "/usr/bin/nologin".into(),
+        declares_groups: false,
     };
     let env = environment(&resolve("x", &service), &credentials);
     let pairs: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();

@@ -384,6 +384,7 @@ fn check_poller_marks_ready_once_the_check_passes() {
         groups: vec![0],
         home: "/root".into(),
         shell: "/bin/sh".into(),
+        declares_groups: false,
     };
     let failing = sh("exit 1");
     let passed = fixture
@@ -414,6 +415,7 @@ fn a_hanging_check_is_killed_at_the_timeout() {
         groups: vec![0],
         home: "/root".into(),
         shell: "/bin/sh".into(),
+        declares_groups: false,
     };
     let started = std::time::Instant::now();
     let passed = fixture
@@ -638,6 +640,7 @@ fn privileges_are_dropped_for_the_command() {
         groups: vec![65534],
         home: "/var/empty".into(),
         shell: "/usr/bin/nologin".into(),
+        declares_groups: false,
     };
     let mut id = Command::new("/usr/bin/id");
     id.arg("-u").stdout(std::process::Stdio::piped());
@@ -656,4 +659,33 @@ fn privileges_are_dropped_for_the_command() {
     })
     .join()
     .expect("the thread finishes");
+}
+
+#[test]
+fn a_root_service_gets_its_declared_groups() {
+    let credentials = Credentials {
+        user: "root".into(),
+        uid: 0,
+        gid: 65534,
+        groups: vec![65534],
+        home: "/root".into(),
+        shell: "/bin/sh".into(),
+        declares_groups: true,
+    };
+    let result = std::thread::spawn(move || {
+        drop_privileges("job", &credentials).map(|()| {
+            (
+                rustix::process::geteuid().as_raw(),
+                rustix::process::getegid().as_raw(),
+            )
+        })
+    })
+    .join()
+    .expect("the thread finishes");
+    if rustix::process::geteuid().is_root() {
+        assert_eq!(result.expect("drops"), (0, 65534));
+    } else {
+        let error = result.expect_err("changing groups needs root");
+        assert!(error.to_string().contains("set the groups"), "{error}");
+    }
 }

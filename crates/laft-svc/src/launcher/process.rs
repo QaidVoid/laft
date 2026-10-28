@@ -115,9 +115,10 @@ pub(crate) fn command(spec: &Spec, credentials: &Credentials, argv: &[String]) -
     command
 }
 
-/// Switches the calling thread to the service's credentials, unless the
-/// service runs as root: supplementary groups, then group, then user, and
-/// checks the result.
+/// Switches the calling thread to the service's credentials: supplementary
+/// groups, then group, then user, and checks the result. A service that
+/// runs as root keeps uid 0, and its groups change only when it declares
+/// a group or supplementary groups.
 ///
 /// The system calls change only the calling thread, unlike their C library
 /// counterparts. A process started from this thread inherits the thread's
@@ -130,7 +131,7 @@ pub(crate) fn command(spec: &Spec, credentials: &Credentials, argv: &[String]) -
 /// returns. Even with other threads alive, `execve` ends them and runs the
 /// new program with the calling thread's credentials only.
 pub(crate) fn drop_privileges(name: &str, credentials: &Credentials) -> Result<(), Error> {
-    if credentials.uid == 0 {
+    if !changes_credentials(credentials) {
         return Ok(());
     }
     let setup = |step: &'static str| {
@@ -151,7 +152,9 @@ pub(crate) fn drop_privileges(name: &str, credentials: &Credentials) -> Result<(
     );
     rustix::thread::set_thread_groups(&groups).map_err(setup("set the groups"))?;
     rustix::thread::set_thread_res_gid(gid, gid, gid).map_err(setup("set the group"))?;
-    rustix::thread::set_thread_res_uid(uid, uid, uid).map_err(setup("set the user"))?;
+    if !uid.is_root() {
+        rustix::thread::set_thread_res_uid(uid, uid, uid).map_err(setup("set the user"))?;
+    }
     let dropped = rustix::process::getuid() == uid
         && rustix::process::geteuid() == uid
         && rustix::process::getgid() == gid
@@ -160,6 +163,12 @@ pub(crate) fn drop_privileges(name: &str, credentials: &Credentials) -> Result<(
         return Err(setup("verify the dropped credentials")(Errno::PERM));
     }
     Ok(())
+}
+
+/// Whether running as `credentials` changes anything for a launcher that
+/// runs as root.
+fn changes_credentials(credentials: &Credentials) -> bool {
+    credentials.uid != 0 || credentials.declares_groups
 }
 
 /// Starts `command` with the service's credentials, leaving the launcher's
@@ -179,7 +188,7 @@ pub(crate) fn spawn_as(
         program: program.clone(),
         source,
     };
-    if credentials.uid == 0 {
+    if !changes_credentials(credentials) {
         return command.spawn().map_err(exec_error);
     }
     std::thread::scope(|scope| {

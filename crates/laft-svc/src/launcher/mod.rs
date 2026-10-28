@@ -324,6 +324,7 @@ impl Launcher {
             groups: vec![gid],
             home: "/var/empty".into(),
             shell: "/usr/bin/nologin".into(),
+            declares_groups: false,
         };
         drop_privileges(&spec.name, &credentials)?;
         let source = Command::new("/usr/bin/svlogd")

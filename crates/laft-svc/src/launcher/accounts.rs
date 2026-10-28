@@ -34,6 +34,9 @@ pub(crate) struct Credentials {
     pub(crate) groups: Vec<u32>,
     pub(crate) home: String,
     pub(crate) shell: String,
+    /// Whether the service declares a group or supplementary groups. A
+    /// service running as root gets its groups changed only then.
+    pub(crate) declares_groups: bool,
 }
 
 impl Accounts {
@@ -104,6 +107,7 @@ impl Accounts {
             groups,
             home: user.home.clone(),
             shell: user.shell.clone(),
+            declares_groups: spec.group.is_some() || !spec.groups.is_empty(),
         })
     }
 
