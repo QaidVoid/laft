@@ -95,8 +95,8 @@ impl fmt::Display for Identity {
 /// One path in a package payload.
 ///
 /// Owners and groups are names from the static system account registry.
-/// `None` means `root`, which is never written out, so every payload has
-/// exactly one manifest.
+/// `None` means `root`. Naming `root` explicitly is rejected, so each owner
+/// and group has exactly one encoding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Entry {

@@ -22,8 +22,11 @@ const MAX_SUMMARY_CHARS: usize = 120;
 /// JSON (RFC 8785).
 ///
 /// Fields are public so that the builder can fill them in. [`Self::validate`]
-/// checks every rule, and serializing or parsing always validates. Every list
-/// must be sorted without duplicates, as described on each field.
+/// checks every rule, and [`Self::to_json`] and [`Self::from_json`] always
+/// validate. The derived `Serialize` and `Deserialize` implementations do
+/// not, so a document that embeds metadata through them must call
+/// [`Self::validate`] itself. Every list must be sorted without duplicates,
+/// as described on each field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Meta {
