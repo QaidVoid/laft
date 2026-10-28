@@ -139,8 +139,6 @@ pub struct IndexRecord {
     pub blake3: Option<Blake3Hash>,
     /// The key that signed the accepted index.
     pub signer: KeyId,
-    /// The signing time of the accepted index.
-    pub timestamp: Timestamp,
 }
 
 /// The index records of one repository, one per channel and architecture.
@@ -486,7 +484,6 @@ impl IndexState {
             generation: index.generation,
             blake3: Some(blake3),
             signer: signature.key_id(),
-            timestamp: index.timestamp,
         };
         match slot {
             Some(i) => records[i] = record.clone(),
