@@ -190,6 +190,51 @@ fn arb_provide() -> impl Strategy<Value = Provide> {
     ]
 }
 
+fn version(s: &str) -> Version {
+    s.parse().expect("test version is valid")
+}
+
+#[test]
+fn constraints_without_revision_ignore_the_revision() {
+    let lt2 = constraint(Op::Lt, "2", None);
+    assert!(lt2.matches(&version("1.9"), Some(7)));
+    assert!(!lt2.matches(&version("2"), Some(1)));
+    assert!(!lt2.matches(&version("2.0"), Some(1)));
+    let eq = constraint(Op::Eq, "1.3", None);
+    assert!(eq.matches(&version("1.3"), Some(1)));
+    assert!(eq.matches(&version("1.3"), Some(9)));
+    assert!(!eq.matches(&version("1.3.0"), Some(1)));
+    assert!(constraint(Op::Ge, "1.3", None).matches(&version("1.3"), Some(1)));
+    assert!(constraint(Op::Le, "1.3", None).matches(&version("1.3~rc1"), None));
+    assert!(!constraint(Op::Gt, "1.3", None).matches(&version("1.3"), Some(5)));
+}
+
+#[test]
+fn constraints_with_revision_compare_it_on_equal_versions() {
+    let exact = constraint(Op::Eq, "1.3.1", Some(2));
+    assert!(exact.matches(&version("1.3.1"), Some(2)));
+    assert!(!exact.matches(&version("1.3.1"), Some(1)));
+    let ge = constraint(Op::Ge, "1.3.1", Some(2));
+    assert!(ge.matches(&version("1.3.2"), Some(1)));
+    assert!(!ge.matches(&version("1.3.1"), Some(1)));
+    assert!(constraint(Op::Lt, "1.3.1", Some(2)).matches(&version("1.3.1"), Some(1)));
+}
+
+#[test]
+fn version_requirements_match_by_kind() {
+    assert!(VersionReq::Any.matches(&version("0.1"), 1));
+    let prefix = VersionReq::Prefix("19".parse().expect("valid"));
+    assert!(prefix.matches(&version("19.1.7"), 1));
+    assert!(!prefix.matches(&version("190.1"), 1));
+    let range = VersionReq::Constraints(vec![
+        constraint(Op::Ge, "1.3", None),
+        constraint(Op::Lt, "2", None),
+    ]);
+    assert!(range.matches(&version("1.9.9"), 3));
+    assert!(!range.matches(&version("2.0"), 1));
+    assert!(!range.matches(&version("1.2"), 1));
+}
+
 proptest! {
     #[test]
     fn dependency_text_round_trips(dep in arb_dep()) {

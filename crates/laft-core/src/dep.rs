@@ -120,6 +120,39 @@ pub struct Constraint {
     pub rev: Option<NonZeroU32>,
 }
 
+impl Constraint {
+    /// Whether a package of `version` and revision `rev` satisfies the
+    /// constraint.
+    ///
+    /// Versions compare as described on [`Version`]. When the constraint
+    /// carries a revision and `rev` is given, equal versions are then
+    /// compared by revision. Otherwise the revision is ignored, so `<2`
+    /// rejects `2-r1` and `=1.3` accepts every revision of `1.3`.
+    ///
+    /// ```
+    /// use laft_core::Constraint;
+    ///
+    /// let c: Constraint = ">=1.3.1-r2".parse()?;
+    /// assert!(c.matches(&"1.3.1".parse()?, Some(2)));
+    /// assert!(!c.matches(&"1.3.1".parse()?, Some(1)));
+    /// assert!(c.matches(&"1.3.1".parse()?, None));
+    /// # Ok::<(), laft_core::ParseError>(())
+    /// ```
+    pub fn matches(&self, version: &Version, rev: Option<u32>) -> bool {
+        let mut ordering = version.cmp(&self.version);
+        if let (Some(bound), Some(rev)) = (self.rev, rev) {
+            ordering = ordering.then(rev.cmp(&bound.get()));
+        }
+        match self.op {
+            Op::Ge => ordering.is_ge(),
+            Op::Le => ordering.is_le(),
+            Op::Gt => ordering.is_gt(),
+            Op::Lt => ordering.is_lt(),
+            Op::Eq => ordering.is_eq(),
+        }
+    }
+}
+
 impl FromStr for Constraint {
     type Err = ParseError;
 
@@ -172,6 +205,21 @@ pub enum VersionReq {
     /// Versions that satisfy every constraint, written `name>=1.3,<2`. The
     /// list is never empty, because an empty list is written as [`Self::Any`].
     Constraints(Vec<Constraint>),
+}
+
+impl VersionReq {
+    /// Whether a package of `version` and revision `rev` satisfies the
+    /// requirement. Revisions are compared only by constraints that carry
+    /// one, as described on [`Constraint::matches`].
+    pub fn matches(&self, version: &Version, rev: u32) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Prefix(prefix) => prefix.matches(version),
+            Self::Constraints(constraints) => {
+                constraints.iter().all(|c| c.matches(version, Some(rev)))
+            }
+        }
+    }
 }
 
 /// A runtime or build dependency of a package.
