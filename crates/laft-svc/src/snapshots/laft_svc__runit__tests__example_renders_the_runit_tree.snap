@@ -1,0 +1,108 @@
+---
+source: crates/laft-svc/src/runit_tests.rs
+expression: "dump(&rendered, \"services/runit/\")"
+---
+=== services/runit/early-longruns (444)
+udevd
+=== services/runit/stage/1 (555)
+#!/bin/sh
+# Rendered by laft for generation 42. Early boot graph, in dependency order.
+PATH=/usr/bin
+export PATH
+mkdir -p /run/runit/ready /run/runit/service /run/runit/early
+
+/usr/bin/laft svc up --backend runit laft-activate
+/usr/bin/laft svc up --backend runit kernel-fs
+/usr/bin/laft svc exec --backend runit --background udevd
+/usr/bin/laft svc up --backend runit clock
+/usr/bin/laft svc up --backend runit hostname
+/usr/bin/laft svc up --backend runit kmod
+/usr/bin/laft svc up --backend runit udev-trigger
+/usr/bin/laft svc up --backend runit console
+/usr/bin/laft svc up --backend runit mount-fs
+/usr/bin/laft svc up --backend runit random-seed
+/usr/bin/laft svc up --backend runit swap
+/usr/bin/laft svc up --backend runit sysctl
+/usr/bin/laft svc up --backend runit early
+exit 0
+=== services/runit/stage/2 (555)
+#!/bin/sh
+PATH=/usr/bin
+export PATH
+cp -a /run/laft/system/services/runit/sv/. /run/runit/service/
+exec env - PATH=/usr/bin runsvdir -P /run/runit/service 'log: ...........................................................................................................................................'
+=== services/runit/stage/3 (555)
+#!/bin/sh
+PATH=/usr/bin
+export PATH
+sv -w 10 force-stop /run/runit/service/*
+sv exit /run/runit/service/*
+# Stop early longruns started in stage 1.
+/usr/bin/laft svc stop-early --backend runit
+# Early oneshots with a down command, in reverse order.
+/usr/bin/laft svc down --backend runit swap
+/usr/bin/laft svc down --backend runit random-seed
+/usr/bin/laft svc down --backend runit mount-fs
+/usr/bin/laft svc down --backend runit clock
+kill -s TERM -1
+sleep 2
+kill -s KILL -1
+sync
+mount -o remount,ro /
+=== services/runit/stage/ctrlaltdel (555)
+#!/bin/sh
+exec /run/laft/booted/usr/bin/runit-init 6
+=== services/runit/sv/boot-complete/finish (555)
+#!/bin/sh
+exec /usr/bin/laft svc finish --backend runit boot-complete "$1" "$2"
+=== services/runit/sv/boot-complete/log/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc logger --backend runit boot-complete
+=== services/runit/sv/boot-complete/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc exec --backend runit boot-complete 2>&1
+=== services/runit/sv/dbus/finish (555)
+#!/bin/sh
+exec /usr/bin/laft svc finish --backend runit dbus "$1" "$2"
+=== services/runit/sv/dbus/log/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc logger --backend runit dbus
+=== services/runit/sv/dbus/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc exec --backend runit dbus 2>&1
+=== services/runit/sv/getty-tty1/finish (555)
+#!/bin/sh
+exec /usr/bin/laft svc finish --backend runit getty-tty1 "$1" "$2"
+=== services/runit/sv/getty-tty1/log/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc logger --backend runit getty-tty1
+=== services/runit/sv/getty-tty1/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc exec --backend runit getty-tty1 2>&1
+=== services/runit/sv/getty-tty2/finish (555)
+#!/bin/sh
+exec /usr/bin/laft svc finish --backend runit getty-tty2 "$1" "$2"
+=== services/runit/sv/getty-tty2/log/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc logger --backend runit getty-tty2
+=== services/runit/sv/getty-tty2/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc exec --backend runit getty-tty2 2>&1
+=== services/runit/sv/myapp/finish (555)
+#!/bin/sh
+exec /usr/bin/laft svc finish --backend runit myapp "$1" "$2"
+=== services/runit/sv/myapp/log/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc logger --backend runit myapp
+=== services/runit/sv/myapp/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc exec --backend runit myapp 2>&1
+=== services/runit/sv/turnstiled/finish (555)
+#!/bin/sh
+exec /usr/bin/laft svc finish --backend runit turnstiled "$1" "$2"
+=== services/runit/sv/turnstiled/log/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc logger --backend runit turnstiled
+=== services/runit/sv/turnstiled/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc exec --backend runit turnstiled 2>&1

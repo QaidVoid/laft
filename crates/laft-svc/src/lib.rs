@@ -4,13 +4,15 @@
 //! values. [`ServiceSet::new`] validates them, adds the generated gettys and
 //! the implicit dependency on the early boot graph, and resolves every
 //! enabled service into a [`Spec`]: the complete description of how to run
-//! it.
+//! it. [`runit::render`] turns a service set into the files a generation
+//! needs to boot and supervise it with runit.
 
 #![forbid(unsafe_code)]
 
 mod error;
 mod graph;
 mod model;
+pub mod runit;
 mod spec;
 mod standard;
 mod validate;

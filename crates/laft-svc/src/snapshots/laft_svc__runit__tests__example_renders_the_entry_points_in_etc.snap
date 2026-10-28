@@ -1,0 +1,12 @@
+---
+source: crates/laft-svc/src/runit_tests.rs
+expression: "dump(&rendered, \"etc/\")"
+---
+=== etc/profile.d/laft-runit.sh (444)
+export SVDIR=/run/runit/service
+=== etc/runit/1 -> /run/laft/booted/services/runit/stage/1
+=== etc/runit/2 -> /run/laft/booted/services/runit/stage/2
+=== etc/runit/3 -> /run/laft/booted/services/runit/stage/3
+=== etc/runit/ctrlaltdel -> /run/laft/booted/services/runit/stage/ctrlaltdel
+=== etc/runit/reboot -> /run/runit/reboot
+=== etc/runit/stopit -> /run/runit/stopit

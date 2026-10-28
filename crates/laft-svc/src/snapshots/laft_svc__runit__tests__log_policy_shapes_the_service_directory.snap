@@ -1,0 +1,16 @@
+---
+source: crates/laft-svc/src/runit_tests.rs
+expression: out
+---
+=== services/runit/sv/loud/finish (555)
+#!/bin/sh
+exec /usr/bin/laft svc finish --backend runit loud "$1" "$2"
+=== services/runit/sv/loud/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc exec --backend runit loud
+=== services/runit/sv/quiet/finish (555)
+#!/bin/sh
+exec /usr/bin/laft svc finish --backend runit quiet "$1" "$2"
+=== services/runit/sv/quiet/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc exec --backend runit quiet >/dev/null 2>&1
