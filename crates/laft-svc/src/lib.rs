@@ -12,6 +12,7 @@
 mod error;
 mod graph;
 mod model;
+pub mod reconcile;
 pub mod runit;
 mod spec;
 mod standard;
