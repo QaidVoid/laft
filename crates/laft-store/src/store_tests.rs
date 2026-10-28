@@ -174,6 +174,27 @@ fn verify_reports_changed_and_unlisted_paths() {
 }
 
 #[test]
+fn verify_names_the_document_that_fails_to_load() {
+    let env = Env::new();
+    let package = sample(&env);
+    let dir = add(&env, &package).expect("the package is added");
+    let store = env.root.store();
+    let meta = store.path(&dir).join(".laft/meta.json");
+    fs::set_permissions(&meta, fs::Permissions::from_mode(0o644)).expect("chmod");
+    fs::write(&meta, b"{}").expect("writable");
+    let problems = store.verify(&dir, false).expect("verifiable");
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].path, ".laft/meta.json");
+
+    let manifest = store.path(&dir).join(".laft/manifest.json");
+    fs::set_permissions(&manifest, fs::Permissions::from_mode(0o644)).expect("chmod");
+    fs::write(&manifest, b"{}").expect("writable");
+    let problems = store.verify(&dir, false).expect("verifiable");
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].path, ".laft/manifest.json");
+}
+
+#[test]
 fn entry_names_cannot_leave_the_store() {
     let env = Env::new();
     let store = env.root.store();

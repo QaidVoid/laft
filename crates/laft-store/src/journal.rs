@@ -105,7 +105,8 @@ impl Journal {
 
     /// Writes the journal atomically.
     pub(crate) fn save(&self, root: &Root) -> Result<()> {
-        fsx::write_atomic(&Self::path(root, &self.txid), &to_json(self)?, 0o600)
+        let path = Self::path(root, &self.txid);
+        fsx::write_atomic(&path, &to_json(&path, self)?, 0o600)
     }
 
     /// Removes the journal, which ends the transaction.
@@ -197,7 +198,8 @@ impl Counters {
     }
 
     pub(crate) fn save(&self, root: &Root) -> Result<()> {
-        fsx::write_atomic(&Self::path(root), &to_json(self)?, 0o600)
+        let path = Self::path(root);
+        fsx::write_atomic(&path, &to_json(&path, self)?, 0o600)
     }
 }
 

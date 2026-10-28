@@ -167,8 +167,9 @@ pub(crate) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T
     serde_json::from_slice(&bytes).map_err(|e| corrupt(path, e))
 }
 
-/// Serializes a record as canonical JSON.
-pub(crate) fn to_json<T: serde::Serialize>(value: &T) -> Result<Vec<u8>> {
+/// Serializes a record that is about to be written to `path` as canonical
+/// JSON.
+pub(crate) fn to_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<Vec<u8>> {
     laft_core::to_canonical_json(value)
-        .map_err(|e| crate::Error::Invalid(format!("cannot record a value: {e}")))
+        .map_err(|e| corrupt(path, format!("the record is not canonical JSON: {e}")))
 }

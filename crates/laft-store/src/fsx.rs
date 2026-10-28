@@ -225,7 +225,8 @@ fn canonical_number(s: &str) -> Option<u64> {
     (n > 0 && n.to_string() == s).then_some(n)
 }
 
+/// The directory that holds `path`. Only `/` has no parent, and it is its
+/// own.
 fn parent(path: &Path) -> &Path {
-    path.parent()
-        .expect("paths handled here are always inside a directory of the root")
+    path.parent().unwrap_or(path)
 }

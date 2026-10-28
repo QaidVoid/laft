@@ -83,6 +83,7 @@ pub struct Plan {
 pub struct Transaction<'l> {
     lock: &'l Lock,
     journal: Journal,
+    generation: u64,
 }
 
 impl<'l> Transaction<'l> {
@@ -133,14 +134,16 @@ impl<'l> Transaction<'l> {
         );
         journal.save(root)?;
         fault::point("begin.journal")?;
-        Ok(Self { lock, journal })
+        Ok(Self {
+            lock,
+            journal,
+            generation,
+        })
     }
 
     /// The number of the generation this transaction builds.
     pub fn generation(&self) -> u64 {
-        self.journal
-            .generation
-            .expect("a transaction always reserves a generation")
+        self.generation
     }
 
     /// The version reserved for view `name`, if it was planned.
@@ -248,7 +251,8 @@ impl<'l> Transaction<'l> {
             allowed_gids: ids(&input.groups),
             triggers: BTreeMap::new(),
         };
-        fsx::write_new(&staging.join("view.json"), &to_json(&manifest)?, 0o444)?;
+        let path = staging.join("view.json");
+        fsx::write_new(&path, &to_json(&path, &manifest)?, 0o444)?;
         fsx::seal(&staging, false)?;
         fault::point("view.staged")?;
         fsx::ensure_dir(&root.views_dir().join(input.name.as_str()), 0o755)?;
@@ -310,7 +314,8 @@ impl<'l> Transaction<'l> {
             carried_modules: Vec::new(),
             etc: EtcRecord::default(),
         };
-        fsx::write_new(&staging.join("gen.json"), &to_json(&generation)?, 0o444)?;
+        let path = staging.join("gen.json");
+        fsx::write_new(&path, &to_json(&path, &generation)?, 0o444)?;
         fsx::seal(&staging, false)?;
         fault::point("gen.staged")?;
         publish_tree(&staging, &target)?;

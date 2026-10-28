@@ -101,7 +101,8 @@ impl Root {
             command: command.to_owned(),
             started: Timestamp::now(),
         };
-        fsx::write_atomic(&self.lock_info_path(), &to_json(&info)?, 0o644)?;
+        let path = self.lock_info_path();
+        fsx::write_atomic(&path, &to_json(&path, &info)?, 0o644)?;
         Ok(Lock {
             root: self.clone(),
             _file: file,

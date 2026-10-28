@@ -29,8 +29,9 @@ pub enum Error {
     },
     /// No store entry has this directory name.
     MissingEntry(String),
-    /// A file that Laft wrote itself is malformed, for example a journal or a
-    /// `gen.json`.
+    /// A file that Laft writes itself is malformed, for example a journal or
+    /// a `gen.json` that does not parse, or a record that cannot be written
+    /// as canonical JSON.
     Corrupt {
         /// The malformed file.
         path: PathBuf,

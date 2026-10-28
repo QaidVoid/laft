@@ -132,6 +132,12 @@ impl Store {
     /// Reads the manifest and the metadata of entry `dir_name`.
     pub(crate) fn load(&self, dir_name: &str) -> Result<(Manifest, Meta)> {
         let manifest = self.manifest(dir_name)?;
+        let meta = self.meta_of(dir_name, &manifest)?;
+        Ok((manifest, meta))
+    }
+
+    /// Reads the metadata of entry `dir_name`, whose manifest is `manifest`.
+    fn meta_of(&self, dir_name: &str, manifest: &Manifest) -> Result<Meta> {
         let path = self.path(dir_name).join(META_PATH);
         let bytes = fs::read(&path).map_err(io(&path))?;
         if Blake3Hash::of(&bytes) != *manifest.meta_hash() {
@@ -144,7 +150,7 @@ impl Store {
         if meta.identity() != *manifest.package() {
             return Err(corrupt(&path, "the metadata names a different package"));
         }
-        Ok((manifest, meta))
+        Ok(meta)
     }
 
     /// Compares entry `dir_name` with its manifest and returns every
@@ -156,8 +162,8 @@ impl Store {
     /// have mode `0o555`, and the documents under `.laft/` mode `0o444`.
     /// With `full`, file contents are hashed and compared as well.
     ///
-    /// A missing or invalid manifest is reported as a difference, because it
-    /// leaves nothing to compare.
+    /// A missing or invalid manifest or metadata is reported as a difference
+    /// of that document, because it leaves nothing to compare.
     ///
     /// # Errors
     ///
@@ -172,13 +178,17 @@ impl Store {
                 problem,
             });
         };
-        let (manifest, _) = match self.load(dir_name) {
-            Ok(loaded) => loaded,
+        let manifest = match self.manifest(dir_name) {
+            Ok(manifest) => manifest,
             Err(e) => {
                 report(MANIFEST_PATH, e.to_string());
                 return Ok(differences);
             }
         };
+        if let Err(e) = self.meta_of(dir_name, &manifest) {
+            report(META_PATH, e.to_string());
+            return Ok(differences);
+        }
         let owner = (
             rustix::process::geteuid().as_raw(),
             rustix::process::getegid().as_raw(),
