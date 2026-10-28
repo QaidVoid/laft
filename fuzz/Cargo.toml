@@ -16,7 +16,15 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "elf"
+path = "fuzz_targets/elf.rs"
+test = false
+doc = false
+bench = false
+
 [dependencies]
+laft-elf = { version = "0.1.0", path = "../crates/laft-elf" }
 laft-pkg = { version = "0.1.0", path = "../crates/laft-pkg" }
 libfuzzer-sys = "0.4.13"
 tempfile = "3.27.0"
