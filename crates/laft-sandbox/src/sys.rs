@@ -129,6 +129,32 @@ pub(crate) fn default_signal(signal: i32) {
     unsafe { libc::signal(signal, libc::SIG_DFL) };
 }
 
+/// The real, effective and saved user ids of the calling thread.
+pub(crate) fn getresuid() -> Result<[u32; 3], Errno> {
+    let (mut real, mut effective, mut saved) = (0, 0, 0);
+    // SAFETY: the three pointers refer to live, writable `uid_t` locals,
+    // which are the only memory `getresuid` writes.
+    let ret = unsafe { libc::getresuid(&mut real, &mut effective, &mut saved) };
+    if ret == -1 {
+        Err(last_errno())
+    } else {
+        Ok([real, effective, saved])
+    }
+}
+
+/// The real, effective and saved group ids of the calling thread.
+pub(crate) fn getresgid() -> Result<[u32; 3], Errno> {
+    let (mut real, mut effective, mut saved) = (0, 0, 0);
+    // SAFETY: the three pointers refer to live, writable `gid_t` locals,
+    // which are the only memory `getresgid` writes.
+    let ret = unsafe { libc::getresgid(&mut real, &mut effective, &mut saved) };
+    if ret == -1 {
+        Err(last_errno())
+    } else {
+        Ok([real, effective, saved])
+    }
+}
+
 /// Ends the process immediately, without running exit handlers that belong
 /// to the process it was forked from.
 pub(crate) fn exit(code: i32) -> ! {

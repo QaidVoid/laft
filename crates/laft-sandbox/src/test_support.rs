@@ -118,7 +118,7 @@ fn mount_in_namespace() -> Result<(), Errno> {
 
 /// Runs `body` in a forked child and returns the exit code and message it
 /// produced.
-fn in_child(body: impl FnOnce() -> (i32, String)) -> (Option<i32>, String) {
+pub(crate) fn in_child(body: impl FnOnce() -> (i32, String)) -> (Option<i32>, String) {
     let (reader, writer) = rustix::pipe::pipe_with(PipeFlags::CLOEXEC).expect("pipes can be made");
     // SAFETY: the child only allocates and makes system calls. The C library
     // keeps its allocator consistent across `fork`, and the child never

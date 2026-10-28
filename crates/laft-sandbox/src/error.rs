@@ -62,6 +62,7 @@ steps! {
     BindEtc => "binding the configuration over /etc",
     MountScratch => "mounting a private tmpfs",
     SwitchIds => "switching to user nobody",
+    ReadIds => "reading the process ids",
 }
 
 impl Step {
