@@ -29,10 +29,13 @@ pub(crate) enum Step {
     Descriptors,
     Exec,
     Wait,
+    InvalidPath,
+    OpenTarget,
+    NotRegularFile,
 }
 
 impl Step {
-    const ALL: [Self; 22] = [
+    const ALL: [Self; 25] = [
         Self::Resolve,
         Self::Pipe,
         Self::Unshare,
@@ -55,6 +58,9 @@ impl Step {
         Self::Descriptors,
         Self::Exec,
         Self::Wait,
+        Self::InvalidPath,
+        Self::OpenTarget,
+        Self::NotRegularFile,
     ];
 
     pub(crate) fn from_code(code: u8) -> Option<Self> {
@@ -85,11 +91,14 @@ impl Step {
             Self::Descriptors => "closing inherited descriptors",
             Self::Exec => "executing the command",
             Self::Wait => "waiting for the command",
+            Self::InvalidPath => "expecting an absolute path below /usr, got",
+            Self::OpenTarget => "opening a mount target",
+            Self::NotRegularFile => "expecting a regular file at",
         }
     }
 }
 
-/// An error from setting up a build sandbox.
+/// An error from setting up a build sandbox or from entering a view.
 ///
 /// The message names the step that failed and, where there is one, the path
 /// it was about, for example `mounting /proc: Operation not permitted (os
