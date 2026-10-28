@@ -9,6 +9,12 @@
 //! entry that is a path rather than a soname is reported as a
 //! [`Library::Path`], and the builder decides whether to accept it.
 //!
+//! Payload files must keep their section header table. The dynamic entries,
+//! the dynamic symbols and their versions are read from the `SHT_DYNAMIC`,
+//! `SHT_DYNSYM` and GNU versioning sections, so a dynamic object whose
+//! section headers were stripped is rejected rather than reported with an
+//! empty ABI.
+//!
 //! ```
 //! let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/libversioned.so");
 //! let library = laft_elf::inspect(&std::fs::read(path)?)?.expect("the file is ELF");
