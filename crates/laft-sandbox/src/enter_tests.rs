@@ -67,7 +67,7 @@ fn mount_flags(path: &Path) -> Result<StatVfsMountFlags, String> {
 
 #[test]
 fn view_replaces_usr_with_the_privileged_files_on_top() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let base = dir.path();
     in_user_namespace(|| {
         generation_and_view(base)?;
@@ -121,7 +121,7 @@ fn view_replaces_usr_with_the_privileged_files_on_top() {
 
 #[test]
 fn caller_namespace_is_untouched_and_its_later_mounts_propagate_in() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let base = dir.path();
     in_user_namespace(|| {
         generation_and_view(base)?;
@@ -152,7 +152,7 @@ fn caller_namespace_is_untouched_and_its_later_mounts_propagate_in() {
 
 #[test]
 fn malformed_privileged_paths_are_rejected_before_unsharing() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let base = dir.path();
     in_user_namespace(|| {
         generation_and_view(base)?;
@@ -175,7 +175,7 @@ fn malformed_privileged_paths_are_rejected_before_unsharing() {
 
 #[test]
 fn privileged_paths_must_be_regular_files() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let base = dir.path();
     in_user_namespace(|| {
         generation_and_view(base)?;
@@ -190,7 +190,7 @@ fn privileged_paths_must_be_regular_files() {
 
 #[test]
 fn privileged_path_missing_from_the_generation_is_reported() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let base = dir.path();
     in_user_namespace(|| {
         generation_and_view(base)?;
@@ -214,7 +214,7 @@ fn privileged_path_missing_from_the_generation_is_reported() {
 
 #[test]
 fn privileged_paths_that_are_links_or_directories_in_the_view_are_skipped() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let base = dir.path();
     in_user_namespace(|| {
         generation_and_view(base)?;

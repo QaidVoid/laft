@@ -50,7 +50,7 @@ fn environment_is_minimal_and_the_service_may_override_it() {
 
 #[test]
 fn directories_are_created_and_their_mode_corrected() {
-    let root = tempfile::tempdir().expect("can create a temporary directory");
+    let root = laft_test::tempdir();
     let (uid, gid) = me();
     ensure_dir(root.path(), "/var/lib", "app/data", uid, gid, 0o750).expect("creates");
     let parent = fs::metadata(root.path().join("var/lib/app")).expect("exists");
@@ -66,7 +66,7 @@ fn directories_are_created_and_their_mode_corrected() {
 
 #[test]
 fn symlinked_directory_is_refused() {
-    let root = tempfile::tempdir().expect("can create a temporary directory");
+    let root = laft_test::tempdir();
     let elsewhere = root.path().join("elsewhere");
     fs::create_dir(&elsewhere).expect("mkdir");
     fs::set_permissions(&elsewhere, fs::Permissions::from_mode(0o700)).expect("chmod");
@@ -94,7 +94,7 @@ fn readiness_descriptor_lands_on_its_number_and_survives_exec() {
 
 #[test]
 fn atomic_write_replaces_the_file_with_the_mode() {
-    let dir = tempfile::tempdir().expect("can create a temporary directory");
+    let dir = laft_test::tempdir();
     let path = dir.path().join("config");
     fs::write(&path, "old").expect("write");
     write_atomic(&path, b"s5000000\nn5\n", 0o644).expect("writes");
@@ -105,7 +105,7 @@ fn atomic_write_replaces_the_file_with_the_mode() {
 
 #[test]
 fn directories_never_leave_their_base() {
-    let root = tempfile::tempdir().expect("can create a temporary directory");
+    let root = laft_test::tempdir();
     let (uid, gid) = me();
     for relative in ["app/../../../escape", "..", "app/./data", "app//data", ""] {
         let error =

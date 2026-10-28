@@ -33,7 +33,7 @@ fn index_args<'a>(repo: &'a Path, channel: &'a str, now: &'a str) -> Vec<&'a str
 
 #[test]
 fn index_copies_packages_by_store_id_and_signs_a_new_generation() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     pkg("hello", "1.0").file("usr/bin/hello", "hi").write(&out);
     let repo = dir.path().join("repo");
@@ -72,7 +72,7 @@ fn index_copies_packages_by_store_id_and_signs_a_new_generation() {
 
 #[test]
 fn a_generation_must_be_later_than_the_last_one() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     pkg("hello", "1.0").write(&out);
     let repo = dir.path().join("repo");
@@ -94,7 +94,7 @@ fn a_generation_must_be_later_than_the_last_one() {
 
 #[test]
 fn index_refuses_a_candidate_with_check_errors_and_writes_nothing() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     pkg("vim", "9.1.0800").file("usr/bin/vi", "vim").write(&out);
     pkg("neovim", "0.11.4")
@@ -115,7 +115,7 @@ fn index_refuses_a_candidate_with_check_errors_and_writes_nothing() {
 
 #[test]
 fn index_sets_defaults_and_keeps_them_in_later_generations() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     pkg("vim", "9.1.0800")
         .file("usr/bin/vi", "vim")
@@ -148,7 +148,7 @@ fn index_sets_defaults_and_keeps_them_in_later_generations() {
 
 #[test]
 fn a_changed_build_needs_a_new_revision() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
     let first = pkg("hello", "1.0")
         .file("usr/bin/hello", "one")
@@ -185,7 +185,7 @@ fn a_changed_build_needs_a_new_revision() {
 
 #[test]
 fn old_snapshots_beyond_the_kept_number_are_removed() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     pkg("hello", "1.0").write(&out);
     let repo = dir.path().join("repo");
@@ -210,7 +210,7 @@ fn old_snapshots_beyond_the_kept_number_are_removed() {
 
 #[test]
 fn sign_signs_an_unsigned_generation_and_refuses_a_revoked_key() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     pkg("hello", "1.0").write(&out);
     let repo = dir.path().join("repo");
@@ -270,7 +270,7 @@ fn sign_signs_an_unsigned_generation_and_refuses_a_revoked_key() {
 
 #[test]
 fn keys_json_is_versioned_and_signed_by_the_root_key() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
     let root = keygen(dir.path(), "root");
     let online = keygen(dir.path(), "online");
@@ -347,7 +347,7 @@ fn keys_json_is_versioned_and_signed_by_the_root_key() {
 
 #[test]
 fn an_online_key_signs_only_within_its_window() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     pkg("hello", "1.0").write(&out);
     let repo = dir.path().join("repo");
@@ -387,7 +387,7 @@ fn an_online_key_signs_only_within_its_window() {
 
 #[test]
 fn yank_moves_the_package_to_yanked_in_a_new_generation() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     let file = pkg("zlib", "1.3.1").write(&out);
     pkg("hello", "1.0").write(&out);
@@ -441,7 +441,7 @@ fn yank_moves_the_package_to_yanked_in_a_new_generation() {
 
 #[test]
 fn yanked_packages_are_listed_for_ninety_days() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     pkg("zlib", "1.3.1").write(&out);
     let repo = dir.path().join("repo");
@@ -481,7 +481,7 @@ fn yanked_packages_are_listed_for_ninety_days() {
 
 #[test]
 fn promote_honors_its_gates_and_copies_the_packages() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     pkg("hello", "1.0").write(&out);
     let repo = dir.path().join("repo");
@@ -537,7 +537,7 @@ fn promote_honors_its_gates_and_copies_the_packages() {
 
 #[test]
 fn publish_refuses_an_unsigned_index_and_a_rollback() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     pkg("hello", "1.0").write(&out);
     let repo = dir.path().join("repo");

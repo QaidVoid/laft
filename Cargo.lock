@@ -421,11 +421,11 @@ dependencies = [
  "laft-sandbox",
  "laft-store",
  "laft-svc",
+ "laft-test",
  "object",
  "rustix",
  "serde",
  "serde_json",
- "tempfile",
  "zstd",
 ]
 
@@ -434,11 +434,11 @@ name = "laft-boot"
 version = "0.1.0"
 dependencies = [
  "laft-core",
+ "laft-test",
  "mimalloc",
  "rustix",
  "serde",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -466,11 +466,11 @@ version = "0.1.0"
 dependencies = [
  "laft-core",
  "laft-sandbox",
+ "laft-test",
  "mimalloc",
  "rustix",
  "serde",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -481,8 +481,8 @@ dependencies = [
  "laft-core",
  "laft-index",
  "laft-pkg",
+ "laft-test",
  "minisign",
- "tempfile",
  "ureq",
 ]
 
@@ -492,12 +492,12 @@ version = "0.1.0"
 dependencies = [
  "laft-core",
  "laft-pkg",
+ "laft-test",
  "minisign",
  "minisign-verify",
  "proptest",
  "serde",
  "serde_json",
- "tempfile",
  "zstd",
 ]
 
@@ -507,6 +507,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "laft-core",
+ "laft-test",
  "proptest",
  "serde",
  "serde_json",
@@ -525,11 +526,11 @@ dependencies = [
  "laft-index",
  "laft-pkg",
  "laft-resolve",
+ "laft-test",
  "mimalloc",
  "minisign",
  "serde",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -546,9 +547,9 @@ dependencies = [
 name = "laft-sandbox"
 version = "0.1.0"
 dependencies = [
+ "laft-test",
  "libc",
  "rustix",
- "tempfile",
 ]
 
 [[package]]
@@ -558,10 +559,10 @@ dependencies = [
  "blake3",
  "laft-core",
  "laft-pkg",
+ "laft-test",
  "rustix",
  "serde",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -571,9 +572,16 @@ dependencies = [
  "blake3",
  "insta",
  "laft-core",
+ "laft-test",
  "rustix",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "laft-test"
+version = "0.1.0"
+dependencies = [
  "tempfile",
 ]
 

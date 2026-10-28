@@ -39,7 +39,7 @@ fn check(repo: &Path, extra: &[&str]) -> (Vec<String>, Value, bool) {
 
 #[test]
 fn a_clean_repository_has_no_findings() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     let packages = [
         pkg("pcre2", "10.46")
@@ -60,7 +60,7 @@ fn a_clean_repository_has_no_findings() {
 
 #[test]
 fn kr001_two_packages_owning_one_path() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     let packages = [
         pkg("vim", "9.1.0800").file("usr/bin/vi", "vim").write(&out),
@@ -84,7 +84,7 @@ fn kr001_two_packages_owning_one_path() {
 
 #[test]
 fn kr001_is_silent_for_conflicting_packages_and_shared_alternatives() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     let packages = [
         pkg("vim", "9.1.0800")
@@ -114,7 +114,7 @@ fn kr001_is_silent_for_conflicting_packages_and_shared_alternatives() {
 
 #[test]
 fn kr002_a_dependency_nothing_provides() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let packages = [pkg("ripgrep", "14.1.1")
         .depends("so:libpcre2-8.so.0")
         .write(&dir.path().join("out"))];
@@ -130,7 +130,7 @@ fn kr002_a_dependency_nothing_provides() {
 
 #[test]
 fn kr002_resolves_against_a_base_index() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     let base = dir.path().join("base");
     fixture(
@@ -161,7 +161,7 @@ fn kr002_resolves_against_a_base_index() {
 
 #[test]
 fn kr003_a_package_whose_closure_conflicts() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     let packages = [
         pkg("app", "1.0")
@@ -183,7 +183,7 @@ fn kr003_a_package_whose_closure_conflicts() {
 
 #[test]
 fn kr004_an_alternatives_group_without_default() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let packages = [pkg("vim", "9.1.0800")
         .file("usr/bin/vi", "vim")
         .alternative("vi", &["usr/bin/vi"])
@@ -200,7 +200,7 @@ fn kr004_an_alternatives_group_without_default() {
 
 #[test]
 fn kr004_members_with_different_paths() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     let packages = [
         pkg("vim", "9.1.0800")
@@ -230,7 +230,7 @@ fn kr004_members_with_different_paths() {
 
 #[test]
 fn kr005_a_rebuild_without_a_revision_bump() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
     let first = pkg("hello", "1.0")
         .file("usr/bin/hello", "one")
@@ -246,7 +246,7 @@ fn kr005_a_rebuild_without_a_revision_bump() {
 
 #[test]
 fn kr006_a_downgrade_is_only_a_warning() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     let repo = dir.path().join("repo");
     fixture(
@@ -275,7 +275,7 @@ fn kr006_a_downgrade_is_only_a_warning() {
 
 #[test]
 fn kr007_two_providers_without_a_default() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     let packages = [
         pkg("libjpeg-turbo", "3.1.2")
@@ -301,7 +301,7 @@ fn kr007_two_providers_without_a_default() {
 
 #[test]
 fn kr008_a_package_file_that_is_not_a_package() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
     let packages = [pkg("hello", "1.0").write(&dir.path().join("out"))];
     let garbage = b"not a package file";
@@ -320,7 +320,7 @@ fn kr008_a_package_file_that_is_not_a_package() {
 
 #[test]
 fn kr009_a_missing_package_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
     let index = fixture(
         &repo,
@@ -337,7 +337,7 @@ fn kr009_a_missing_package_file() {
 
 #[test]
 fn kr010_an_entry_that_differs_from_its_package() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
     let packages = [pkg("hello", "1.0").write(&dir.path().join("out"))];
     fixture(&repo, "current", 0, &packages, |index| {
@@ -353,7 +353,7 @@ fn kr010_an_entry_that_differs_from_its_package() {
 
 #[test]
 fn kr011_a_payload_with_a_generated_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
     let packages = [pkg("glib", "2.86.0")
         .file(
@@ -373,7 +373,7 @@ fn kr011_a_payload_with_a_generated_file() {
 
 #[test]
 fn ci001_a_dirty_build_unless_allowed() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
     fixture(
         &repo,
@@ -390,7 +390,7 @@ fn ci001_a_dirty_build_unless_allowed() {
 
 #[test]
 fn ci003_a_package_without_buildinfo() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
     let packages = [pkg("hello", "1.0")
         .without_buildinfo()
@@ -402,7 +402,7 @@ fn ci003_a_package_without_buildinfo() {
 
 #[test]
 fn the_text_report_names_packages_and_ends_with_a_summary() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     let packages = [
         pkg("vim", "9.1.0800").file("usr/bin/vi", "vim").write(&out),

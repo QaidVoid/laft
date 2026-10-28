@@ -126,7 +126,7 @@ fn mount_sequence_runs_in_a_namespace() {
         mount_sequence(Path::new(&dir));
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     let output = Command::new("unshare")
         .args([
             "--user",

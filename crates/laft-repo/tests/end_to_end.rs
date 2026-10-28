@@ -15,7 +15,7 @@ use support::{DAY, HOUR, T0, at, keygen, ok, pkg, public, s};
 
 #[test]
 fn published_repository_is_accepted_and_served_over_file_urls() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let out = dir.path().join("out");
     pkg("pcre2", "10.46")
         .provides("so:libpcre2-8.so.0")
@@ -160,7 +160,7 @@ fn published_repository_is_accepted_and_served_over_file_urls() {
         .unwrap();
     let reader = Reader::new(fs::File::open(&path).unwrap()).unwrap();
     assert_eq!(reader.manifest().store_id(), entry.id);
-    let unpacked = tempfile::tempdir().unwrap();
+    let unpacked = laft_test::tempdir();
     reader.unpack(unpacked.path()).unwrap();
     assert_eq!(
         fs::read(unpacked.path().join("usr/bin/rg")).unwrap(),

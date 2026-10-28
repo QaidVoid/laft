@@ -6,7 +6,7 @@ use crate::test_support::{put, sample_payload};
 
 #[test]
 fn lists_every_path_sorted_with_hashes_and_modes() {
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     sample_payload(root.path());
     let entries = scan(root.path()).expect("payload scans");
     let paths: Vec<_> = entries.iter().map(Entry::path).collect();
@@ -36,7 +36,7 @@ fn lists_every_path_sorted_with_hashes_and_modes() {
 
 #[test]
 fn modification_times_do_not_change_the_result() {
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     sample_payload(root.path());
     let before = scan(root.path()).expect("payload scans");
     File::open(root.path().join("etc/ripgreprc"))
@@ -47,7 +47,7 @@ fn modification_times_do_not_change_the_result() {
 
 #[test]
 fn sockets_cannot_be_packaged() {
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     put(root.path(), "usr/bin/rg", b"rg", 0o555);
     let _listener = std::os::unix::net::UnixListener::bind(root.path().join("usr/sock"))
         .expect("can create a socket");
@@ -57,13 +57,13 @@ fn sockets_cannot_be_packaged() {
 
 #[test]
 fn non_utf8_paths_and_targets_are_rejected() {
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     fs::create_dir(root.path().join("usr")).expect("can create directory");
     let name = std::ffi::OsStr::from_bytes(b"bad\xff");
     fs::write(root.path().join("usr").join(name), b"x").expect("can write file");
     assert!(scan(root.path()).is_err());
 
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     fs::create_dir(root.path().join("usr")).expect("can create directory");
     symlink(
         std::ffi::OsStr::from_bytes(b"bad\xff"),

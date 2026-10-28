@@ -122,7 +122,7 @@ fn assert_consistent(target: &Path) {
 
 #[test]
 fn an_interrupted_publication_never_exposes_a_missing_package() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     keygen(&dir.path().join("online"), false, None).unwrap();
     let signer = Signer::load(&dir.path().join("online.key"), None).unwrap();
     let repo = Repository::new(dir.path().join("repo"));
@@ -159,7 +159,7 @@ fn an_interrupted_publication_never_exposes_a_missing_package() {
 
 #[test]
 fn a_published_file_that_changed_stops_publishing_before_any_copy() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     keygen(&dir.path().join("online"), false, None).unwrap();
     let signer = Signer::load(&dir.path().join("online.key"), None).unwrap();
     let repo = Repository::new(dir.path().join("repo"));

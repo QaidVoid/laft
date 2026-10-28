@@ -7,7 +7,7 @@ use crate::test_support::{
 
 /// A client of `core` with its own cache and state directories.
 struct Client {
-    dir: tempfile::TempDir,
+    dir: laft_test::TempDir,
     fetcher: Fetcher,
     state: IndexState,
     repo: Repo,
@@ -15,7 +15,7 @@ struct Client {
 
 impl Client {
     fn new(root: &TestKey) -> Self {
-        let dir = tempfile::tempdir().expect("temporary directory");
+        let dir = laft_test::tempdir();
         Self {
             fetcher: Fetcher::new(config(&dir.path().join("cache"))),
             state: IndexState::new(dir.path().join("state")),
@@ -71,7 +71,7 @@ fn cache_failure(synced: &Synced) -> &Error {
 #[test]
 fn a_local_repository_without_keys_json_syncs_in_direct_mode() {
     let root = TestKey::generate();
-    let dir = tempfile::tempdir().expect("temporary directory");
+    let dir = laft_test::tempdir();
     write_tree(dir.path(), &publish(&root, None, &index(T0)));
     let client = Client::new(&root);
     let url = format!("file://{}", dir.path().display());

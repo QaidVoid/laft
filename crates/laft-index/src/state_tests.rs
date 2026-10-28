@@ -1,7 +1,7 @@
 use std::fs;
 
 use laft_core::Timestamp;
-use tempfile::TempDir;
+use laft_test::TempDir;
 
 use super::*;
 use crate::test_support::{DAY, Signed, T0, TestKey, index, keys, now, repo};
@@ -18,7 +18,7 @@ struct Client {
 
 impl Client {
     fn new() -> Self {
-        let dir = tempfile::tempdir().expect("temporary directory");
+        let dir = laft_test::tempdir();
         let root = TestKey::generate();
         Self {
             state: IndexState::new(dir.path().join("state/index")),

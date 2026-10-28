@@ -19,4 +19,4 @@ serde_json.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
-tempfile.workspace = true
+laft-test.workspace = true

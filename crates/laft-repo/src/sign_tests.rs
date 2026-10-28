@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn generated_keys_sign_documents_their_public_key_verifies() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let prefix = dir.path().join("online");
     let id = keygen(&prefix, false, None).unwrap();
     let signer = Signer::load(&dir.path().join("online.key"), None).unwrap();
@@ -19,7 +19,7 @@ fn generated_keys_sign_documents_their_public_key_verifies() {
 
 #[test]
 fn encrypted_keys_need_their_password() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let prefix = dir.path().join("root");
     keygen(&prefix, true, Some("secret".into())).unwrap();
     let path = dir.path().join("root.key");
@@ -30,7 +30,7 @@ fn encrypted_keys_need_their_password() {
 
 #[test]
 fn keygen_never_overwrites_a_key() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let prefix = dir.path().join("k");
     let first = keygen(&prefix, false, None).unwrap();
     assert!(keygen(&prefix, false, None).is_err());

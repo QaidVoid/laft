@@ -107,6 +107,7 @@ These dependencies do not meet one of the checks above and were accepted on purp
 - Snapshot tests use `insta`. Review every snapshot change on purpose with `cargo insta review` or by reading the diff. Never accept snapshots blindly.
 - Crash safety is tested by interrupting a transaction at every recorded step and checking that recovery leaves a consistent tree.
 - Tests never touch the host system. They work only in temporary directories, loop images or virtual machines. Never run `mkfs`, partitioning tools, `mount` on host paths, or anything that writes to the real `/laft`, `/etc`, `/boot` or `/usr`.
+- Tests remove everything they create, including read-only store and generation trees. Use the shared temporary directory helper, which makes a tree writable before removing it.
 - Tests that need root, namespaces, loop devices or a virtual machine must skip cleanly, with a printed reason, when the capability is missing. They must never fail for that reason.
 - Fuzz targets live in `fuzz/` (cargo-fuzz, nightly) and are not part of the workspace or the gates. Every parser of untrusted input has one: package files, manifests, indexes, signatures and ELF files. When you change such a parser, run its fuzz target for at least five minutes before committing.
 - Benchmarks are not tests and do not run in the gates.

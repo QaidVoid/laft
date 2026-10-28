@@ -48,14 +48,14 @@ fn lookup(gens: &[(u64, &str)]) -> impl Fn(u64) -> Result<Generation, String> {
 
 #[test]
 fn complete_generation_is_read() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     write_generation(tmp.path(), 42, RUNNING);
     assert_eq!(read(tmp.path(), 42), Ok(generation(42, RUNNING)));
 }
 
 #[test]
 fn incomplete_generations_are_not_valid() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     let gens = tmp.path();
     assert!(read(gens, 1).is_err());
 
@@ -90,7 +90,7 @@ fn incomplete_generations_are_not_valid() {
 
 #[test]
 fn default_link_names_a_number_or_nothing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     let link = tmp.path().join("default");
     assert_eq!(read_link(&link), Ok(None));
     symlink("42", &link).unwrap();
@@ -153,7 +153,7 @@ fn nothing_to_boot_is_an_error() {
 
 #[test]
 fn generation_numbers_are_listed_and_an_unreadable_directory_is_an_error() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     let gens = tmp.path().join("gens");
     assert!(numbers(&gens).is_err());
     write_generation(&gens, 41, RUNNING);

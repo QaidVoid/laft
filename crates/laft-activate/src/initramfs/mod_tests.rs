@@ -5,7 +5,7 @@ use super::*;
 
 #[test]
 fn device_modules_come_from_every_driver_above_the_device() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let sys = dir.path();
     let disk = sys.join("devices/pci0000:00/0000:00:1d.0/nvme/nvme0/nvme0n1/nvme0n1p2");
     fs::create_dir_all(&disk).unwrap();

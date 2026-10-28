@@ -35,7 +35,7 @@ fn fingerprints_change_with_every_input() {
 
 #[test]
 fn instances_are_kernels_with_modules_and_themes_with_an_index() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let tree = dir.path();
     for path in [
         "usr/lib/modules/6.1/kernel/a.ko.zst",
@@ -62,7 +62,7 @@ fn instances_are_kernels_with_modules_and_themes_with_an_index() {
 
 #[test]
 fn records_round_trip_through_the_records_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let records = BTreeMap::from([(
         "fontconfig".to_owned(),
         record(

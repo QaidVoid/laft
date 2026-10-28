@@ -98,7 +98,7 @@ fn the_control_hook_signals_the_supervised_process() {
         .spawn()
         .expect("spawns");
     std::thread::sleep(std::time::Duration::from_millis(200));
-    let dir = tempfile::tempdir().expect("can create a temporary directory");
+    let dir = laft_test::tempdir();
     fs::create_dir_all(dir.path().join("supervise")).expect("mkdir");
     fs::write(
         dir.path().join("supervise/pid"),
@@ -121,7 +121,7 @@ fn the_control_hook_signals_the_supervised_process() {
 #[test]
 fn rendering_is_deterministic_on_disk() {
     let set = valid(&example());
-    let dir = tempfile::tempdir().expect("can create a temporary directory");
+    let dir = laft_test::tempdir();
     let (first, second) = (dir.path().join("1"), dir.path().join("2"));
     render(&set, 7)
         .expect("renders")
@@ -171,7 +171,7 @@ fn tree(root: &Path) -> Vec<(String, String)> {
 #[test]
 fn units_read_back_from_disk_match_the_rendered_ones() {
     let rendered = render(&valid(&example()), 3).expect("renders");
-    let dir = tempfile::tempdir().expect("can create a temporary directory");
+    let dir = laft_test::tempdir();
     rendered.write(dir.path()).expect("writes");
     let loaded = load_units(&dir.path().join("services")).expect("loads");
     assert_eq!(&loaded, rendered.units());
@@ -260,7 +260,7 @@ fn the_finish_script_passes_runits_exit_code_and_signal_to_the_launcher() {
     let script = String::from_utf8(bytes.clone())
         .expect("text")
         .replace("exec /usr/bin/laft", "exec printf '%s\\n'");
-    let dir = tempfile::tempdir().expect("can create a temporary directory");
+    let dir = laft_test::tempdir();
     let path = dir.path().join("finish");
     fs::write(&path, script).expect("write");
     let output = std::process::Command::new("/bin/sh")
@@ -291,7 +291,7 @@ fn shutdown_waits_for_the_longest_stop_timeout_but_at_least_the_default() {
 #[test]
 fn the_spec_hash_depends_on_the_spec_not_on_its_encoding() {
     let rendered = render(&valid(&example()), 3).expect("renders");
-    let dir = tempfile::tempdir().expect("can create a temporary directory");
+    let dir = laft_test::tempdir();
     rendered.write(dir.path()).expect("writes");
     let path = dir.path().join("services/spec/myapp.json");
     let spec = &rendered.units()["myapp"].spec;

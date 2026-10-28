@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use laft_store::{Lock, Root};
-use tempfile::TempDir;
+use laft_test::TempDir;
 
 use crate::{Group, User, Users};
 
@@ -18,7 +18,7 @@ pub(crate) struct Env {
 
 impl Env {
     pub(crate) fn new() -> Self {
-        let dir = tempfile::tempdir().expect("can create a temporary directory");
+        let dir = laft_test::tempdir();
         let root = Root::new(dir.path());
         fs::create_dir_all(dir.path().join("etc")).expect("can create etc");
         Self { _dir: dir, root }
@@ -464,7 +464,7 @@ pub(crate) fn sandbox_unavailable() -> Option<String> {
             let Some(shell) = shell_package(&[]) else {
                 return Some("the host has no dash and C library to build a shell from".into());
             };
-            let dir = tempfile::tempdir().expect("can create a temporary directory");
+            let dir = laft_test::tempdir();
             for (path, content) in &shell.files {
                 let full = dir.path().join("tree").join(path);
                 fs::create_dir_all(full.parent().expect("has a parent")).expect("can create dirs");

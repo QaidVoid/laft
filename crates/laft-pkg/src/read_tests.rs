@@ -9,8 +9,8 @@ use crate::test_support::{
 use crate::{ErrorKind, scan};
 
 /// A sample package as its metadata, manifest and tar members.
-fn sample() -> (tempfile::TempDir, Vec<u8>, Vec<Member>) {
-    let root = tempfile::tempdir().expect("temporary directory");
+fn sample() -> (laft_test::TempDir, Vec<u8>, Vec<Member>) {
+    let root = laft_test::tempdir();
     sample_payload(root.path());
     let (_, _, bytes) = build(root.path());
     let members = members(&decompress(&bytes));
@@ -23,8 +23,8 @@ fn package_from(members: &[Member], tail: &[u8]) -> Vec<u8> {
     compress(&tar)
 }
 
-fn unpack(bytes: &[u8]) -> Result<tempfile::TempDir, Error> {
-    let out = tempfile::tempdir().expect("temporary directory");
+fn unpack(bytes: &[u8]) -> Result<laft_test::TempDir, Error> {
+    let out = laft_test::tempdir();
     Reader::new(bytes)?.unpack(out.path())?;
     Ok(out)
 }
@@ -85,7 +85,7 @@ fn metadata_and_manifest_are_read_without_the_payload() {
     let reader = Reader::new(head.as_slice()).expect("the beginning is enough");
     assert_eq!(reader.meta().name.as_str(), "ripgrep");
     assert!(!reader.manifest().entries().is_empty());
-    let out = tempfile::tempdir().expect("temporary directory");
+    let out = laft_test::tempdir();
     let err = reader
         .unpack(out.path())
         .expect_err("the payload is missing");
@@ -260,7 +260,7 @@ fn read_errors_are_reported_rather_than_truncation() {
     let (_, bytes, _) = sample();
     for len in 0..bytes.len() {
         let result = Reader::new(FailsAfter(&bytes[..len])).and_then(|reader| {
-            let out = tempfile::tempdir().expect("temporary directory");
+            let out = laft_test::tempdir();
             reader.unpack(out.path())
         });
         let err = result.expect_err("the input fails before the end");
@@ -274,7 +274,7 @@ fn read_errors_are_reported_rather_than_truncation() {
 #[test]
 fn unpacking_needs_an_empty_directory() {
     let (_, bytes, _) = sample();
-    let out = tempfile::tempdir().expect("temporary directory");
+    let out = laft_test::tempdir();
     fs::write(out.path().join("stray"), b"").expect("can write");
     let err = Reader::new(bytes.as_slice())
         .expect("valid package")
@@ -285,12 +285,12 @@ fn unpacking_needs_an_empty_directory() {
 
 #[test]
 fn system_account_owners_are_applied() {
-    let out = tempfile::tempdir().expect("temporary directory");
+    let out = laft_test::tempdir();
     if fs::metadata(out.path()).expect("exists").uid() != 0 {
         println!("skipped: changing ownership needs root");
         return;
     }
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     crate::test_support::put(
         root.path(),
         "usr/share/polkit-1/rules.d/50.rules",

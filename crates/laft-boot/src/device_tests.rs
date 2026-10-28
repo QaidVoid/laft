@@ -59,7 +59,7 @@ fn other_device_forms_are_rejected() {
 
 #[test]
 fn uuid_is_found_case_insensitively_among_probed_devices() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     announce(tmp.path(), "vda", 4096, &[0; 512]);
     announce(tmp.path(), "vda1", 4096, &xfs([0xab; 16]));
     let mut devices = Devices::new(tmp.path().join("sys"), tmp.path().join("dev"));
@@ -75,7 +75,7 @@ fn uuid_is_found_case_insensitively_among_probed_devices() {
 
 #[test]
 fn timeout_names_the_missing_device_and_lists_what_was_seen() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     announce(tmp.path(), "vda", 4096, &[0; 512]);
     announce(tmp.path(), "vda1", 4096, &xfs([0x11; 16]));
     let mut devices = Devices::new(tmp.path().join("sys"), tmp.path().join("dev"));
@@ -100,7 +100,7 @@ fn timeout_names_the_missing_device_and_lists_what_was_seen() {
 
 #[test]
 fn empty_devices_are_probed_once_they_have_a_size() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     announce(tmp.path(), "sr0", 0, &[]);
     let mut devices = Devices::new(tmp.path().join("sys"), tmp.path().join("dev"));
     devices.refresh();
@@ -116,7 +116,7 @@ fn empty_devices_are_probed_once_they_have_a_size() {
 
 #[test]
 fn kernel_names_must_be_block_devices() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     announce(tmp.path(), "sda1", 4096, &[0; 512]);
     let devices = Devices::new(tmp.path().join("sys"), tmp.path().join("dev"));
     assert_eq!(devices.find(&spec("/dev/sda1")), None);
@@ -125,7 +125,7 @@ fn kernel_names_must_be_block_devices() {
 
 #[test]
 fn each_luks_device_is_found_through_its_own_spec() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     announce(tmp.path(), "vda1", 4096, &xfs([0x11; 16]));
     announce(tmp.path(), "vdb1", 4096, &xfs([0x22; 16]));
     announce(tmp.path(), "vdc1", 4096, &xfs([0x33; 16]));
@@ -167,7 +167,7 @@ fn each_luks_device_is_found_through_its_own_spec() {
 
 #[test]
 fn unlocking_waits_for_the_root_too() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     announce(tmp.path(), "vdb1", 4096, &xfs([0x22; 16]));
     let config = Config::parse(
         br#"{

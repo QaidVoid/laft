@@ -15,6 +15,7 @@ members = [
   "crates/laft-sandbox",
   "crates/laft-store",
   "crates/laft-svc",
+  "crates/laft-test",
 ]
 
 [workspace.package]
@@ -36,6 +37,9 @@ laft-resolve = { version = "0.1.0", path = "crates/laft-resolve" }
 laft-sandbox = { version = "0.1.0", path = "crates/laft-sandbox" }
 laft-store = { version = "0.1.0", path = "crates/laft-store" }
 laft-svc = { version = "0.1.0", path = "crates/laft-svc" }
+# Test-only and never published, so it has no version and `cargo publish`
+# drops it from the dev-dependencies of published crates.
+laft-test = { path = "crates/laft-test" }
 libc = { version = "0.2.191", default-features = false }
 mimalloc = { version = "0.1.52", default-features = false }
 minisign = { version = "0.10.0", default-features = false }

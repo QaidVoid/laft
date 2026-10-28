@@ -164,7 +164,7 @@ fn the_command_runs_with_the_callers_umask() {
         );
         panic!("cannot execute the test again: {failure}");
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = laft_test::tempdir();
     let file = tmp.path().join("created");
     let output = Command::new(&me)
         .args(args)

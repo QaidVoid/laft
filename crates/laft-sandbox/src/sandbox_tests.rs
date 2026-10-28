@@ -7,8 +7,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use laft_test::TempDir;
 use rustix::io::Errno;
-use tempfile::TempDir;
 
 use crate::error::Step;
 use crate::test_support::sandbox_refused;
@@ -23,7 +23,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = laft_test::tempdir();
         std::fs::create_dir(dir.path().join("build")).unwrap();
         std::fs::create_dir(dir.path().join("out")).unwrap();
         let sandbox = Sandbox::new("/usr", dir.path().join("build"), dir.path().join("out"));

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use tempfile::TempDir;
+use laft_test::TempDir;
 
 use super::{ExecMode, Launcher, parse_start_time, restarts, start_time};
 use crate::launcher::accounts::Credentials;
@@ -29,7 +29,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let umask = UMASK.lock().unwrap_or_else(PoisonError::into_inner);
-        let dir = tempfile::tempdir().expect("can create a temporary directory");
+        let dir = laft_test::tempdir();
         let (uid, gid) = (
             rustix::process::getuid().as_raw(),
             rustix::process::getgid().as_raw(),

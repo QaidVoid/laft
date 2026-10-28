@@ -5,7 +5,7 @@ use super::*;
 
 #[test]
 fn symlinks_resolve_inside_the_tree() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let tree = dir.path();
     fs::create_dir_all(tree.join("usr/lib/firmware/vendor")).unwrap();
     fs::write(tree.join("usr/lib/firmware/vendor/a.bin"), b"a").unwrap();
@@ -36,7 +36,7 @@ fn symlinks_resolve_inside_the_tree() {
 
 #[test]
 fn walk_lists_parents_first_without_following_links() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = laft_test::tempdir();
     let tree = dir.path();
     fs::create_dir_all(tree.join("usr/b/c")).unwrap();
     fs::write(tree.join("usr/b/c/f"), b"").unwrap();

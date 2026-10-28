@@ -5,7 +5,7 @@ use crate::test_support::{build, decompress, members, package, put, sample_paylo
 
 #[test]
 fn packing_the_same_payload_twice_gives_identical_bytes() {
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     sample_payload(root.path());
     let (_, manifest, first) = build(root.path());
     File::open(root.path().join("usr/bin/rg"))
@@ -18,7 +18,7 @@ fn packing_the_same_payload_twice_gives_identical_bytes() {
 
 #[test]
 fn members_follow_the_manifest_order_with_normalized_headers() {
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     sample_payload(root.path());
     let (meta, manifest, bytes) = build(root.path());
     let members = members(&decompress(&bytes));
@@ -59,7 +59,7 @@ fn members_follow_the_manifest_order_with_normalized_headers() {
 
 #[test]
 fn identical_files_with_identical_metadata_become_hard_links() {
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     put(root.path(), "usr/a", b"same", 0o444);
     put(root.path(), "usr/b", b"same", 0o444);
     put(root.path(), "usr/c", b"same", 0o555);
@@ -83,7 +83,7 @@ fn identical_files_with_identical_metadata_become_hard_links() {
 
 #[test]
 fn payload_changes_after_scanning_name_the_package_and_path() {
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     put(root.path(), "usr/a", b"original", 0o444);
     fs::set_permissions(root.path().join("usr"), fs::Permissions::from_mode(0o755))
         .expect("can chmod");
@@ -127,7 +127,7 @@ fn payload_changes_after_scanning_name_the_package_and_path() {
 
 #[test]
 fn metadata_must_be_the_one_the_manifest_names() {
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     sample_payload(root.path());
     let (mut meta, manifest, _) = build(root.path());
     meta.abi_epoch = 1;
@@ -144,7 +144,7 @@ fn metadata_must_be_the_one_the_manifest_names() {
 
 #[test]
 fn compression_sets_the_checksum_flag_and_level() {
-    let root = tempfile::tempdir().expect("temporary directory");
+    let root = laft_test::tempdir();
     sample_payload(root.path());
     let (meta, manifest, development) = build(root.path());
     let mut publish = Vec::new();

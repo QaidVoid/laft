@@ -15,4 +15,4 @@ libc.workspace = true
 rustix = { workspace = true, features = ["fs", "mount", "pipe", "process", "system", "thread"] }
 
 [dev-dependencies]
-tempfile.workspace = true
+laft-test.workspace = true

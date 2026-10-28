@@ -1,0 +1,15 @@
+[package]
+name = "laft-test"
+description = "Test helpers shared by the Laft crates"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+tempfile.workspace = true

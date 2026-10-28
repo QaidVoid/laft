@@ -122,7 +122,7 @@ impl Pkg {
     /// does, and returns the package file.
     pub(crate) fn write(mut self, out: &Path) -> PathBuf {
         fs::create_dir_all(out).expect("the temporary directory is usable");
-        let payload = tempfile::tempdir().expect("a temporary directory can be created");
+        let payload = laft_test::tempdir();
         for (path, content) in &self.files {
             let full = payload.path().join(path);
             fs::create_dir_all(full.parent().expect("payload paths have a parent"))

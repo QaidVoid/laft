@@ -3,8 +3,8 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
+use laft_test::TempDir;
 use rustix::io::Errno;
-use tempfile::TempDir;
 
 use crate::error::Step;
 use crate::test_support::sandbox_refused;
@@ -21,7 +21,7 @@ impl Tree {
     /// The tree, or `None` after printing why the host cannot provide a
     /// shell for it.
     fn new() -> Option<Self> {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = laft_test::tempdir();
         let usr = dir.path().join("tree/usr");
         for sub in ["bin", "lib", "out", "data"] {
             fs::create_dir_all(usr.join(sub)).unwrap();

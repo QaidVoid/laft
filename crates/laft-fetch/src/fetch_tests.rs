@@ -19,7 +19,7 @@ fn quiet() -> impl FnMut(Progress) {
 fn small_files_are_fetched_over_http_and_from_local_repositories() {
     let server = Server::start();
     server.put("keys.json", b"{}");
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let fetched = fetcher.fetch(
         &http(&server.url()),
@@ -29,7 +29,7 @@ fn small_files_are_fetched_over_http_and_from_local_repositories() {
     );
     assert_eq!(fetched.expect("served"), b"{}");
 
-    let repo = tempfile::tempdir().expect("temporary directory");
+    let repo = laft_test::tempdir();
     std::fs::write(repo.path().join("keys.json"), b"[]").expect("writable");
     let base =
         BaseUrl::parse(&format!("file://{}", repo.path().display()), false).expect("valid URL");
@@ -40,7 +40,7 @@ fn small_files_are_fetched_over_http_and_from_local_repositories() {
 #[test]
 fn a_missing_file_is_reported_as_not_found_without_retrying() {
     let server = Server::start();
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let error = fetcher
         .fetch(
@@ -57,7 +57,7 @@ fn a_missing_file_is_reported_as_not_found_without_retrying() {
     );
     assert_eq!(server.requests("keys.json").len(), 1);
 
-    let repo = tempfile::tempdir().expect("temporary directory");
+    let repo = laft_test::tempdir();
     let base =
         BaseUrl::parse(&format!("file://{}", repo.path().display()), false).expect("valid URL");
     let error = fetcher
@@ -72,7 +72,7 @@ fn server_errors_are_retried_until_one_succeeds() {
     server.put("keys.json", b"{}");
     server.fault("keys.json", Fault::Status(503));
     server.fault("keys.json", Fault::Status(500));
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let fetched = fetcher.fetch(
         &http(&server.url()),
@@ -91,7 +91,7 @@ fn persistent_failures_name_the_url_and_the_reason() {
     for _ in 0..3 {
         server.fault("keys.json", Fault::Status(502));
     }
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let error = fetcher
         .fetch(
@@ -128,7 +128,7 @@ fn a_silent_server_times_out() {
     for _ in 0..3 {
         server.fault("keys.json", Fault::Stall(Duration::from_secs(3)));
     }
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let started = Instant::now();
     let error = fetcher
@@ -148,7 +148,7 @@ fn files_beyond_the_limit_of_their_kind_are_refused() {
     let server = Server::start();
     let limit = ObjectKind::Signature.max_size() as usize;
     server.put("index.json.zst.minisig", &bytes(limit + 1, 0));
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let base = http(&server.url());
     let error = fetcher
@@ -173,7 +173,7 @@ fn files_beyond_the_limit_of_their_kind_are_refused() {
 fn offline_fetches_never_use_the_network() {
     let server = Server::start();
     server.put("keys.json", b"{}");
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(Config {
         offline: true,
         ..config(cache.path())
@@ -196,7 +196,7 @@ fn packages_are_verified_cached_and_then_served_from_the_cache() {
     let content = bytes(200_000, 1);
     let entry = package(&content);
     server.put(&entry.file, &content);
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let mirrors = mirrors(&[server.url()]);
     let mut reports = Vec::new();
@@ -228,7 +228,7 @@ fn packages_are_verified_cached_and_then_served_from_the_cache() {
 fn offline_downloads_of_uncached_packages_name_the_missing_file() {
     let content = bytes(100, 2);
     let entry = package(&content);
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(Config {
         offline: true,
         ..config(cache.path())
@@ -250,7 +250,7 @@ fn an_interrupted_download_resumes_where_it_stopped() {
     let entry = package(&content);
     server.put(&entry.file, &content);
     server.fault(&entry.file, Fault::Truncate(120_000));
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let path = fetcher
         .download_package(&mirrors(&[server.url()]), &entry, &mut quiet())
@@ -268,7 +268,7 @@ fn a_partial_file_from_an_earlier_run_is_resumed() {
     let content = bytes(100_000, 4);
     let entry = package(&content);
     server.put(&entry.file, &content);
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let dest = cache.path().join(format!("pkgs/{}.lpkg", entry.id));
     std::fs::create_dir_all(dest.parent().expect("in a directory")).expect("writable");
     std::fs::write(part_path(&dest), &content[..40_000]).expect("writable");
@@ -294,7 +294,7 @@ fn a_server_without_range_support_sends_the_whole_file_again() {
     server.put(&entry.file, &content);
     server.fault(&entry.file, Fault::Truncate(30_000));
     server.fault(&entry.file, Fault::IgnoreRange);
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let path = fetcher
         .download_package(&mirrors(&[server.url()]), &entry, &mut quiet())
@@ -312,7 +312,7 @@ fn a_corrupt_package_is_discarded_and_the_next_mirror_is_tried() {
     corrupt[10] ^= 1;
     bad.put(&entry.file, &corrupt);
     good.put(&entry.file, &content);
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let path = fetcher
         .download_package(&mirrors(&[bad.url(), good.url()]), &entry, &mut quiet())
@@ -328,7 +328,7 @@ fn when_every_mirror_fails_each_attempt_is_listed() {
     let entry = package(&content);
     bad.put(&entry.file, &content[..999]);
     let refused = refusing_url();
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let error = fetcher
         .download_package(
@@ -364,7 +364,7 @@ fn a_larger_file_than_the_index_entry_says_is_cut_off() {
     let content = bytes(1000, 8);
     let entry = package(&content);
     server.put(&entry.file, &bytes(5000, 8));
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let error = fetcher
         .download_package(&mirrors(&[server.url()]), &entry, &mut quiet())
@@ -374,13 +374,13 @@ fn a_larger_file_than_the_index_entry_says_is_cut_off() {
 
 #[test]
 fn local_repositories_are_verified_and_read_in_place() {
-    let repo = tempfile::tempdir().expect("temporary directory");
+    let repo = laft_test::tempdir();
     let content = bytes(10_000, 9);
     let entry = package(&content);
     let file = repo.path().join(&entry.file);
     std::fs::create_dir_all(file.parent().expect("in a directory")).expect("writable");
     std::fs::write(&file, &content).expect("writable");
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(Config {
         offline: true,
         ..config(cache.path())
@@ -412,7 +412,7 @@ fn different_packages_download_concurrently() {
             (entry, content)
         })
         .collect();
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let mirrors = mirrors(&[server.url()]);
     thread::scope(|scope| {
@@ -434,7 +434,7 @@ fn a_damaged_cached_package_is_downloaded_again() {
     let content = bytes(20_000, 11);
     let entry = package(&content);
     server.put(&entry.file, &content);
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let mirrors = mirrors(&[server.url()]);
     let path = fetcher
@@ -454,7 +454,7 @@ fn a_stale_partial_file_that_does_not_match_is_downloaded_again() {
     let content = bytes(10_000, 12);
     let entry = package(&content);
     server.put(&entry.file, &content);
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let dest = cache.path().join(format!("pkgs/{}.lpkg", entry.id));
     std::fs::create_dir_all(dest.parent().expect("in a directory")).expect("writable");
     std::fs::write(part_path(&dest), bytes(4_000, 13)).expect("writable");
@@ -478,7 +478,7 @@ fn a_huge_length_on_a_resumed_answer_is_too_large() {
     let entry = package(&content);
     server.put(&entry.file, &content);
     server.fault(&entry.file, Fault::Length(u64::MAX - 10));
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let dest = cache.path().join(format!("pkgs/{}.lpkg", entry.id));
     std::fs::create_dir_all(dest.parent().expect("in a directory")).expect("writable");
     std::fs::write(part_path(&dest), &content[..40_000]).expect("writable");
@@ -499,7 +499,7 @@ fn a_transfer_cut_off_mid_body_is_retried() {
     let keys = bytes(5000, 12);
     server.put("keys.json", &keys);
     server.fault("keys.json", Fault::Truncate(1000));
-    let cache = tempfile::tempdir().expect("temporary directory");
+    let cache = laft_test::tempdir();
     let fetcher = Fetcher::new(config(cache.path()));
     let fetched = fetcher.fetch(
         &http(&server.url()),

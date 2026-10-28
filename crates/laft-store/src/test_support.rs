@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use laft_core::{Blake3Hash, Name, StoreId};
 use laft_pkg::{Alternative, Arch, Compression, Manifest, Meta, scan, write_package};
-use tempfile::TempDir;
+use laft_test::TempDir;
 
 use crate::{
     GenerationInput, Init, Lock, PackageInput, PackageRecord, Plan, Root, Transaction, ViewInput,
@@ -22,7 +22,7 @@ pub(crate) struct Env {
 
 impl Env {
     pub(crate) fn new() -> Self {
-        let dir = tempfile::tempdir().expect("can create a temporary directory");
+        let dir = laft_test::tempdir();
         let root = Root::new(dir.path().join("root"));
         fs::create_dir_all(dir.path().join("root")).expect("can create the root");
         fs::create_dir_all(dir.path().join("pkgs")).expect("can create the package directory");
@@ -35,23 +35,6 @@ impl Env {
 
     fn pkgs(&self) -> PathBuf {
         self.dir.path().join("pkgs")
-    }
-}
-
-impl Drop for Env {
-    fn drop(&mut self) {
-        make_writable(self.dir.path());
-    }
-}
-
-fn make_writable(dir: &Path) {
-    let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o755));
-    if let Ok(items) = fs::read_dir(dir) {
-        for item in items.flatten() {
-            if item.file_type().is_ok_and(|t| t.is_dir()) {
-                make_writable(&item.path());
-            }
-        }
     }
 }
 
