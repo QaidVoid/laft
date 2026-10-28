@@ -45,6 +45,8 @@ struct Link {
     path: String,
     /// Move the existing entry to `<path>.laft-orig` first.
     adopt: bool,
+    /// Remove the vacated directory Laft created at the path first.
+    replace_dir: bool,
 }
 
 /// A copy-mode file to write.
@@ -58,6 +60,8 @@ struct Copy {
     adopt: bool,
     /// The live file has this content already.
     current: bool,
+    /// Remove the vacated directory Laft created at the path first.
+    replace_dir: bool,
 }
 
 /// Everything reconciling would do, decided before anything changes.
@@ -113,7 +117,9 @@ pub fn check_etc(lock: &Lock, generation: u64, adopt: &BTreeSet<String>) -> Resu
 /// them. The account databases are left to [`crate::apply_accounts`].
 ///
 /// A path that exists although Laft did not create it is a conflict,
-/// unless it is listed in `adopt`, absolute or relative to `/etc`. Adopting
+/// unless it is listed in `adopt`, absolute or relative to `/etc`. A
+/// directory Laft created that holds nothing but the managed symlinks this
+/// reconcile removes is replaced without a conflict. Adopting
 /// moves it to `<path>.laft-orig`. With [`OnConflict::Stop`], any conflict
 /// stops reconciling before anything changes. A managed symlink that the
 /// user replaced is not a conflict: it is left alone with a warning on
@@ -182,6 +188,10 @@ pub fn reconcile_etc(
     }
     for link in &plan.links {
         let live = paths.etc.join(&link.path);
+        if link.replace_dir {
+            remove_vacated(&live)?;
+            forget_dirs(&mut dirs, &link.path);
+        }
         if link.adopt {
             adopt_entry(&live)?;
             report.adopted.push(link.path.clone());
@@ -195,6 +205,10 @@ pub fn reconcile_etc(
     }
     for copy in &plan.copies {
         let live = paths.etc.join(&copy.path);
+        if copy.replace_dir {
+            remove_vacated(&live)?;
+            forget_dirs(&mut dirs, &copy.path);
+        }
         if copy.adopt {
             adopt_entry(&live)?;
             report.adopted.push(copy.path.clone());
@@ -423,6 +437,55 @@ fn adopt_entry(path: &Path) -> Result<()> {
     fsx::sync_dir(fsx::parent(path))
 }
 
+/// Whether the live directory `rel` was created by Laft, as `created`
+/// records, and holds nothing but managed symlinks in `unlinking` and
+/// directories that are vacated in the same way. Such a directory may be
+/// replaced without a conflict once the symlinks are removed.
+fn vacated(
+    paths: &Paths,
+    rel: &str,
+    unlinking: &BTreeSet<&str>,
+    created: &BTreeSet<String>,
+) -> Result<bool> {
+    if !created.contains(rel) {
+        return Ok(false);
+    }
+    let dir = paths.etc.join(rel);
+    for item in fs::read_dir(&dir).map_err(io(&dir))? {
+        let item = item.map_err(io(&dir))?;
+        let child = format!("{rel}/{}", item.file_name().to_string_lossy());
+        let gone = if item.file_type().map_err(io(&dir))?.is_dir() {
+            vacated(paths, &child, unlinking, created)?
+        } else {
+            unlinking.contains(child.as_str())
+        };
+        if !gone {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Removes the vacated directory `path` and the empty directories below
+/// it. Anything else that appeared there makes the removal fail.
+fn remove_vacated(path: &Path) -> Result<()> {
+    for item in fs::read_dir(path).map_err(io(path))? {
+        let item = item.map_err(io(path))?;
+        if item.file_type().map_err(io(path))?.is_dir() {
+            remove_vacated(&item.path())?;
+        }
+    }
+    fs::remove_dir(path).map_err(io(path))?;
+    fsx::sync_dir(fsx::parent(path))
+}
+
+/// Removes `path` and every directory below it from the directories Laft
+/// created.
+fn forget_dirs(dirs: &mut BTreeSet<String>, path: &str) {
+    let below = format!("{path}/");
+    dirs.retain(|dir| dir != path && !dir.starts_with(&below));
+}
+
 /// Removes the directory `path` when it exists and is empty, and returns
 /// whether it is gone. A directory that something else replaced is gone
 /// too.
@@ -465,6 +528,7 @@ fn static_copy(paths: &Paths, path: &str) -> Result<Copy> {
         owner: (metadata.uid(), metadata.gid()),
         adopt: false,
         current: false,
+        replace_dir: false,
     })
 }
 
@@ -503,6 +567,7 @@ fn plan(
             plan.links.push(Link {
                 path: path.clone(),
                 adopt: false,
+                replace_dir: false,
             });
             plan.managed.insert(path.clone());
             continue;
@@ -518,10 +583,12 @@ fn plan(
             continue;
         }
         let laft_copy = metadata.is_file() && copies.wrote(path, &hash_file(&live)?);
-        if adopting || laft_copy {
+        let replace_dir = metadata.is_dir() && vacated(paths, path, &unlinking, &previous.dirs)?;
+        if adopting || laft_copy || replace_dir {
             plan.links.push(Link {
                 path: path.clone(),
-                adopt: adopting,
+                adopt: adopting && !replace_dir,
+                replace_dir,
             });
             plan.managed.insert(path.clone());
         } else if let Some(target) = target {
@@ -564,6 +631,8 @@ fn plan(
             || unlinking.contains(path.as_str());
         if current == Some(copy.hash) {
             copy.current = true;
+        } else if metadata.is_dir() && vacated(paths, path, &unlinking, &previous.dirs)? {
+            copy.replace_dir = true;
         } else if adopting {
             if fsx::lstat(&fsx::sibling(&live, ".laft-orig"))?.is_some() {
                 plan.conflicts.push(conflict(ConflictKind::OrigExists));

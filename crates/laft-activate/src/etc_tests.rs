@@ -434,3 +434,52 @@ fn a_managed_directory_replaced_by_a_file_does_not_stop_reconciling() {
     let record = ManagedRecord::load(&env.root).expect("readable");
     assert!(!record.dirs.contains("app"), "{:?}", record.dirs);
 }
+
+#[test]
+fn an_emptied_directory_laft_created_is_replaced_without_a_conflict() {
+    let env = Env::new();
+    let lock = env.lock();
+    let files = [
+        ("/etc/app/one.conf", "1\n"),
+        ("/etc/app/sub/two.conf", "2\n"),
+    ];
+    build_generation(&lock, 1, &config_with(&files));
+    build_generation(&lock, 2, &config_with(&[("/etc/app", "now a file\n")]));
+    let mut copy = copied("copied\n");
+    let machine = copy.files.remove("/etc/machine.conf").expect("declared");
+    copy.files.insert("/etc/app".into(), machine);
+    build_generation(&lock, 3, &copy);
+
+    reconcile_etc(&lock, 1, &none(), OnConflict::Stop).expect("reconciles");
+    reconcile_etc(&lock, 2, &none(), OnConflict::Stop).expect("no conflict");
+    assert_eq!(link(&env, "etc/app").as_deref(), Some("/etc/static/app"));
+
+    reconcile_etc(&lock, 1, &none(), OnConflict::Stop).expect("reconciles");
+    reconcile_etc(&lock, 3, &none(), OnConflict::Stop).expect("no conflict");
+    assert_eq!(env.read("etc/app"), "copied\n");
+    let record = ManagedRecord::load(&env.root).expect("readable");
+    assert!(!record.dirs.contains("app"), "{:?}", record.dirs);
+}
+
+#[test]
+fn a_directory_that_keeps_files_or_was_not_created_by_laft_conflicts() {
+    let env = Env::new();
+    let lock = env.lock();
+    build_generation(&lock, 1, &config_with(&[("/etc/app/one.conf", "1\n")]));
+    build_generation(
+        &lock,
+        2,
+        &config_with(&[("/etc/app", "x\n"), ("/etc/own", "y\n")]),
+    );
+    reconcile_etc(&lock, 1, &none(), OnConflict::Stop).expect("reconciles");
+    env.write("etc/app/local.conf", "mine\n");
+    fs::create_dir(env.path("etc/own")).expect("creates");
+
+    let err = reconcile_etc(&lock, 2, &none(), OnConflict::Stop).expect_err("conflicts");
+    let Error::Conflicts(conflicts) = err else {
+        panic!("{err}");
+    };
+    let paths: Vec<&str> = conflicts.iter().map(|c| c.path.as_str()).collect();
+    assert_eq!(paths, ["app", "own"]);
+    assert_eq!(env.read("etc/app/local.conf"), "mine\n");
+}
