@@ -4,6 +4,8 @@
 //! of it consumes one try. When none are left, it is marked bad and the
 //! machine falls back to the last generation that booted completely.
 
+use std::collections::BTreeSet;
+
 use laft_core::{BootEvent, BootEventKind, BootState, BootTrial, Timestamp};
 use serde::Deserialize;
 
@@ -195,6 +197,28 @@ fn menu_generations(conf: &str) -> Vec<Option<u64>> {
             if digits { number.parse().ok() } else { None }
         })
         .collect()
+}
+
+/// `state` pruned to the generations in `existing`, ready to be saved,
+/// with a warning when they could not be listed. A failed listing leaves
+/// the state unpruned, so that a read error does not erase the boot
+/// history.
+pub(crate) fn prune_listed(
+    mut state: BootState,
+    existing: Result<BTreeSet<u64>, String>,
+) -> (BootState, Option<String>) {
+    match existing {
+        Ok(existing) => {
+            state.prune(&existing);
+            (state, None)
+        }
+        Err(e) => (
+            state,
+            Some(format!(
+                "cannot list the generations, so the boot state is not pruned: {e}"
+            )),
+        ),
+    }
 }
 
 /// The 1-based position of the entry of `generation` in the boot loader

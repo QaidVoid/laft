@@ -1,9 +1,12 @@
 //! The boot sequence of PID 1 in the initramfs.
 //!
 //! Each step that can fail drops to the emergency shell and is retried once
-//! the user leaves it. The switch to the new root is the exception: it
-//! cannot be retried, so its failure is reported and the machine reboots. The decisions the steps take are made by the pure
-//! functions of the other modules. This module only carries them out.
+//! the user leaves it. The switch to the new root is the exception once the
+//! initramfs is being emptied: from then on it cannot be retried, so its
+//! failure is reported and the machine reboots.
+//!
+//! The decisions the steps take are made by the pure functions of the
+//! other modules. This module only carries them out.
 
 use std::fs::{self, File};
 use std::io;
@@ -92,7 +95,8 @@ pub(crate) fn run() -> ! {
             Path::new(NEWROOT),
         ))
     });
-    if let Err(e) = switch_root() {
+    let empty_initramfs = boot.retry(|_| prepare_switch_root());
+    if let Err(e) = switch_root(empty_initramfs) {
         let message = format!(
             "{e}\nthe switch to the new root cannot be retried, because the initramfs \
              may already be emptied; rebooting in 30 seconds"
@@ -349,14 +353,12 @@ impl Boot {
     /// Writes the boot state, pruned to the generations that exist. When
     /// they cannot be listed, nothing is pruned, so that a read error does
     /// not erase the boot history.
-    fn save(&mut self, mut state: BootState) {
+    fn save(&mut self, state: BootState) {
         let gens = gens_dir();
-        match generation::numbers(&gens) {
-            Ok(existing) => state.prune(&existing),
-            Err(e) => self.log.warn(&format!(
-                "cannot list {}, so the boot state is not pruned: {e}",
-                gens.display()
-            )),
+        let listed = generation::numbers(&gens).map_err(|e| format!("{}: {e}", gens.display()));
+        let (state, warning) = counting::prune_listed(state, listed);
+        if let Some(warning) = warning {
+            self.log.warn(&warning);
         }
         let path = state_path();
         let written = state
@@ -480,19 +482,29 @@ fn state_path() -> PathBuf {
     Path::new(NEWROOT).join("laft/state/boot.json")
 }
 
-/// Empties the initramfs to free its memory and makes the new root the
-/// root of the mount namespace. It cannot be run again after a failure,
-/// because the emptied initramfs no longer has the emergency shell and a
-/// moved new root is no longer at `/newroot`.
-fn switch_root() -> Result<(), String> {
-    let fail = |e: io::Error| format!("cannot enter the new root: {e}");
-    std::env::set_current_dir(NEWROOT).map_err(fail)?;
+/// The steps of the switch to the new root that change nothing a retry
+/// could not redo: enters `/newroot` and returns whether `/` is an
+/// initramfs that may be emptied.
+fn prepare_switch_root() -> Result<bool, String> {
+    std::env::set_current_dir(NEWROOT)
+        .map_err(|e| format!("cannot enter the new root {NEWROOT}: {e}"))?;
     // Only an initramfs may be emptied. Anything else means the program does
     // not run where it should.
     let root_type = rustix::fs::statfs(ROOT)
         .map_err(|e| format!("cannot inspect the initramfs: {e}"))?
         .f_type as u64;
-    if root_type == RAMFS_MAGIC || root_type == TMPFS_MAGIC {
+    Ok(root_type == RAMFS_MAGIC || root_type == TMPFS_MAGIC)
+}
+
+/// Empties the initramfs when `empty_initramfs` is set, to free its memory,
+/// and makes the new root, the working directory that
+/// [`prepare_switch_root`] entered, the root of the mount namespace. It
+/// cannot be run again after a failure, because the emptied initramfs no
+/// longer has the emergency shell and a moved new root is no longer at
+/// `/newroot`.
+fn switch_root(empty_initramfs: bool) -> Result<(), String> {
+    let fail = |e: io::Error| format!("cannot enter the new root: {e}");
+    if empty_initramfs {
         files::clear(Path::new(ROOT), Path::new(NEWROOT));
     }
     rustix::mount::mount_move(".", ROOT)
@@ -500,3 +512,7 @@ fn switch_root() -> Result<(), String> {
     rustix::process::chroot(".").map_err(|e| format!("cannot enter the new root: {e}"))?;
     std::env::set_current_dir(ROOT).map_err(fail)
 }
+
+#[cfg(test)]
+#[path = "boot_tests.rs"]
+mod tests;

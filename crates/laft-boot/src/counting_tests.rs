@@ -386,3 +386,15 @@ fn a_generation_without_an_entry_has_no_position() {
     assert_eq!(menu_position(MENU, Some(2), 40), None);
     assert_eq!(menu_position(MENU, Some(1), 7), None);
 }
+
+#[test]
+fn a_failed_listing_leaves_the_boot_state_unpruned() {
+    let state = fallen_back();
+    let (kept, warning) = super::prune_listed(state.clone(), Err("EIO".into()));
+    assert_eq!(kept, state);
+    assert!(warning.is_some_and(|w| w.contains("EIO")));
+
+    let (pruned, warning) = super::prune_listed(state, Ok(BTreeSet::from([41])));
+    assert!(pruned.bad.is_empty() && pruned.good.contains(&41));
+    assert_eq!(warning, None);
+}
