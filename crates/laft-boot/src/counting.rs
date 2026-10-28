@@ -21,9 +21,15 @@ pub(crate) struct Plan {
 /// One step of a [`Plan`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Step {
-    /// Points `/laft/gens/default` at the generation. A failure is logged
-    /// and the plan goes on.
-    SetDefault(u64),
+    /// Points `/laft/gens/default` at generation `to`. A failure is logged
+    /// and ends the plan early: no later step is carried out and
+    /// `otherwise` boots.
+    SetDefault {
+        /// The generation the link names.
+        to: u64,
+        /// The generation that boots when the link cannot be changed.
+        otherwise: Generation,
+    },
     /// Makes the default boot menu entry the one of generation `to`. A
     /// failure is logged and ends the plan early: no later step is carried
     /// out and `otherwise` boots.
@@ -58,8 +64,8 @@ pub(crate) enum Then {
 /// bad and the last good generation, read with `read`, replaces it: the
 /// default link and the boot menu are pointed at it, and only then is the
 /// state saved that ends the trial. A boot that stops before the save, or
-/// cannot change the boot menu, therefore leaves the trial used up, and
-/// the next boot falls back again. A boot of the last good generation while
+/// cannot change the default link or the boot menu, therefore leaves the
+/// trial used up, and the next boot falls back again. A boot of the last good generation while
 /// the trial is used up finishes such a fallback. The new generation boots
 /// in place when it has the same kernel and initramfs as `booting`, and
 /// through a reboot otherwise. `now` stamps the fallback event.
@@ -131,7 +137,10 @@ pub(crate) fn decide(
     };
     Plan {
         steps: vec![
-            Step::SetDefault(to),
+            Step::SetDefault {
+                to,
+                otherwise: otherwise.clone(),
+            },
             Step::SetBootEntry { to, otherwise },
             Step::Save(state),
             Step::Warn(format!(

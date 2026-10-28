@@ -312,12 +312,17 @@ impl Boot {
         );
         for step in plan.steps {
             match step {
-                Step::SetDefault(to) => {
+                Step::SetDefault { to, otherwise } => {
                     let link = gens.join("default");
                     let tmp = Path::new(NEWROOT).join("laft/tmp/default.laft-boot");
                     if let Err(e) = files::replace_symlink(&link, &to.to_string(), &tmp) {
-                        self.log
-                            .error(&format!("cannot point {} at {to}: {e}", link.display()));
+                        self.log.error(&format!(
+                            "cannot point {} at {to}: {e}; continuing with generation {}, \
+                             and the next boot falls back again",
+                            link.display(),
+                            otherwise.number
+                        ));
+                        return otherwise;
                     }
                 }
                 Step::SetBootEntry { to, otherwise } => {

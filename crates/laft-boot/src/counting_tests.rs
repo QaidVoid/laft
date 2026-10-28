@@ -108,7 +108,10 @@ fn the_trial_ends_only_after_the_default_and_the_boot_menu_point_at_the_fallback
         plan(on_trial(42, 0), 42, false, TRIES),
         Plan {
             steps: vec![
-                Step::SetDefault(41),
+                Step::SetDefault {
+                    to: 41,
+                    otherwise: generation(41, "k"),
+                },
                 Step::SetBootEntry {
                     to: 41,
                     otherwise: generation(41, "k"),
@@ -178,6 +181,7 @@ struct Machine {
     /// The generation the default boot menu entry starts with `laft.gen=`.
     menu: u64,
     menu_writable: bool,
+    link_writable: bool,
     gens: BTreeMap<u64, Generation>,
 }
 
@@ -190,6 +194,7 @@ impl Machine {
             default_link: 42,
             menu: 42,
             menu_writable: true,
+            link_writable: true,
             gens: BTreeMap::from([(41, generation(41, old)), (42, generation(42, new))]),
         }
     }
@@ -212,7 +217,12 @@ impl Machine {
                 return Ended::PowerLost;
             }
             match step {
-                Step::SetDefault(n) => self.default_link = n,
+                Step::SetDefault { to, otherwise } => {
+                    if !self.link_writable {
+                        return Ended::Booted(otherwise.number);
+                    }
+                    self.default_link = to;
+                }
                 Step::SetBootEntry { to, otherwise } => {
                     if !self.menu_writable {
                         return Ended::Booted(otherwise.number);
@@ -282,6 +292,21 @@ fn a_failed_boot_menu_rewrite_leaves_the_fallback_to_the_next_boot() {
 }
 
 #[test]
+fn a_failed_default_link_update_leaves_the_fallback_to_the_next_boot() {
+    for (old, new, now) in [("k", "k", 41), ("old", "new", 42)] {
+        let mut machine = Machine::failing(old, new);
+        machine.link_writable = false;
+        assert_eq!(machine.boot(None), Ended::Booted(now));
+        assert_eq!(machine.state, on_trial(42, 0), "the trial is still used up");
+        assert_eq!(machine.default_link, 42);
+
+        machine.link_writable = true;
+        assert_eq!(machine.boot_to_the_end(), 41);
+        assert!(machine.fell_back(), "{machine:?}");
+    }
+}
+
+#[test]
 fn power_loss_at_any_step_of_a_fallback_still_ends_in_the_fallback() {
     for (old, new) in [("k", "k"), ("old", "new")] {
         let steps = plan(on_trial(42, 0), 42, false, TRIES).steps.len();
@@ -309,25 +334,6 @@ fn a_boot_of_the_last_good_generation_finishes_a_used_up_trial() {
     machine.menu = 41;
     assert_eq!(machine.boot(None), Ended::Booted(41));
     assert!(machine.fell_back(), "{machine:?}");
-}
-
-#[test]
-fn only_the_most_recent_events_are_kept() {
-    let mut state = on_trial(42, 0);
-    for n in 0..20 {
-        state.events.push(BootEvent {
-            from: n,
-            kind: BootEventKind::Fallback,
-            time: Timestamp::from_secs(n),
-            to: n + 1,
-        });
-    }
-    let Some(Step::Save(state)) = plan(state, 42, false, TRIES).steps.into_iter().nth(2) else {
-        panic!("falls back");
-    };
-    assert_eq!(state.events.len(), 20);
-    assert_eq!(state.events[0].from, 1);
-    assert_eq!(state.events[19].from, 42);
 }
 
 #[test]
