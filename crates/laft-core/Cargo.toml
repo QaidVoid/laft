@@ -1,0 +1,13 @@
+[package]
+name = "laft-core"
+description = "Identifiers and formats shared by every Laft component"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
