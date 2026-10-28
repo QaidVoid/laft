@@ -105,6 +105,37 @@ fn pending_transaction_blocks_the_next_one() {
     assert_eq!(apply(&lock, &[&tool], None).expect("succeeds"), 2);
 }
 
+#[test]
+fn journal_paths_outside_the_store_stop_recovery() {
+    let env = Env::new();
+    let tool = Pkg::new("tool", "2")
+        .file("usr/bin/tool", b"tool")
+        .build(&env);
+    let lock = env.lock();
+    fault::fail_at(Some("add.published"));
+    let _ = apply(&lock, &[&tool], None);
+    fault::fail_at(None);
+    let victim = env.root.path().join("victim");
+    std::fs::create_dir(&victim).expect("can create a directory");
+    let mut journal = Journal::all(&env.root)
+        .expect("readable")
+        .pop()
+        .expect("a journal exists");
+    journal.added.push("../../victim".into());
+    journal.save(&env.root).expect("writable");
+
+    let error = lock.recover().expect_err("the journal is corrupt");
+    assert!(matches!(error, Error::Corrupt { .. }), "{error}");
+    assert!(
+        victim.is_dir(),
+        "recovery must not touch paths outside the store"
+    );
+    assert!(
+        env.root.store().list().expect("lists").contains(&tool.dir),
+        "recovery must not start on a corrupt journal"
+    );
+}
+
 /// Rewrites the only journal as an activation would have left it.
 fn rewrite_journal(env: &Env, state: State, boot_id: Option<&str>) {
     let mut journal = Journal::all(&env.root)

@@ -53,6 +53,12 @@ impl fmt::Display for Difference {
     }
 }
 
+/// Whether `name` can name a store entry: one path component that is not
+/// hidden, so joining it to the store directory never leaves it.
+pub(crate) fn is_entry_name(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('.') && !name.contains(['/', '\0'])
+}
+
 /// A package unpacked into the staging directory and ready to publish.
 pub(crate) struct Staged {
     pub(crate) dir_name: String,
@@ -198,7 +204,7 @@ impl Store {
 
     /// The path of entry `dir_name`, which must be a single path component.
     fn entry_path(&self, dir_name: &str) -> Result<PathBuf> {
-        if dir_name.is_empty() || dir_name.starts_with('.') || dir_name.contains(['/', '\0']) {
+        if !is_entry_name(dir_name) {
             return Err(Error::MissingEntry(dir_name.to_owned()));
         }
         Ok(self.path(dir_name))

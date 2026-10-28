@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, io};
 use crate::root::{read_json, to_json};
+use crate::store::is_entry_name;
 use crate::{Root, fsx};
 
 /// The version of the journal format.
@@ -135,7 +136,9 @@ impl Journal {
         fsx::sync_dir(&root.journal_dir())
     }
 
-    /// Every journal under `root`, oldest first.
+    /// Every journal under `root`, oldest first. Each is validated before any
+    /// is returned, so a corrupt journal stops recovery before it touches
+    /// anything.
     pub(crate) fn all(root: &Root) -> Result<Vec<Journal>> {
         let dir = root.journal_dir();
         let mut paths: Vec<PathBuf> = Vec::new();
@@ -157,6 +160,12 @@ impl Journal {
             let journal: Journal = read_json(&path)?;
             if journal.format != FORMAT || Self::path(root, &journal.txid) != path {
                 return Err(crate::error::corrupt(&path, "unsupported journal"));
+            }
+            if let Some(dir) = journal.added.iter().find(|dir| !is_entry_name(dir)) {
+                return Err(crate::error::corrupt(
+                    &path,
+                    format!("{dir:?} is not a store entry name"),
+                ));
             }
             journals.push(journal);
         }
