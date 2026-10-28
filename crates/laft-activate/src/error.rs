@@ -543,6 +543,15 @@ pub enum Warning {
     /// An enabled privileged entry names a path that is not a regular file
     /// of the generation, so it has no effect.
     InactivePrivileged(String),
+    /// A line of an account database had fewer fields than the database
+    /// has, as another tool wrote it. The missing fields were read as
+    /// empty.
+    ShortLine {
+        /// The database.
+        path: PathBuf,
+        /// The 1-based line number.
+        line: usize,
+    },
     /// The initramfs is host only, but the drivers of the boot devices of
     /// the assembling machine could not be found, so it carries the generic
     /// storage and input drivers instead.
@@ -564,6 +573,11 @@ impl fmt::Display for Warning {
                 "user replaced managed file /etc/{path}, leaving it\n  hint: reset /etc/{path} to manage it again"
             ),
             Self::Skipped(conflict) => write!(f, "left alone: {conflict}"),
+            Self::ShortLine { path, line } => write!(
+                f,
+                "{}:{line}: the line has missing fields, which were read as empty",
+                path.display()
+            ),
             Self::NoHostModules => f.write_str(
                 "the boot device drivers of this machine are unknown, so the host only initramfs carries the generic drivers",
             ),

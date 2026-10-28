@@ -75,7 +75,8 @@ pub fn apply_accounts(lock: &Lock, generation: u64) -> Result<AccountsReport> {
 fn write_accounts(root: &Root, declared: &Declared) -> Result<AccountsReport> {
     let etc = state::etc_dir(root);
     let guard = lock_databases(&etc)?;
-    let current = Databases::read(&etc)?;
+    let mut current = Databases::read(&etc)?;
+    let read_warnings = std::mem::take(&mut current.warnings);
     let hashes = read_hashes(root, declared)?;
     let mut allocations = Allocations::load(root)?;
     let merged = merge(declared, &hashes, &allocations, current)?;
@@ -132,7 +133,7 @@ fn write_accounts(root: &Root, declared: &Declared) -> Result<AccountsReport> {
         removed_users: merged.removed_users,
         removed_groups: merged.removed_groups,
         created_homes,
-        warnings: merged.warnings,
+        warnings: read_warnings.into_iter().chain(merged.warnings).collect(),
     })
 }
 

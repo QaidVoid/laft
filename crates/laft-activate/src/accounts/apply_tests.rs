@@ -496,3 +496,55 @@ fn an_undeclared_group_with_a_declared_gid_is_a_collision() {
     );
     assert_eq!(env.read("etc/group"), BOB_GROUP);
 }
+
+#[test]
+fn short_lines_from_other_tools_read_missing_fields_as_empty() {
+    let env = Env::new();
+    with_bob(&env);
+    env.write("etc/shadow", "bob:$6$salt$bobhash\n");
+    let report = apply(&env, 1, &users_with(&[]));
+    assert_eq!(
+        report.warnings,
+        [Warning::ShortLine {
+            path: env.path("etc/shadow"),
+            line: 1
+        }]
+    );
+    let shadow = env.read("etc/shadow");
+    assert!(
+        shadow.lines().any(|l| l == "bob:$6$salt$bobhash:::::::"),
+        "{shadow}"
+    );
+}
+
+#[test]
+fn lines_without_an_account_name_or_with_odd_ids_are_malformed() {
+    for (passwd, reason) in [
+        (
+            ":x:1000:1000::/home/x:/bin/sh\n",
+            "passwd:1: the line names no account",
+        ),
+        (
+            "bob:x:01000:1000::/home/bob:/bin/sh\n",
+            "passwd:1: invalid id",
+        ),
+        (
+            "bob:x:+1000:1000::/home/bob:/bin/sh\n",
+            "passwd:1: invalid id",
+        ),
+        ("bob:x:1000\n", "passwd:1: invalid id"),
+    ] {
+        let env = Env::new();
+        let lock = env.lock();
+        declare_generation(&lock, 1, &users_with(&[]));
+        env.write("etc/passwd", passwd);
+        let err = apply_accounts(&lock, 1).expect_err(passwd);
+        assert_eq!(err.code(), Some("C0410"), "{passwd}");
+        assert!(err.to_string().ends_with(reason), "{err}");
+    }
+    let env = Env::new();
+    let lock = env.lock();
+    declare_generation(&lock, 1, &users_with(&[]));
+    env.write("etc/passwd", "root:x:0:0::/root:/bin/sh\n");
+    apply_accounts(&lock, 1).expect("0 is a valid id");
+}

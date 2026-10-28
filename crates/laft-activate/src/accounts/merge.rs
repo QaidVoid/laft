@@ -216,6 +216,7 @@ pub(crate) fn merge(
             group,
             shadow,
             gshadow,
+            warnings: Vec::new(),
         },
         removed_users,
         removed_groups,

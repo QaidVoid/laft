@@ -6,7 +6,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::error::{Error, Result, io};
+use crate::error::{Error, Result, Warning, io};
 
 /// A line of `/etc/passwd`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,14 +54,20 @@ pub(crate) struct Databases {
     pub(crate) group: Vec<GroupLine>,
     pub(crate) shadow: Vec<Shadow>,
     pub(crate) gshadow: Vec<Gshadow>,
+    /// Lines that were read with missing trailing fields.
+    pub(crate) warnings: Vec<Warning>,
 }
 
 impl Databases {
     /// Reads the databases in the directory `etc`. A missing database is
-    /// empty.
+    /// empty. A line with fewer fields than its database has, as other
+    /// tools may write, reads the missing trailing fields as empty and adds
+    /// a warning.
     pub(crate) fn read(etc: &Path) -> Result<Self> {
+        let mut warnings = Vec::new();
+        let w = &mut warnings;
         Ok(Self {
-            passwd: parse(&etc.join("passwd"), 7, |f| {
+            passwd: parse(&etc.join("passwd"), 7, w, |f| {
                 Ok(Passwd {
                     name: f[0].to_owned(),
                     password: f[1].to_owned(),
@@ -72,7 +78,7 @@ impl Databases {
                     shell: f[6].to_owned(),
                 })
             })?,
-            group: parse(&etc.join("group"), 4, |f| {
+            group: parse(&etc.join("group"), 4, w, |f| {
                 Ok(GroupLine {
                     name: f[0].to_owned(),
                     password: f[1].to_owned(),
@@ -80,14 +86,14 @@ impl Databases {
                     members: list(f[3]),
                 })
             })?,
-            shadow: parse(&etc.join("shadow"), 9, |f| {
+            shadow: parse(&etc.join("shadow"), 9, w, |f| {
                 Ok(Shadow {
                     name: f[0].to_owned(),
                     hash: f[1].to_owned(),
                     aging: f[2..].iter().map(|s| (*s).to_owned()).collect(),
                 })
             })?,
-            gshadow: parse(&etc.join("gshadow"), 4, |f| {
+            gshadow: parse(&etc.join("gshadow"), 4, w, |f| {
                 Ok(Gshadow {
                     name: f[0].to_owned(),
                     password: f[1].to_owned(),
@@ -95,6 +101,7 @@ impl Databases {
                     members: list(f[3]),
                 })
             })?,
+            warnings,
         })
     }
 
@@ -154,11 +161,13 @@ fn line(out: &mut String, fields: &[&String]) {
 }
 
 /// Parses every non-empty line of the database `path` into `fields` fields.
-/// A line with another number of fields, a bad value or a name seen before
-/// is malformed.
+/// Missing trailing fields are empty, and each such line adds a warning to
+/// `warnings`. A line without a name, with too many fields, a bad value or
+/// a name seen before is malformed.
 fn parse<T>(
     path: &Path,
     fields: usize,
+    warnings: &mut Vec<Warning>,
     build: impl Fn(&[&str]) -> Result<T, &'static str>,
 ) -> Result<Vec<T>> {
     let text = match fs::read_to_string(path) {
@@ -177,12 +186,22 @@ fn parse<T>(
             line: index + 1,
             reason,
         };
-        let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() != fields {
+        let mut parts: Vec<&str> = line.split(':').collect();
+        if parts[0].is_empty() {
+            return Err(malformed("the line names no account".to_owned()));
+        }
+        if parts.len() > fields {
             return Err(malformed(format!(
                 "expected {fields} fields, found {}",
                 parts.len()
             )));
+        }
+        if parts.len() < fields {
+            parts.resize(fields, "");
+            warnings.push(Warning::ShortLine {
+                path: path.to_path_buf(),
+                line: index + 1,
+            });
         }
         if !names.insert(parts[0]) {
             return Err(malformed(format!("{:?} is listed twice", parts[0])));
@@ -192,10 +211,12 @@ fn parse<T>(
     Ok(entries)
 }
 
-/// A decimal id. Only ASCII digits are accepted, so a sign is malformed
-/// rather than dropped when the database is written back.
+/// A decimal id: ASCII digits without a leading zero, or `0` itself, so
+/// that every id has one spelling and a sign is malformed rather than
+/// dropped when the database is written back.
 fn id(text: &str) -> Result<u32, &'static str> {
-    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+    let digits = !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    if !digits || (text.len() > 1 && text.starts_with('0')) {
         return Err("invalid id");
     }
     text.parse().map_err(|_| "invalid id")
