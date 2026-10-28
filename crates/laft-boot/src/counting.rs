@@ -173,6 +173,38 @@ pub(crate) fn menu_index(bytes: &[u8], generation: u64) -> Result<Option<u64>, S
         .map(|e| e.index))
 }
 
+/// The generation each top-level entry of the boot loader configuration
+/// `conf` boots, in menu order: the number in a `/Laft <generation>` title,
+/// or `None` for an entry with another title. Nested entries, whose titles
+/// start with `//`, are not positions of the top-level menu.
+fn menu_generations(conf: &str) -> Vec<Option<u64>> {
+    conf.lines()
+        .filter(|line| line.starts_with('/') && !line.starts_with("//"))
+        .map(|title| {
+            let number = title.strip_prefix("/Laft ")?.split(' ').next()?;
+            let digits = !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit());
+            if digits { number.parse().ok() } else { None }
+        })
+        .collect()
+}
+
+/// The 1-based position of the entry of `generation` in the boot loader
+/// configuration `conf`. `index` from `entries.json` is used when the entry
+/// there belongs to `generation`. Otherwise the index is stale and the
+/// entry is looked up by its title. `None` when no entry boots it.
+pub(crate) fn menu_position(conf: &str, index: Option<u64>, generation: u64) -> Option<u64> {
+    let generations = menu_generations(conf);
+    let at = |position: u64| {
+        let slot = usize::try_from(position.checked_sub(1)?).ok()?;
+        generations.get(slot).copied().flatten()
+    };
+    if let Some(index) = index.filter(|&i| at(i) == Some(generation)) {
+        return Some(index);
+    }
+    let slot = generations.iter().position(|g| *g == Some(generation))?;
+    u64::try_from(slot + 1).ok()
+}
+
 /// The boot loader configuration `conf` with its default entry set to
 /// `index`, or `None` when it has no `default_entry: <n>` line to replace.
 /// Every other line is kept byte for byte.

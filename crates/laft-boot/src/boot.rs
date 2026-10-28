@@ -365,7 +365,10 @@ impl Boot {
     }
 
     /// Makes the boot menu entry of generation `to` the default one on the
-    /// EFI system partition.
+    /// EFI system partition. The position `entries.json` gives is used only
+    /// when the entry there is titled with `to`. Otherwise the entry is
+    /// looked up by its title, and when the menu has none, the default is
+    /// left unchanged with a warning.
     fn select_boot_entry(&mut self, to: u64, config: &Config) -> Result<(), String> {
         let esp = Path::new(ESP);
         let device = self.resolve(&config.esp, self.root_wait(config))?;
@@ -378,16 +381,27 @@ impl Boot {
         let result = (|| {
             let entries = fs::read(esp.join("laft/entries.json"))
                 .map_err(|e| format!("cannot read the boot menu index: {e}"))?;
-            let index = counting::menu_index(&entries, to)?
-                .ok_or_else(|| format!("the boot menu has no entry for generation {to}"))?;
+            let hint = counting::menu_index(&entries, to)?;
             let conf_path = esp.join("limine.conf");
             let conf = fs::read_to_string(&conf_path)
                 .map_err(|e| format!("cannot read {}: {e}", conf_path.display()))?;
+            let Some(index) = counting::menu_position(&conf, hint, to) else {
+                return Ok(Some(format!(
+                    "the boot menu has no entry for generation {to}, so its default entry is left unchanged"
+                )));
+            };
             let conf = counting::set_default_entry(&conf, index)
                 .ok_or_else(|| format!("{} has no default_entry line", conf_path.display()))?;
             files::write_atomic(&conf_path, conf.as_bytes())
-                .map_err(|e| format!("cannot write {}: {e}", conf_path.display()))
+                .map_err(|e| format!("cannot write {}: {e}", conf_path.display()))?;
+            Ok((hint != Some(index))
+                .then(|| format!("the boot menu index is stale, generation {to} is entry {index}")))
         })();
+        let result = result.map(|warning| {
+            if let Some(warning) = warning {
+                self.log.warn(&warning);
+            }
+        });
         if let Err(e) = rustix::mount::unmount(esp, UnmountFlags::empty()) {
             self.log.warn(&format!("cannot unmount {ESP}: {e}"));
         }

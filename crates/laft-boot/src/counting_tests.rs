@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use laft_core::{BootEvent, BootEventKind, BootState, BootTrial, Timestamp};
 
-use super::{Plan, Step, Then, decide, menu_index, set_default_entry};
+use super::{Plan, Step, Then, decide, menu_index, menu_position, set_default_entry};
 use crate::generation::Generation;
 
 const TRIES: u32 = 3;
@@ -358,4 +358,25 @@ fn configuration_without_a_default_entry_is_left_alone() {
     assert_eq!(set_default_entry("timeout: 3\n", 2), None);
     assert_eq!(set_default_entry("default_entry: x\n", 2), None);
     assert_eq!(set_default_entry(" default_entry: 1\n", 2), None);
+}
+
+const MENU: &str = "timeout: 3\ndefault_entry: 1\n\n/Laft 43\n    comment: new\n    cmdline: laft.gen=43\n\n/Laft 42 (failed to boot)\n    cmdline: laft.gen=42\n//Laft 7\n    comment: a nested entry is not a position\n\n/Laft 41\n    cmdline: laft.gen=41\n";
+
+#[test]
+fn the_menu_position_is_verified_against_the_entry_title() {
+    assert_eq!(menu_position(MENU, Some(1), 43), Some(1));
+    assert_eq!(menu_position(MENU, Some(3), 41), Some(3));
+}
+
+#[test]
+fn a_stale_index_is_corrected_by_looking_the_generation_up() {
+    assert_eq!(menu_position(MENU, Some(1), 42), Some(2));
+    assert_eq!(menu_position(MENU, Some(9), 41), Some(3));
+    assert_eq!(menu_position(MENU, None, 41), Some(3));
+}
+
+#[test]
+fn a_generation_without_an_entry_has_no_position() {
+    assert_eq!(menu_position(MENU, Some(2), 40), None);
+    assert_eq!(menu_position(MENU, Some(1), 7), None);
 }
