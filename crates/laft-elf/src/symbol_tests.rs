@@ -48,6 +48,36 @@ fn no_exports_hash_a_single_newline() {
 }
 
 #[test]
+fn names_cannot_forge_lines_or_versions() {
+    let function = |name| export(name, None, ExportKind::Function);
+    let distinct_pairs = [
+        (vec![function("a\nF b")], vec![function("a"), function("b")]),
+        (
+            vec![function("add@@VERS_2")],
+            vec![export("add", Some(("VERS_2", false)), ExportKind::Function)],
+        ),
+        (
+            vec![export("add", Some(("V@1", true)), ExportKind::Function)],
+            vec![export("add@V", Some(("1", true)), ExportKind::Function)],
+        ),
+        (vec![function("a\\x40b")], vec![function("a@b")]),
+    ];
+    for (left, right) in distinct_pairs {
+        assert_ne!(abi_text(&left), abi_text(&right), "{left:?} and {right:?}");
+    }
+}
+
+#[test]
+fn special_characters_are_written_as_hex_escapes() {
+    let exports = [export(
+        "a b\\c\nd@e",
+        Some(("V 1", false)),
+        ExportKind::Function,
+    )];
+    assert_eq!(abi_text(&exports), "F a\\x20b\\x5cc\\x0ad\\x40e@@V\\x201\n");
+}
+
+#[test]
 fn exports_need_global_binding_and_default_or_protected_visibility() {
     let kind = |bind, visibility| export_kind(bind, elf::STT_FUNC, visibility, 0);
     for bind in [elf::STB_GLOBAL, elf::STB_WEAK, elf::STB_GNU_UNIQUE] {

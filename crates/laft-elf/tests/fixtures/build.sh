@@ -3,7 +3,8 @@
 #
 # The expected digest is computed without laft-elf: readelf lists the dynamic
 # symbols, awk turns the exported ones into ABI lines, sort orders and
-# deduplicates them bytewise, and b3sum hashes the result.
+# deduplicates them bytewise, and b3sum hashes the result. It does not escape
+# names, so it only holds for names without a backslash, space or `@`.
 set -eu
 cd "$(dirname "$0")"
 

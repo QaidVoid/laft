@@ -82,8 +82,10 @@ impl Elf {
     /// `F <name><ver>`, data objects `O <name><ver> <size>`, thread-local
     /// variables `T <name><ver> <size>` and untyped symbols `N <name><ver>`.
     /// `<ver>` is `@@<version>` for a default GNU symbol version,
-    /// `@<version>` for a hidden one and empty for an unversioned symbol. The
-    /// lines are sorted bytewise, duplicates are removed, and they are joined
+    /// `@<version>` for a hidden one and empty for an unversioned symbol. In
+    /// names and versions, `\`, newline, space and `@` are written as `\x5c`,
+    /// `\x0a`, `\x20` and `\x40`, so different exports never give the same
+    /// text. The lines are sorted bytewise, duplicates are removed, and they are joined
     /// with newlines with a final newline appended, so an object without
     /// exports hashes a single newline. The digest is the BLAKE3 hash of that
     /// text.

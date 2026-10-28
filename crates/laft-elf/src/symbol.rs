@@ -78,11 +78,11 @@ pub struct VersionNeed {
 
 impl Export {
     fn abi_line(&self) -> String {
-        let name = match &self.version {
-            None => self.name.clone(),
-            Some(version) if version.hidden => format!("{}@{}", self.name, version.name),
-            Some(version) => format!("{}@@{}", self.name, version.name),
-        };
+        let mut name = escape(&self.name);
+        if let Some(version) = &self.version {
+            name.push_str(if version.hidden { "@" } else { "@@" });
+            name.push_str(&escape(&version.name));
+        }
         match self.kind {
             ExportKind::Function => format!("F {name}"),
             ExportKind::Object { size } => format!("O {name} {size}"),
@@ -90,6 +90,20 @@ impl Export {
             ExportKind::NoType => format!("N {name}"),
         }
     }
+}
+
+/// Writes `\`, newline, space and `@` as `\x5c`, `\x0a`, `\x20` and `\x40`,
+/// so that a name cannot forge a version suffix, a size or another
+/// line of the ABI text.
+fn escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\\' | '\n' | ' ' | '@' => escaped.push_str(&format!("\\x{:02x}", u32::from(c))),
+            c => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 /// Classifies a defined dynamic symbol, or returns `None` when it is not an
