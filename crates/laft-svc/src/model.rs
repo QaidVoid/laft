@@ -116,6 +116,11 @@ pub enum Log {
 }
 
 /// Whether the supervisor restarts a longrun after it exits.
+///
+/// Exit status 111 is reserved for launcher failures, such as a dependency
+/// that is not ready yet, and restarts the service under every policy but
+/// [`Restart::Never`]. A service whose own program exits with 111 is
+/// treated the same way, because the supervisor cannot tell the two apart.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Restart {
@@ -124,7 +129,9 @@ pub enum Restart {
     Always,
     /// Unless it exited with status 0.
     OnFailure,
-    /// Never.
+    /// Never, not even after a launcher failure. A service with this
+    /// policy that fails its dependency gate stays down, so it should only
+    /// depend on services that are ready before it starts.
     Never,
 }
 

@@ -291,7 +291,9 @@ fn restart_policy_decides_after_an_exit() {
         (Restart::OnFailure, 1, true),
         (Restart::OnFailure, -1, true),
         (Restart::Never, 1, false),
-        (Restart::Never, 111, true),
+        (Restart::Never, 111, false),
+        (Restart::Never, -1, false),
+        (Restart::OnFailure, 111, true),
         (Restart::Always, 100, true),
     ] {
         spec.restart = restart;

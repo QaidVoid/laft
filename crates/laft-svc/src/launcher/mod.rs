@@ -45,11 +45,17 @@ use crate::{Restart, ServiceKind};
 const SELF_EXE: &str = "/proc/self/exe";
 
 /// The exit status of a non-early oneshot whose `up` command failed, which
-/// tells `finish` not to restart it.
+/// tells `finish` not to restart it. The `run` script of an emulated
+/// oneshot never exits with the status of `up` itself, so this cannot
+/// collide with it.
 const ONESHOT_FAILED: i32 = 100;
 
 /// The exit status of every launcher failure, which makes the supervisor
-/// start the service again later.
+/// start the service again later unless its restart policy is
+/// [`Restart::Never`].
+///
+/// The status is reserved: a supervised program that exits with it is
+/// restarted as if the launcher had failed.
 pub const SETUP_FAILED: i32 = 111;
 
 /// How long to wait between two looks at a ready marker or a process.
@@ -803,16 +809,15 @@ impl Launcher {
 }
 
 /// Whether the supervisor restarts a service that exited with `exit_code`,
-/// which is `-1` when it was killed by a signal.
+/// which is `-1` when it was killed by a signal. The policy `never` wins
+/// over every reserved status.
 fn restarts(spec: &Spec, exit_code: i32) -> bool {
-    match exit_code {
-        SETUP_FAILED => true,
-        ONESHOT_FAILED if spec.kind == ServiceKind::Oneshot => false,
-        _ => match spec.restart {
-            Restart::Always => true,
-            Restart::OnFailure => exit_code != 0,
-            Restart::Never => false,
-        },
+    match (spec.restart, exit_code) {
+        (Restart::Never, _) => false,
+        (_, SETUP_FAILED) => true,
+        (_, ONESHOT_FAILED) if spec.kind == ServiceKind::Oneshot => false,
+        (Restart::Always, _) => true,
+        (Restart::OnFailure, code) => code != 0,
     }
 }
 
