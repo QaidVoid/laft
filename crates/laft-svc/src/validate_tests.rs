@@ -364,3 +364,22 @@ fn configuration_deserializes_with_defaults() {
     let typo = r#"{"services": {"x": {"exce": []}}}"#;
     assert!(serde_json::from_str::<crate::ServiceConfig>(typo).is_err());
 }
+
+#[test]
+fn environment_entries_that_cannot_be_passed_on_are_rejected() {
+    let mut app = myapp();
+    app.env.clear();
+    for (key, value) in [("", "x"), ("A=B", "x"), ("A\0B", "x"), ("OK", "a\0b")] {
+        app.env.insert(key.into(), value.into());
+    }
+    let errors = errors(&config(&[("dbus", dbus()), ("myapp", app)]));
+    assert_eq!(
+        errors,
+        [
+            "service myapp: env \"\" is not a valid variable name",
+            "service myapp: env \"A\\0B\" is not a valid variable name",
+            "service myapp: env \"A=B\" is not a valid variable name",
+            "service myapp: env \"OK\" has a value with a NUL byte",
+        ]
+    );
+}

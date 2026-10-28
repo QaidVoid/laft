@@ -122,6 +122,17 @@ pub enum ConfigError {
     /// The dependencies form a cycle, listed in order. The first and last
     /// names are the same, and each depends on the next.
     Cycle(Vec<String>),
+    /// An environment variable cannot be passed to a program: its name is
+    /// empty or contains `=` or a NUL byte, or its value contains a NUL
+    /// byte.
+    InvalidEnv {
+        /// The service.
+        service: String,
+        /// The variable name.
+        key: String,
+        /// Why it is rejected.
+        reason: &'static str,
+    },
     /// Two services declare the same directory with different owners.
     SharedDir {
         /// The first service, by name.
@@ -219,6 +230,11 @@ impl fmt::Display for ConfigError {
                 "dependency cycle between services\n  {}",
                 cycle.join(" -> ")
             ),
+            Self::InvalidEnv {
+                service,
+                key,
+                reason,
+            } => write!(f, "service {service}: env {key:?} {reason}"),
             Self::SharedDir {
                 first,
                 second,
@@ -475,6 +491,20 @@ fn check_service(name: &str, service: &Service, errors: &mut Vec<ConfigError>) {
                 path: dir.path.clone(),
             });
         }
+    }
+    for (key, value) in &service.env {
+        let reason = if key.is_empty() || key.contains(['=', '\0']) {
+            "is not a valid variable name"
+        } else if value.contains('\0') {
+            "has a value with a NUL byte"
+        } else {
+            continue;
+        };
+        errors.push(ConfigError::InvalidEnv {
+            service: service_name(),
+            key: key.clone(),
+            reason,
+        });
     }
     check_ranges(name, service, errors);
     if service.kind == ServiceKind::Longrun && service.on_change == Some(OnChange::Rerun) {
