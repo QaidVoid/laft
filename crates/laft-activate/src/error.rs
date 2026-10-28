@@ -543,6 +543,9 @@ pub enum Warning {
     /// An enabled privileged entry names a path that is not a regular file
     /// of the generation, so it has no effect.
     InactivePrivileged(String),
+    /// A copy-mode file that is no longer declared was changed outside
+    /// Laft, so it is left in place and Laft forgets it.
+    ChangedCopyKept(String),
     /// Laft did not run as root, so the privileged copies were made and
     /// recorded but keep the caller as owner and carry no capabilities.
     PrivilegesNotApplied(Vec<String>),
@@ -556,6 +559,10 @@ impl fmt::Display for Warning {
                 "user replaced managed file /etc/{path}, leaving it\n  hint: reset /etc/{path} to manage it again"
             ),
             Self::Skipped(conflict) => write!(f, "left alone: {conflict}"),
+            Self::ChangedCopyKept(path) => write!(
+                f,
+                "/etc/{path} is no longer declared but was changed outside laft, leaving it"
+            ),
             Self::RemovedAccount { kind, name } => write!(
                 f,
                 "removed undeclared {kind} {name:?}, because users.mutable is false"

@@ -89,11 +89,18 @@ pub(crate) fn remove_if_present(path: &Path) -> Result<()> {
 }
 
 /// The metadata of `path` without following a symlink, or `None` when it
-/// does not exist.
+/// does not exist, including when a directory above it is not one.
 pub(crate) fn lstat(path: &Path) -> Result<Option<fs::Metadata>> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => Ok(Some(metadata)),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(None)
+        }
         Err(e) => Err(io(path)(e)),
     }
 }

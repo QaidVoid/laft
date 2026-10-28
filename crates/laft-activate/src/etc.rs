@@ -86,7 +86,8 @@ struct Paths {
 ///
 /// # Errors
 ///
-/// Fails when the generation or the records cannot be read.
+/// Fails when the generation or the records cannot be read, and with
+/// [`Error::Invalid`] when an absolute path in `adopt` is not below `/etc`.
 pub fn check_etc(lock: &Lock, generation: u64, adopt: &BTreeSet<String>) -> Result<Vec<Conflict>> {
     let root = lock.root();
     let record = root.generation(generation)?.etc;
@@ -96,7 +97,7 @@ pub fn check_etc(lock: &Lock, generation: u64, adopt: &BTreeSet<String>) -> Resu
         &record,
         &ManagedRecord::load(root)?,
         &CopiesRecord::load(root)?,
-        &relative_set(adopt),
+        &relative_set(adopt)?,
     )?;
     Ok(plan.conflicts)
 }
@@ -128,7 +129,8 @@ pub fn check_etc(lock: &Lock, generation: u64, adopt: &BTreeSet<String>) -> Resu
 ///
 /// Fails with [`Error::Conflicts`] under [`OnConflict::Stop`], when the
 /// generation or the records cannot be read, and when `/etc` cannot be
-/// changed.
+/// changed. Fails with [`Error::Invalid`] when an absolute path in `adopt`
+/// is not below `/etc`.
 pub fn reconcile_etc(
     lock: &Lock,
     generation: u64,
@@ -140,7 +142,7 @@ pub fn reconcile_etc(
     let paths = paths(root, generation);
     let previous = ManagedRecord::load(root)?;
     let mut copies = CopiesRecord::load(root)?;
-    let mut plan = plan(&paths, &record, &previous, &copies, &relative_set(adopt))?;
+    let mut plan = plan(&paths, &record, &previous, &copies, &relative_set(adopt)?)?;
     if !plan.conflicts.is_empty() && on_conflict == OnConflict::Stop {
         return Err(Error::Conflicts(plan.conflicts));
     }
@@ -208,9 +210,9 @@ pub fn reconcile_etc(
         fsx::remove_if_present(&live)?;
         fsx::sync_dir(fsx::parent(&live))?;
     }
-    copies
-        .files
-        .retain(|path, _| record.copy.contains(path) || DATABASES.contains(&path.as_str()));
+    let declared = |path: &String| record.copy.contains(path) || DATABASES.contains(&path.as_str());
+    copies.files.retain(|path, _| declared(path));
+    copies.pending.retain(|path, _| declared(path));
 
     let mut kept: BTreeSet<&str> = plan.managed.iter().map(String::as_str).collect();
     kept.extend(record.copy.iter().map(String::as_str));
@@ -242,13 +244,19 @@ pub fn reconcile_etc(
 ///
 /// A managed path becomes the symlink into the static tree again, which
 /// ends the warnings about a user replaced file. A copy-mode file is
-/// rewritten with the generation's content.
+/// rewritten with the generation's content. Content Laft wrote itself is
+/// replaced without a backup. Each new entry is prepared next to the live
+/// one before the live one is touched, and the backup is a second link to
+/// the live entry, so the live path never goes missing.
 ///
 /// # Errors
 ///
 /// Fails with [`Error::NotResettable`] before changing anything when a path
-/// is not managed or copied by that generation, or is an account database,
-/// and when `/etc` was never reconciled or cannot be changed.
+/// is not below `/etc`, is not managed or copied by that generation, is an
+/// account database, or has content to keep while `<path>.laft-old` exists
+/// already. Fails with [`Error::Invalid`] when `/etc` was never reconciled,
+/// and with an I/O error when the static tree cannot be read or `/etc`
+/// cannot be changed.
 pub fn reset_etc(lock: &Lock, paths: &[String]) -> Result<Vec<String>> {
     let root = lock.root();
     let mut previous = ManagedRecord::load(root)?;
@@ -258,51 +266,109 @@ pub fn reset_etc(lock: &Lock, paths: &[String]) -> Result<Vec<String>> {
     let record = root.generation(generation)?.etc;
     let mut copies = CopiesRecord::load(root)?;
     let dirs = self::paths(root, generation);
-    let relative: Vec<String> = paths.iter().map(|p| relative(p)).collect();
-    for path in &relative {
-        let reason = if DATABASES.contains(&path.as_str()) {
-            "the account databases are written from the declared accounts at activation"
-        } else if record.managed.contains(path) || record.copy.contains(path) {
-            continue;
-        } else {
-            "the active configuration does not manage this path"
-        };
-        return Err(Error::NotResettable {
-            path: path.clone(),
+    let mut resets = Vec::new();
+    for given in paths {
+        let not_resettable = |path: &str, reason| Error::NotResettable {
+            path: path.to_owned(),
             reason,
-        });
+        };
+        let Some(path) = relative(given) else {
+            return Err(not_resettable(given, "the path is not below /etc"));
+        };
+        if DATABASES.contains(&path.as_str()) {
+            return Err(not_resettable(
+                &path,
+                "the account databases are written from the declared accounts at activation",
+            ));
+        }
+        let live = dirs.etc.join(&path);
+        let metadata = fsx::lstat(&live)?;
+        let (copy, backup) = if record.managed.contains(&path) {
+            let target = static_target(&path);
+            if metadata.is_some() && link_target(&live)?.as_deref() == Some(&target) {
+                previous.managed.insert(path);
+                continue;
+            }
+            (None, metadata.is_some())
+        } else if record.copy.contains(&path) {
+            let copy = static_copy(&dirs, &path)?;
+            let laft_content = match &metadata {
+                Some(m) if m.is_file() => {
+                    let hash = hash_file(&live)?;
+                    hash == copy.hash || copies.wrote(&path, &hash)
+                }
+                _ => false,
+            };
+            (Some(copy), metadata.is_some() && !laft_content)
+        } else {
+            return Err(not_resettable(
+                &path,
+                "the active configuration does not manage this path",
+            ));
+        };
+        if backup && fsx::lstat(&fsx::sibling(&live, ".laft-old"))?.is_some() {
+            return Err(not_resettable(
+                &path,
+                "the backup <path>.laft-old exists already, so move it away first",
+            ));
+        }
+        resets.push((path, copy, backup));
     }
 
+    for (path, copy, _) in &resets {
+        if let Some(copy) = copy {
+            copies.pending.insert(path.clone(), copy.hash);
+        }
+    }
+    copies.save(root)?;
     let mut kept = Vec::new();
-    for path in relative {
+    for (path, copy, backup) in resets {
         let live = dirs.etc.join(&path);
-        let target = static_target(&path);
-        let metadata = fsx::lstat(&live)?;
-        let managed = record.managed.contains(&path);
-        if managed && metadata.is_some() && link_target(&live)?.as_deref() == Some(&target) {
-            previous.managed.insert(path);
-            continue;
-        }
-        if metadata.is_some() {
-            let old = fsx::sibling(&live, ".laft-old");
-            fs::rename(&live, &old).map_err(io(&live))?;
-            kept.push(path.clone());
-        }
         let parent = fsx::parent(&live);
         fs::create_dir_all(parent).map_err(io(parent))?;
-        if managed {
-            symlink(&target, &live).map_err(io(&live))?;
-            fsx::sync_dir(parent)?;
-            previous.managed.insert(path);
-        } else {
-            let copy = static_copy(&dirs, &path)?;
-            fsx::write_atomic(&live, &copy.bytes, copy.mode, copy.owner)?;
-            copies.finish(&path, copy.hash);
+        let tmp = fsx::sibling(&live, ".laft-tmp");
+        match &copy {
+            Some(copy) => fsx::stage(&tmp, &copy.bytes, copy.mode, copy.owner)?,
+            None => {
+                fsx::remove_if_present(&tmp)?;
+                symlink(static_target(&path), &tmp).map_err(io(&tmp))?;
+            }
+        }
+        if backup {
+            keep_aside(&live, &fsx::sibling(&live, ".laft-old"))?;
+            kept.push(path.clone());
+        }
+        fsx::commit(&tmp, &live)?;
+        match copy {
+            Some(copy) => copies.finish(&path, copy.hash),
+            None => {
+                previous.managed.insert(path);
+            }
         }
     }
     previous.save(root)?;
     copies.save(root)?;
     Ok(kept)
+}
+
+/// Keeps the entry at `live` as `old`, which must not exist. A file or
+/// symlink gets a second link, so it stays at `live` until it is replaced.
+/// A directory cannot, so it is moved.
+fn keep_aside(live: &Path, old: &Path) -> Result<()> {
+    let is_dir = fsx::lstat(live)?.is_some_and(|m| m.is_dir());
+    if is_dir {
+        rustix::fs::renameat_with(
+            rustix::fs::CWD,
+            live,
+            rustix::fs::CWD,
+            old,
+            rustix::fs::RenameFlags::NOREPLACE,
+        )
+        .map_err(|e| io(live)(e.into()))?;
+    } else {
+        fs::hard_link(live, old).map_err(io(old))?;
+    }
+    fsx::sync_dir(fsx::parent(live))
 }
 
 fn paths(root: &Root, generation: u64) -> Paths {
@@ -312,16 +378,26 @@ fn paths(root: &Root, generation: u64) -> Paths {
     }
 }
 
-/// `path` relative to `/etc`, whether it is given absolute or relative.
-fn relative(path: &str) -> String {
-    path.strip_prefix("/etc/")
-        .unwrap_or(path)
-        .trim_matches('/')
-        .to_owned()
+/// `path` relative to `/etc`, whether it is given absolute or relative, or
+/// `None` for an absolute path that is not below `/etc`.
+fn relative(path: &str) -> Option<String> {
+    let path = match path.strip_prefix('/') {
+        Some(absolute) => absolute.strip_prefix("etc/")?,
+        None => path,
+    };
+    Some(path.trim_matches('/').to_owned())
 }
 
-fn relative_set(paths: &BTreeSet<String>) -> BTreeSet<String> {
-    paths.iter().map(|p| relative(p)).collect()
+/// `paths` relative to `/etc`.
+///
+/// # Errors
+///
+/// Fails with [`Error::Invalid`] for an absolute path not below `/etc`.
+fn relative_set(paths: &BTreeSet<String>) -> Result<BTreeSet<String>> {
+    paths
+        .iter()
+        .map(|p| relative(p).ok_or_else(|| Error::Invalid(format!("{p} is not below /etc"))))
+        .collect()
 }
 
 /// The target of the managed symlink for `path`.
@@ -348,7 +424,8 @@ fn adopt_entry(path: &Path) -> Result<()> {
 }
 
 /// Removes the directory `path` when it exists and is empty, and returns
-/// whether it is gone.
+/// whether it is gone. A directory that something else replaced is gone
+/// too.
 fn remove_empty_dir(path: &Path) -> Result<bool> {
     match fs::read_dir(path) {
         Ok(mut items) => {
@@ -356,7 +433,14 @@ fn remove_empty_dir(path: &Path) -> Result<bool> {
                 return Ok(false);
             }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(true);
+        }
         Err(e) => return Err(io(path)(e)),
     }
     fs::remove_dir(path).map_err(io(path))?;
@@ -506,8 +590,12 @@ fn plan(
             continue;
         }
         let live = paths.etc.join(path);
-        if fsx::lstat(&live)?.is_some_and(|m| m.is_file()) && hash_file(&live)? == *hash {
-            plan.stale.push(path.clone());
+        if fsx::lstat(&live)?.is_some_and(|m| m.is_file()) {
+            if hash_file(&live)? == *hash {
+                plan.stale.push(path.clone());
+            } else {
+                plan.warnings.push(Warning::ChangedCopyKept(path.clone()));
+            }
         }
     }
     Ok(plan)

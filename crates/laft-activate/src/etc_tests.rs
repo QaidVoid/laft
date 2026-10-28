@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::os::unix::fs::PermissionsExt;
 
 use super::*;
 use crate::test_support::{Env, build_generation, config_with, link};
@@ -321,4 +322,115 @@ fn reset_refuses_paths_it_cannot_restore() {
         link(&env, "etc/hosts").as_deref(),
         Some("/etc/static/hosts")
     );
+}
+
+/// Reconciles a changed copy-mode `machine.conf` and resets it once, so
+/// that `machine.conf.laft-old` holds `edited\n`.
+fn reset_once(env: &Env, lock: &Lock) {
+    build_generation(lock, 1, &copied("one\n"));
+    reconcile_etc(lock, 1, &none(), OnConflict::Stop).expect("reconciles");
+    env.write("etc/machine.conf", "edited\n");
+    reset_etc(lock, &["machine.conf".to_owned()]).expect("resets");
+}
+
+#[test]
+fn reset_never_overwrites_an_earlier_backup() {
+    let env = Env::new();
+    let lock = env.lock();
+    reset_once(&env, &lock);
+
+    env.write("etc/machine.conf", "edited again\n");
+    let err = reset_etc(&lock, &["machine.conf".to_owned()]).expect_err("backup exists");
+    assert!(matches!(err, Error::NotResettable { .. }), "{err}");
+    assert_eq!(env.read("etc/machine.conf"), "edited again\n");
+    assert_eq!(env.read("etc/machine.conf.laft-old"), "edited\n");
+}
+
+#[test]
+fn resetting_laft_content_keeps_no_backup() {
+    let env = Env::new();
+    let lock = env.lock();
+    reset_once(&env, &lock);
+
+    let kept = reset_etc(&lock, &["machine.conf".to_owned()]).expect("resets");
+    assert!(kept.is_empty(), "{kept:?}");
+    assert_eq!(env.read("etc/machine.conf"), "one\n");
+    assert_eq!(env.read("etc/machine.conf.laft-old"), "edited\n");
+}
+
+#[test]
+fn a_failed_reset_leaves_the_live_file_in_place() {
+    let env = Env::new();
+    let lock = env.lock();
+    build_generation(&lock, 1, &copied("one\n"));
+    reconcile_etc(&lock, 1, &none(), OnConflict::Stop).expect("reconciles");
+    env.write("etc/machine.conf", "edited\n");
+    let static_etc = crate::state::gen_dir(lock.root(), 1).join("etc");
+    fs::set_permissions(&static_etc, fs::Permissions::from_mode(0o755)).expect("can chmod");
+    fs::remove_file(static_etc.join("machine.conf")).expect("can remove");
+
+    reset_etc(&lock, &["machine.conf".to_owned()]).expect_err("the static copy is gone");
+    assert_eq!(env.read("etc/machine.conf"), "edited\n");
+    assert!(!env.path("etc/machine.conf.laft-old").exists());
+}
+
+#[test]
+fn reset_refuses_absolute_paths_outside_etc() {
+    let env = Env::new();
+    let lock = env.lock();
+    build_generation(&lock, 1, &config_with(&[]));
+    reconcile_etc(&lock, 1, &none(), OnConflict::Stop).expect("reconciles");
+    let err = reset_etc(&lock, &["/etchosts".to_owned()]).expect_err("not below /etc");
+    assert!(matches!(err, Error::NotResettable { .. }), "{err}");
+}
+
+#[test]
+fn stale_pending_hashes_are_dropped_with_their_declaration() {
+    let env = Env::new();
+    let lock = env.lock();
+    build_generation(&lock, 1, &copied("one\n"));
+    build_generation(&lock, 2, &config_with(&[]));
+    reconcile_etc(&lock, 1, &none(), OnConflict::Stop).expect("reconciles");
+    let mut copies = CopiesRecord::load(&env.root).expect("readable");
+    copies
+        .pending
+        .insert("machine.conf".into(), Blake3Hash::of(b"two\n"));
+    copies.save(&env.root).expect("saves");
+
+    reconcile_etc(&lock, 2, &none(), OnConflict::Stop).expect("reconciles");
+    let copies = CopiesRecord::load(&env.root).expect("readable");
+    assert!(copies.pending.is_empty(), "{:?}", copies.pending);
+}
+
+#[test]
+fn a_changed_copy_that_is_no_longer_declared_is_kept_with_a_warning() {
+    let env = Env::new();
+    let lock = env.lock();
+    build_generation(&lock, 1, &copied("one\n"));
+    build_generation(&lock, 2, &config_with(&[]));
+    reconcile_etc(&lock, 1, &none(), OnConflict::Stop).expect("reconciles");
+    env.write("etc/machine.conf", "edited\n");
+
+    let report = reconcile_etc(&lock, 2, &none(), OnConflict::Stop).expect("reconciles");
+    assert_eq!(
+        report.warnings,
+        [Warning::ChangedCopyKept("machine.conf".into())]
+    );
+    assert_eq!(env.read("etc/machine.conf"), "edited\n");
+}
+
+#[test]
+fn a_managed_directory_replaced_by_a_file_does_not_stop_reconciling() {
+    let env = Env::new();
+    let lock = env.lock();
+    build_generation(&lock, 1, &config_with(&[("/etc/app/one.conf", "1\n")]));
+    build_generation(&lock, 2, &config_with(&[]));
+    reconcile_etc(&lock, 1, &none(), OnConflict::Stop).expect("reconciles");
+    fs::remove_dir_all(env.path("etc/app")).expect("can remove");
+    env.write("etc/app", "a file now\n");
+
+    reconcile_etc(&lock, 2, &none(), OnConflict::Stop).expect("reconciles");
+    assert_eq!(env.read("etc/app"), "a file now\n");
+    let record = ManagedRecord::load(&env.root).expect("readable");
+    assert!(!record.dirs.contains("app"), "{:?}", record.dirs);
 }
