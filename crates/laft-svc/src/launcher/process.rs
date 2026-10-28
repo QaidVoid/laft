@@ -15,7 +15,7 @@ use rustix::io::{Errno, FdFlags};
 use rustix::process::{Gid, Resource, Rlimit, Uid};
 
 use super::accounts::Credentials;
-use crate::error::{Error, io};
+use crate::error::{Error, corrupt, io};
 use crate::spec::Spec;
 
 /// Creates the directory `relative` below `base` below `root`, then gives
@@ -24,8 +24,9 @@ use crate::spec::Spec;
 /// `base`, such as `/var/lib`, is created when missing and may be reached
 /// through symlinks. Below it, every component is opened without following
 /// symlinks, so that an account owning one directory cannot redirect the
-/// ownership change to a file elsewhere. Missing parents below `base` are
-/// created with mode `0o755` and owned by the launcher.
+/// ownership change to a file elsewhere. `relative` must consist of plain
+/// components, so that it cannot leave `base` through `..`. Missing parents
+/// below `base` are created with mode `0o755` and owned by the launcher.
 pub(crate) fn ensure_dir(
     root: &Path,
     base: &str,
@@ -35,10 +36,16 @@ pub(crate) fn ensure_dir(
     mode: u32,
 ) -> Result<(), Error> {
     let base_path = root.join(base.trim_start_matches('/'));
+    let components: Vec<&str> = relative.split('/').collect();
+    if components.iter().any(|c| matches!(*c, "" | "." | "..")) {
+        return Err(corrupt(
+            &base_path.join(relative),
+            "a directory path has an empty, . or .. component",
+        ));
+    }
     fs::create_dir_all(&base_path).map_err(io(&base_path))?;
     let mut dir: OwnedFd = File::open(&base_path).map_err(io(&base_path))?.into();
     let mut path = base_path;
-    let components: Vec<&str> = relative.split('/').collect();
     for (i, component) in components.iter().enumerate() {
         path.push(component);
         let created = match rustix::fs::mkdirat(&dir, *component, Mode::from_raw_mode(0o755)) {

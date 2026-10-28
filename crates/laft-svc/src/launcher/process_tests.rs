@@ -102,3 +102,19 @@ fn atomic_write_replaces_the_file_with_the_mode() {
     assert_eq!(fs::metadata(&path).expect("exists").mode() & 0o7777, 0o644);
     assert_eq!(fs::read_dir(dir.path()).expect("read").count(), 1);
 }
+
+#[test]
+fn directories_never_leave_their_base() {
+    let root = tempfile::tempdir().expect("can create a temporary directory");
+    let (uid, gid) = me();
+    for relative in ["app/../../../escape", "..", "app/./data", "app//data", ""] {
+        let error =
+            ensure_dir(root.path(), "/var/lib", relative, uid, gid, 0o700).expect_err(relative);
+        assert!(
+            matches!(error, Error::Corrupt { .. }),
+            "{relative}: {error}"
+        );
+    }
+    assert!(!root.path().join("escape").exists());
+    assert!(!root.path().join("var/lib/app").exists());
+}
