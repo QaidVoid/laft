@@ -1,7 +1,8 @@
 use laft_core::Timestamp;
+use proptest::prelude::*;
 
 use super::*;
-use crate::test_support::{TestKey, keys};
+use crate::test_support::{TestKey, keys, public_keys};
 
 #[test]
 fn keys_round_trip_as_canonical_json() {
@@ -54,4 +55,50 @@ fn invalid_documents_are_rejected() {
     let text = String::from_utf8(json).expect("UTF-8");
     let extra = text.replacen('{', r#"{"extra":1,"#, 1);
     assert!(Keys::from_json(extra.as_bytes()).is_err());
+}
+
+fn arb_keys() -> impl Strategy<Value = Keys> {
+    let windows = prop::collection::vec(
+        (0..=Timestamp::MAX.as_secs(), 0..=Timestamp::MAX.as_secs()),
+        4,
+    );
+    (
+        0..=MAX_SAFE_INTEGER,
+        prop::sample::subsequence((0..public_keys().len()).collect::<Vec<_>>(), 0..=4),
+        windows,
+        prop::sample::subsequence((0..public_keys().len()).collect::<Vec<_>>(), 0..=4),
+        prop::option::of(0..=MAX_SAFE_INTEGER),
+    )
+        .prop_map(
+            |(version, listed, windows, revoked, generation_floor)| Keys {
+                format: Keys::FORMAT,
+                repo: "core".parse().expect("valid name"),
+                version,
+                keys: listed
+                    .into_iter()
+                    .map(|i| {
+                        let public = public_keys()[i].clone();
+                        let (a, b) = windows[i];
+                        OnlineKey {
+                            id: public.id(),
+                            public,
+                            not_before: Timestamp::from_secs(a.min(b)),
+                            not_after: Timestamp::from_secs(a.max(b)),
+                        }
+                    })
+                    .collect(),
+                revoked: revoked.into_iter().map(|i| public_keys()[i].id()).collect(),
+                generation_floor,
+            },
+        )
+}
+
+proptest! {
+    #[test]
+    fn generated_keys_round_trip_with_stable_bytes(keys in arb_keys()) {
+        let json = keys.to_json().expect("generated keys are valid");
+        let parsed = Keys::from_json(&json).expect("written JSON parses");
+        prop_assert_eq!(&parsed, &keys);
+        prop_assert_eq!(parsed.to_json().expect("valid"), json);
+    }
 }

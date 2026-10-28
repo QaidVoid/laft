@@ -1,7 +1,8 @@
 use laft_core::Timestamp;
+use proptest::prelude::*;
 
 use super::*;
-use crate::test_support::{DAY, T0, entry, index};
+use crate::test_support::{DAY, T0, entry, index, meta};
 
 fn yank(name: &str) -> Yank {
     let gone = entry(name, "0.9");
@@ -162,4 +163,136 @@ fn generations_come_from_the_signing_time_and_increase() {
     assert_eq!(next_generation(signed, None).expect("first"), T0);
     assert_eq!(next_generation(signed, Some(T0 - 1)).expect("later"), T0);
     assert!(next_generation(signed, Some(T0)).is_err());
+}
+
+/// A package identity: name, version, revision and static variant.
+type Identity = (String, String, u32, bool);
+
+fn arb_identity() -> impl Strategy<Value = Identity> {
+    (
+        "[a-z][a-z0-9]{0,5}",
+        "[0-9]{1,2}(\\.[0-9]{1,2}){0,2}",
+        1u32..4,
+        any::<bool>(),
+    )
+}
+
+fn package((name, version, rev, fixed): &Identity, any_arch: bool) -> IndexEntry {
+    let mut entry = entry(name, version);
+    entry.meta = meta(name, version);
+    entry.meta.rev = *rev;
+    if *fixed {
+        entry.meta.variant = Variant::Static;
+    }
+    if any_arch {
+        entry.meta.arch = Arch::Any;
+    }
+    entry.id = StoreId::from_manifest_hash(&Blake3Hash::of(
+        format!("{name}-{version}-{rev}-{fixed}").as_bytes(),
+    ));
+    entry.file = format!("pool/{}.lpkg", entry.id);
+    entry
+}
+
+fn arb_index() -> impl Strategy<Value = Index> {
+    (
+        prop::collection::vec((arb_identity(), any::<bool>()), 0..6),
+        prop::collection::vec((arb_identity(), "[a-z ]{1,12}"), 0..4),
+        prop::collection::btree_map("[a-z]{1,4}", "[a-z]{1,4}", 0..3),
+        prop::collection::btree_map("[a-z]{1,4}", "[a-z]{1,4}", 0..3),
+        0..=MAX_SAFE_INTEGER,
+        0..=Timestamp::MAX.as_secs() - MAX_VALIDITY_SECS,
+        1..=MAX_VALIDITY_SECS,
+    )
+        .prop_map(
+            |(packages, yanks, alternatives, providers, generation, signed, validity)| {
+                let mut packages: Vec<IndexEntry> =
+                    packages.iter().map(|(id, any)| package(id, *any)).collect();
+                packages.sort_by(|a, b| {
+                    let key = |e: &IndexEntry| {
+                        let m = &e.meta;
+                        (
+                            m.name.clone(),
+                            Reverse((m.version.clone(), m.rev)),
+                            m.variant,
+                        )
+                    };
+                    key(a).cmp(&key(b))
+                });
+                packages.dedup_by(|a, b| {
+                    let key = |e: &IndexEntry| {
+                        let m = &e.meta;
+                        (m.name.clone(), m.version.clone(), m.rev, m.variant)
+                    };
+                    key(a) == key(b) || a.id == b.id
+                });
+                let mut yanked: Vec<Yank> = yanks
+                    .iter()
+                    .map(|(id, reason)| {
+                        let gone = package(id, false);
+                        Yank {
+                            id: StoreId::from_manifest_hash(&Blake3Hash::of(
+                                format!("yanked {}", gone.id).as_bytes(),
+                            )),
+                            name: gone.meta.name,
+                            version: gone.meta.version,
+                            rev: gone.meta.rev,
+                            variant: gone.meta.variant,
+                            reason: reason.clone(),
+                            time: Timestamp::from_secs(signed),
+                        }
+                    })
+                    .filter(|y| {
+                        !packages.iter().any(|p| {
+                            let m = &p.meta;
+                            (&m.name, &m.version, m.rev, m.variant)
+                                == (&y.name, &y.version, y.rev, y.variant)
+                        })
+                    })
+                    .collect();
+                let key = |y: &Yank| {
+                    (
+                        y.name.clone(),
+                        Reverse((y.version.clone(), y.rev)),
+                        y.variant,
+                    )
+                };
+                yanked.sort_by_key(key);
+                yanked.dedup_by(|a, b| key(a) == key(b) || a.id == b.id);
+                let name = |s: &String| s.parse::<Name>().expect("generated names are valid");
+                Index {
+                    format: Index::FORMAT,
+                    repo: "core".parse().expect("valid name"),
+                    channel: "current".parse().expect("valid name"),
+                    arch: Arch::X86_64V3,
+                    generation,
+                    timestamp: Timestamp::from_secs(signed),
+                    expires: Timestamp::from_secs(signed + validity),
+                    defaults: Defaults {
+                        alternatives: alternatives
+                            .iter()
+                            .map(|(g, m)| (name(g), name(m)))
+                            .collect(),
+                        providers: providers
+                            .iter()
+                            .map(|(lib, p)| (format!("so:lib{lib}.so.1"), name(p)))
+                            .collect(),
+                    },
+                    packages,
+                    yanked,
+                }
+            },
+        )
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    #[test]
+    fn generated_indexes_round_trip_with_stable_bytes(index in arb_index()) {
+        let json = index.to_json().expect("generated indexes are valid");
+        let parsed = Index::from_json(&json).expect("written JSON parses");
+        prop_assert_eq!(&parsed, &index);
+        prop_assert_eq!(parsed.to_json().expect("valid"), json);
+    }
 }

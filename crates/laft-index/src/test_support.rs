@@ -9,6 +9,14 @@ use crate::{Defaults, Index, IndexEntry, KeyId, Keys, OnlineKey, PublicKey, Repo
 pub(crate) const T0: u64 = 1_761_652_800;
 pub(crate) const DAY: u64 = 86_400;
 
+/// Public keys of a few generated key pairs, for property tests that need
+/// valid keys but sign nothing.
+pub(crate) fn public_keys() -> &'static [PublicKey] {
+    static KEYS: std::sync::LazyLock<Vec<PublicKey>> =
+        std::sync::LazyLock::new(|| (0..4).map(|_| TestKey::generate().public).collect());
+    &KEYS
+}
+
 /// A minisign key pair.
 pub(crate) struct TestKey {
     pub(crate) public: PublicKey,
