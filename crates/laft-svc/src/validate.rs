@@ -133,7 +133,8 @@ pub enum ConfigError {
         /// Why it is rejected.
         reason: &'static str,
     },
-    /// Two services declare the same directory with different owners.
+    /// Two services declare the same directory with different owners or
+    /// modes, so each start would change what the other set.
     SharedDir {
         /// The first service, by name.
         first: String,
@@ -241,7 +242,7 @@ impl fmt::Display for ConfigError {
                 path,
             } => write!(
                 f,
-                "services {first} and {second} both declare {path} with different owners"
+                "services {first} and {second} both declare {path} with different owners or modes"
             ),
         }
     }
@@ -633,27 +634,30 @@ fn edit_distance(a: &str, b: &str) -> usize {
     row[b.len()]
 }
 
-/// Who owns a declared directory: the owner, and the group or `None` for
-/// the owner's primary group.
-fn dir_owners(spec: &Spec, dir: &SpecDir) -> (String, Option<String>) {
+/// What a service makes of a declared directory: the owner, the group or
+/// `None` for the owner's primary group, and the mode.
+type DirSettings = (String, Option<String>, u32);
+
+fn dir_settings(spec: &Spec, dir: &SpecDir) -> DirSettings {
     match &dir.owner {
-        Some(owner) => (owner.clone(), dir.group.clone()),
+        Some(owner) => (owner.clone(), dir.group.clone(), dir.mode),
         None => (
             spec.user.clone(),
             dir.group.clone().or_else(|| spec.group.clone()),
+            dir.mode,
         ),
     }
 }
 
 fn check_shared_dirs(specs: &BTreeMap<String, Spec>, errors: &mut Vec<ConfigError>) {
-    let mut seen: BTreeMap<&str, (&str, (String, Option<String>))> = BTreeMap::new();
+    let mut seen: BTreeMap<&str, (&str, DirSettings)> = BTreeMap::new();
     let mut reported = BTreeSet::new();
     for (name, spec) in specs {
         for dir in spec.state_dirs.iter().chain(&spec.runtime_dirs) {
-            let owners = dir_owners(spec, dir);
+            let settings = dir_settings(spec, dir);
             match seen.get(dir.path.as_str()) {
-                Some((first, first_owners))
-                    if *first_owners != owners && reported.insert(dir.path.as_str()) =>
+                Some((first, first_settings))
+                    if *first_settings != settings && reported.insert(dir.path.as_str()) =>
                 {
                     errors.push(ConfigError::SharedDir {
                         first: (*first).to_owned(),
@@ -663,7 +667,7 @@ fn check_shared_dirs(specs: &BTreeMap<String, Spec>, errors: &mut Vec<ConfigErro
                 }
                 Some(_) => {}
                 None => {
-                    seen.insert(&dir.path, (name, owners));
+                    seen.insert(&dir.path, (name, settings));
                 }
             }
         }

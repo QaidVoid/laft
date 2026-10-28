@@ -289,12 +289,31 @@ fn shared_directory_with_different_owners_is_rejected() {
             ("myapp", shared("myapp")),
             ("other", shared("other"))
         ])),
-        ["services myapp and other both declare /var/lib/shared with different owners"]
+        ["services myapp and other both declare /var/lib/shared with different owners or modes"]
     );
     valid(&config(&[
         ("myapp", shared("app")),
         ("other", shared("app")),
     ]));
+}
+
+#[test]
+fn shared_directory_with_different_modes_is_rejected() {
+    let shared = |mode: u32| Service {
+        user: "app".into(),
+        state_dirs: vec![Dir {
+            mode,
+            ..Dir::new("shared")
+        }],
+        ..Service::longrun(&["/usr/bin/x"])
+    };
+    assert_eq!(
+        errors(&config(&[
+            ("myapp", shared(0o750)),
+            ("other", shared(0o700))
+        ])),
+        ["services myapp and other both declare /var/lib/shared with different owners or modes"]
+    );
 }
 
 #[test]
