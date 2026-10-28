@@ -365,6 +365,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "laft-resolve"
+version = "0.1.0"
+dependencies = [
+ "laft-core",
+ "laft-index",
+ "laft-pkg",
+ "proptest",
+]
+
+[[package]]
 name = "laft-store"
 version = "0.1.0"
 dependencies = [

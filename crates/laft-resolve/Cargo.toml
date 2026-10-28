@@ -1,0 +1,19 @@
+[package]
+name = "laft-resolve"
+description = "Dependency resolution of Laft views from repository indexes"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+laft-core.workspace = true
+laft-index.workspace = true
+laft-pkg.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

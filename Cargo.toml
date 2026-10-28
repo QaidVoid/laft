@@ -6,6 +6,7 @@ members = [
   "crates/laft-elf",
   "crates/laft-index",
   "crates/laft-pkg",
+  "crates/laft-resolve",
   "crates/laft-store",
 ]
 
@@ -22,6 +23,7 @@ laft-core = { version = "0.1.0", path = "crates/laft-core" }
 laft-elf = { version = "0.1.0", path = "crates/laft-elf" }
 laft-index = { version = "0.1.0", path = "crates/laft-index" }
 laft-pkg = { version = "0.1.0", path = "crates/laft-pkg" }
+laft-resolve = { version = "0.1.0", path = "crates/laft-resolve" }
 laft-store = { version = "0.1.0", path = "crates/laft-store" }
 minisign = { version = "0.10.0", default-features = false }
 minisign-verify = { version = "0.3.0", default-features = false }
