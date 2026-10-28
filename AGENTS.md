@@ -8,7 +8,7 @@ These properties define Laft. A change that breaks one is a bug, even when every
 
 - Store entries are immutable once published. Nothing writes into a store entry after the rename that publishes it.
 - `/laft` is mounted read-only, `nosuid` and `nodev` in the initial mount namespace. Laft writes to it only from a private mount namespace.
-- Store files never carry setuid, setgid or file capabilities. Only the mounted generations honor privileged copies, and old generations and non-system views never do.
+- Store files never carry setuid, setgid or file capabilities. Privileges come only from the privileged copies of the active system generation, which is mounted without `nosuid`. Those copies are bound into a view only when the program's whole runtime closure is in that view with the same store ids as in the system. Old generations and the files of views themselves never carry or honor privileges.
 - `/usr` always resolves to a complete generation. Switching generations is a single `rename(2)`.
 - No package runs code on the client. Side effects come only from triggers that Laft itself implements.
 - Two packages never own the same path in one view unless the configuration chooses one.

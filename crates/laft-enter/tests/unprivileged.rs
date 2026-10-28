@@ -1,6 +1,6 @@
 //! Runs the built binary without the setuid bit. Everything past the
-//! installation check needs root and a mounted generation, and is covered
-//! by the virtual machine tests.
+//! installation check needs root and a mounted generation, so it is left
+//! to the virtual machine tests.
 
 use std::process::Command;
 

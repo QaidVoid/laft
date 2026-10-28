@@ -58,8 +58,8 @@ fn ambiguous_entries_are_dropped_and_the_first_duplicate_wins() {
 fn an_explicit_command_is_run_as_given() {
     let command = vec![OsString::from("make"), OsString::from("all")];
     assert_eq!(
-        command_line(command.clone(), &env(&[("SHELL", "/bin/zsh")])),
-        command
+        command_line(command, &env(&[("SHELL", "/bin/zsh")])),
+        (OsString::from("make"), vec![OsString::from("all")])
     );
 }
 
@@ -67,12 +67,12 @@ fn an_explicit_command_is_run_as_given() {
 fn the_default_command_is_an_absolute_shell() {
     assert_eq!(
         command_line(vec![], &env(&[("SHELL", "/bin/zsh")])),
-        [OsString::from("/bin/zsh")]
+        (OsString::from("/bin/zsh"), vec![])
     );
     for shell in [&[("SHELL", "zsh")][..], &[("SHELL", "")], &[]] {
         assert_eq!(
             command_line(vec![], &env(shell)),
-            [OsString::from("/bin/sh")]
+            (OsString::from("/bin/sh"), vec![])
         );
     }
 }

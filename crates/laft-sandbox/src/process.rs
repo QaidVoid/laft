@@ -27,9 +27,10 @@ pub fn close_inherited_on_exec() -> Result<(), Error> {
 
 /// Restores the default disposition of every signal, so that signals the
 /// caller ignored behave normally in this process and in programs it
-/// executes. `SIGKILL` and `SIGSTOP` cannot be changed and are skipped, and
-/// so are the signals the C library reserves for itself, which it refuses
-/// to change.
+/// executes. `SIGKILL` and `SIGSTOP` cannot be changed and are skipped.
+/// Every other signal up to 64 is reset, except the few the C library
+/// reserves for its own threads. It refuses to change those, and they keep
+/// their disposition.
 pub fn reset_signal_dispositions() {
     for signal in 1..=LAST_SIGNAL {
         if signal != libc::SIGKILL && signal != libc::SIGSTOP {

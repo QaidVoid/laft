@@ -25,8 +25,8 @@
 //! Before the privileged steps it marks every inherited descriptor above 2
 //! close-on-exec, restores the default disposition of every signal, sets
 //! the umask to 077, changes to `/` and copies the arguments and the
-//! environment without interpreting them. The environment is read only
-//! after privileges are dropped, with one exception: the allocator reads
+//! environment without interpreting them. The environment is interpreted
+//! only after privileges are dropped, with one exception: the allocator reads
 //! its own `MIMALLOC_` tuning variables at startup. They change how memory
 //! is obtained and what the allocator reports on stderr, never a decision
 //! of this program. An allocation failure they cause aborts the program,
@@ -141,7 +141,7 @@ fn run() -> Failure {
     let args: Vec<OsString> = std::env::args_os().collect();
     let env: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     if !args::within_limits(&args, &env) {
-        return Failure::error("environment too large");
+        return Failure::error("arguments or environment too large");
     }
     let cwd = std::env::current_dir().ok();
     if let Err(e) = std::env::set_current_dir("/") {

@@ -1,8 +1,8 @@
 //! Running the command once privileges are gone: its environment, working
 //! directory, path search and exit status.
 //!
-//! The caller's environment is read here for the first time. Nothing in it
-//! influenced the privileged steps.
+//! The caller's environment was copied before the privileged steps, but it
+//! is interpreted only here. Nothing in it influenced those steps.
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
@@ -58,16 +58,21 @@ fn lookup<'a>(env: &'a [(OsString, OsString)], key: &str) -> Option<&'a OsStr> {
         .map(|(_, value)| value.as_os_str())
 }
 
-/// The command to run: `command` when it is not empty, otherwise the
-/// caller's `SHELL` when that is an absolute path, otherwise `/bin/sh`.
-pub(crate) fn command_line(command: Vec<OsString>, env: &[(OsString, OsString)]) -> Vec<OsString> {
-    if !command.is_empty() {
-        return command;
+/// The program to run and its arguments: `command` when it is not empty,
+/// otherwise the caller's `SHELL` when that is an absolute path, otherwise
+/// `/bin/sh`, without arguments.
+pub(crate) fn command_line(
+    command: Vec<OsString>,
+    env: &[(OsString, OsString)],
+) -> (OsString, Vec<OsString>) {
+    let mut command = command.into_iter();
+    if let Some(program) = command.next() {
+        return (program, command.collect());
     }
     let shell = lookup(env, "SHELL")
         .filter(|shell| shell.as_bytes().starts_with(b"/"))
         .unwrap_or(OsStr::new(DEFAULT_SHELL));
-    vec![shell.to_owned()]
+    (shell.to_owned(), Vec::new())
 }
 
 /// The paths to try for `program`, in order.
@@ -133,11 +138,7 @@ pub(crate) fn exec(
         }
     }
     rustix::process::umask(umask);
-    let mut command = command_line(command, &env).into_iter();
-    let Some(program) = command.next() else {
-        return Failure::error("no command");
-    };
-    let args: Vec<OsString> = command.collect();
+    let (program, args) = command_line(command, &env);
     let mut errors = Vec::new();
     for path in candidates(&program, &env) {
         let error = std::process::Command::new(&path)

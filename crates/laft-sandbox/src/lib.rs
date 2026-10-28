@@ -28,8 +28,8 @@
 //!
 //! This crate may use `unsafe` code. It is confined to forking, `unshare`,
 //! `mount_setattr`, `close_range`, signal resets, `kill`, `_exit`, reading
-//! the real, effective and saved ids, and the hook that sets up a sandbox between `fork` and `exec`, each with the
-//! reason it is sound next to it.
+//! the real, effective and saved ids, and the hook that sets up a sandbox
+//! between `fork` and `exec`, each with the reason it is sound next to it.
 
 mod enter;
 mod error;
