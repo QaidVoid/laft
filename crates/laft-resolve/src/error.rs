@@ -1,6 +1,6 @@
 use std::fmt;
 
-use laft_core::{Dep, Name, Timestamp};
+use laft_core::{Dep, Name, Timestamp, Variant};
 
 use crate::explain::{Chain, Learned, Package, date, list};
 
@@ -34,8 +34,10 @@ pub enum ErrorKind {
         origin: String,
         /// Every candidate of the requested name, best first.
         available: Vec<Package>,
-        /// The packages that replace the requested name, when there are
-        /// several and none could be chosen.
+        /// The packages that replace the requested name, when the request
+        /// cannot follow the rename: several packages replace the name, or
+        /// the request has a version prefix, which the replacing package's
+        /// versions need not share.
         replaced_by: Vec<Name>,
     },
     /// R002: requests for the same name disagree on the variant or on the
@@ -119,9 +121,13 @@ pub enum ErrorKind {
         /// Their priority.
         priority: i64,
     },
-    /// R009: the resolution restarted too often. This is a bug.
+    /// R009: the search gave up after a bounded number of passes without
+    /// finding a resolution or showing that none exists.
     RestartLimit {
-        /// The constraints learned so far.
+        /// The number of passes it made.
+        passes: usize,
+        /// The constraints it was searching with when it gave up, in the
+        /// order they were learned.
         learned: Vec<Learned>,
     },
     /// R010: the installed package was yanked and no other candidate
@@ -163,7 +169,8 @@ pub enum ErrorKind {
 /// A version constraint on a name and where it comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bound {
-    /// The constraint, for example `foo>=2` or `foo@2.1`.
+    /// The constraint, for example `foo>=2` or `foo@2.1`, or a capability
+    /// the name must provide, for example `pc:zlib>=1.3`.
     pub dep: Dep,
     /// Where it comes from.
     pub from: BoundSource,
@@ -230,7 +237,13 @@ impl fmt::Display for Error {
                 head(f)?;
                 writeln!(f, "no package matches {request}")?;
                 writeln!(f, "  requested at {origin}")?;
-                if !replaced_by.is_empty() {
+                if let [one] = replaced_by.as_slice() {
+                    writeln!(f, "  replaced by {one}")?;
+                    write!(
+                        f,
+                        "  hint: request {one} instead, with a version prefix of its own"
+                    )?;
+                } else if !replaced_by.is_empty() {
                     writeln!(f, "  replaced by several packages: {}", list(replaced_by))?;
                     write!(f, "  hint: request one of them")?;
                 } else if available.is_empty() {
@@ -343,8 +356,8 @@ impl fmt::Display for Error {
             } => {
                 head(f)?;
                 writeln!(f, "{dep} is needed by {by}")?;
-                let static_selected = provider.variant != selected.variant;
-                if static_selected {
+                let variants_differ = provider.variant != selected.variant;
+                if variants_differ {
                     writeln!(
                         f,
                         "  {} provides it in the {} variant, but {} is selected",
@@ -360,7 +373,10 @@ impl fmt::Display for Error {
                     )?;
                 }
                 chain.write_nested(f, 4)?;
-                if static_selected && matches!(dep, Dep::So(_)) {
+                if variants_differ
+                    && selected.variant == Variant::Static
+                    && matches!(dep, Dep::So(_))
+                {
                     write!(
                         f,
                         "  hint: static library variants do not provide shared libraries; remove {} from this view",
@@ -384,25 +400,22 @@ impl fmt::Display for Error {
                     Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", list(rest)),
                     _ => list(repos),
                 };
-                writeln!(
-                    f,
-                    "error[{code}]: package {name} is in repositories {names}, {both} with priority {priority}"
-                )?;
-                write!(f, "  hint: give one repository a higher priority")?;
-            }
-            ErrorKind::RestartLimit { learned } => {
                 head(f)?;
                 writeln!(
                     f,
-                    "resolution did not settle after {} restarts",
-                    learned.len()
+                    "package {name} is in repositories {names}, {both} with priority {priority}"
                 )?;
+                write!(f, "  hint: give one repository a higher priority")?;
+            }
+            ErrorKind::RestartLimit { passes, learned } => {
+                head(f)?;
+                writeln!(f, "resolution did not settle after {passes} passes")?;
                 for l in learned {
                     writeln!(f, "  {l}")?;
                 }
                 write!(
                     f,
-                    "  hint: this is a bug in the resolver, so please report it with the constraints above"
+                    "  hint: request explicit versions of the packages above to narrow the search"
                 )?;
             }
             ErrorKind::Yanked {

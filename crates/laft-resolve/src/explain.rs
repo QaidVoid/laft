@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
-use laft_core::{Dep, Name, Timestamp, Variant, Version, VersionReq};
+use laft_core::{Dep, Name, Timestamp, Variant, Version};
 use laft_pkg::Meta;
 
 /// A package as people read it in messages: `ripgrep 14.1.1-r1`, or
@@ -65,29 +65,47 @@ pub enum Reason {
     },
 }
 
-/// A version constraint the resolver learned when a dependency contradicted
-/// an earlier choice, and restarted with.
+/// A constraint the resolver learned from a conflict and kept while it
+/// searched on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Learned {
-    /// The constrained package name.
-    pub name: Name,
-    /// The versions the name is limited to.
-    pub req: VersionReq,
-    /// The package whose dependency imposed the constraint.
-    pub by: Package,
-}
-
-impl Learned {
-    /// The constraint as a dependency, for example `foo<2`.
-    pub fn dep(&self) -> Dep {
-        Dep::Pkg(self.name.clone(), self.req.clone())
-    }
+pub enum Learned {
+    /// A dependency limits the candidates of a name to those that satisfy
+    /// it.
+    Require {
+        /// The constrained package name.
+        name: Name,
+        /// What every candidate of `name` must satisfy: a version
+        /// requirement on `name` itself, such as `foo<2`, a capability it
+        /// must provide, such as `pc:zlib>=1.3`, or a renamed package it
+        /// must replace.
+        dep: Dep,
+        /// The package whose dependency imposed the constraint.
+        by: Package,
+    },
+    /// A package that cannot be in the view together with the constraints
+    /// learned before it, so the resolver no longer selects it.
+    Avoid {
+        /// The avoided package.
+        package: Package,
+    },
 }
 
 impl fmt::Display for Learned {
-    /// Writes `learned foo<2 from bar 1.0-r1`.
+    /// Writes `learned foo<2 from bar 1.0-r1`,
+    /// `learned zlib provides pc:zlib>=1.3 from app 1-r1` or
+    /// `learned to avoid mid 2-r1`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "learned {} from {}", self.dep(), self.by)
+        match self {
+            Self::Require {
+                name,
+                dep: dep @ Dep::Pkg(n, _),
+                by,
+            } if n == name => write!(f, "learned {dep} from {by}"),
+            Self::Require { name, dep, by } => {
+                write!(f, "learned {name} provides {dep} from {by}")
+            }
+            Self::Avoid { package } => write!(f, "learned to avoid {package}"),
+        }
     }
 }
 

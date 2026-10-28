@@ -6,6 +6,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::test_support::*;
+use crate::universe::provides;
 
 fn code<T>(result: Result<T, Error>) -> &'static str {
     match result {
@@ -594,29 +595,30 @@ fn requests_of_a_missing_name_fail_with_the_available_versions() {
     );
 }
 
-/// Whether `meta` provides what `dep` asks for, compared by text, which is
-/// exact for the `so:` and `virtual:` dependencies generated here.
-fn provides_text(meta: &Meta, dep: &Dep) -> bool {
-    let wanted = dep.to_string();
-    meta.provides.iter().any(|p| p.to_string() == wanted)
-}
-
 /// Checks that a successful resolution is sound: one package per name,
-/// every request and dependency satisfied, and no conflicts.
+/// every request and dependency satisfied, and no conflicts. An unversioned
+/// dependency on a name nothing selected may be met by a package that
+/// replaces the name.
 fn check_sound(r: &Resolution<'_>, requests: &[Request]) {
     for (name, selected) in &r.packages {
         let meta = selected.candidate.meta;
         assert_eq!(&meta.name, name);
         for dep in &meta.depends {
             let ok = match dep {
-                Dep::Pkg(n, req) => r
-                    .packages
-                    .get(n)
-                    .is_some_and(|s| req.matches(&s.candidate.meta.version, s.candidate.meta.rev)),
-                _ => r
-                    .packages
-                    .values()
-                    .any(|s| provides_text(s.candidate.meta, dep)),
+                Dep::Pkg(n, req) => match r.packages.get(n) {
+                    Some(s) => req.matches(&s.candidate.meta.version, s.candidate.meta.rev),
+                    None => {
+                        *req == VersionReq::Any
+                            && r.packages.values().any(|s| {
+                                s.candidate
+                                    .meta
+                                    .replaces
+                                    .iter()
+                                    .any(|d| matches!(d, Dep::Pkg(x, _) if x == n))
+                            })
+                    }
+                },
+                _ => r.packages.values().any(|s| provides(s.candidate.meta, dep)),
             };
             assert!(ok, "{name} needs {dep}, which is not satisfied");
         }
@@ -631,7 +633,7 @@ fn check_sound(r: &Resolution<'_>, requests: &[Request]) {
                 _ => r
                     .packages
                     .iter()
-                    .any(|(n, s)| n != name && provides_text(s.candidate.meta, dep)),
+                    .any(|(n, s)| n != name && provides(s.candidate.meta, dep)),
             };
             assert!(!hit, "{name} conflicts with {dep}, which is selected");
         }
@@ -1025,4 +1027,337 @@ fn time_resolution(packages: usize, apps: usize) {
 fn synthetic_repositories_resolve_quickly() {
     time_resolution(1500, 600);
     time_resolution(20_000, 120);
+}
+
+fn imposer_universe(with_older_imposer: bool) -> Index {
+    let mut packages = vec![
+        pkg("app 1").depends(&["lib>=2", "mid"]),
+        pkg("mid 2").depends(&["lib<2"]),
+        pkg("lib 1"),
+        pkg("lib 2"),
+    ];
+    if with_older_imposer {
+        packages.push(pkg("mid 1"));
+    }
+    index("core", packages)
+}
+
+#[test]
+fn learned_constraint_gives_way_to_an_older_imposer() {
+    let core = imposer_universe(true);
+    let r = resolve_core(&core, &["app"], &[]).unwrap();
+    assert_eq!(labels(&r), ["app 1-r1", "lib 2-r1", "mid 1-r1"]);
+}
+
+#[test]
+fn unresolvable_imposer_conflict_reports_both_constraints() {
+    let core = imposer_universe(false);
+    let e = resolve_core(&core, &["app"], &[]).unwrap_err();
+    let ErrorKind::Unsatisfiable {
+        name: n,
+        constraints,
+        ..
+    } = &*e.kind
+    else {
+        panic!("expected R005, got {e}");
+    };
+    assert_eq!(n, &name("lib"));
+    assert_eq!(
+        constraints
+            .iter()
+            .map(|b| b.dep.to_string())
+            .collect::<Vec<_>>(),
+        ["lib<2", "lib>=2"]
+    );
+}
+
+#[test]
+fn requested_prefix_admits_an_older_version_within_it() {
+    let core = index(
+        "core",
+        vec![
+            pkg("llvm 19.1.7"),
+            pkg("llvm 19.1.5"),
+            pkg("app 1").depends(&["llvm<19.1.6"]),
+        ],
+    );
+    let r = resolve_core(&core, &["llvm@19", "app"], &[]).unwrap();
+    assert_eq!(labels(&r), ["app 1-r1", "llvm 19.1.5-r1"]);
+}
+
+#[test]
+fn pkg_config_constraint_moves_a_kept_provider_to_a_newer_version() {
+    let old = pkg("zlib 1.2").provides(&["pc:zlib=1.2", "so:libz.so.1"]);
+    let core = index(
+        "core",
+        vec![
+            old.clone(),
+            pkg("zlib 1.3").provides(&["pc:zlib=1.3", "so:libz.so.1"]),
+            pkg("app 1").depends(&["so:libz.so.1"]),
+            pkg("zdev 1").depends(&["pc:zlib>=1.3"]),
+        ],
+    );
+    let r = resolve_core(&core, &["app", "zdev"], &[&old]).unwrap();
+    assert_eq!(labels(&r), ["app 1-r1", "zdev 1-r1", "zlib 1.3-r1"]);
+    assert!(!r.packages[&name("zlib")].kept_installed);
+    assert_eq!(
+        r.learned
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["learned zlib provides pc:zlib>=1.3 from zdev 1-r1"]
+    );
+}
+
+#[test]
+fn prefixed_request_for_a_replaced_name_names_the_replacer() {
+    let core = index("core", vec![pkg("bar 2").replaces(&["foo"])]);
+    let e = resolve_core(&core, &["foo@1"], &[]).unwrap_err();
+    let ErrorKind::NoCandidate { replaced_by, .. } = &*e.kind else {
+        panic!("expected R001, got {e}");
+    };
+    assert_eq!(replaced_by, &[name("bar")]);
+}
+
+#[test]
+fn dependency_on_a_replaced_name_follows_the_rename() {
+    let core = index(
+        "core",
+        vec![
+            pkg("bar 2").replaces(&["foo"]),
+            pkg("app 1").depends(&["foo"]),
+        ],
+    );
+    let r = resolve_core(&core, &["app"], &[]).unwrap();
+    assert_eq!(labels(&r), ["app 1-r1", "bar 2-r1"]);
+    assert_eq!(
+        r.why(&name("bar")).unwrap().chain.steps[0].dep.to_string(),
+        "foo"
+    );
+    let core = index(
+        "core",
+        vec![
+            pkg("bar 2").replaces(&["foo"]),
+            pkg("app 1").depends(&["foo>=1"]),
+        ],
+    );
+    assert_eq!(code(resolve_core(&core, &["app"], &[])), "R003");
+}
+
+#[test]
+fn search_gives_up_after_a_bounded_number_of_passes() {
+    let mut packages: Vec<Meta> = (1..=1100)
+        .map(|v| pkg(&format!("lib {v}")).depends(&["so:libmissing.so.1"]))
+        .collect();
+    packages.push(pkg("app 1").depends(&["lib"]));
+    let core = index("core", packages);
+    assert_eq!(code(resolve_core(&core, &["app"], &[])), "R009");
+}
+
+#[test]
+fn yanked_installed_version_outside_the_request_is_not_blamed() {
+    let yanked = pkg("tool 1.1");
+    let mut core = index(
+        "core",
+        vec![pkg("tool 1.0"), pkg("app 1").depends(&["tool>=2"])],
+    );
+    core.yanked.push(yank(&yanked, "corrupts its config"));
+    assert_eq!(code(resolve_core(&core, &["tool@2"], &[&yanked])), "R001");
+    assert_eq!(
+        code(resolve_core(&core, &["tool:static"], &[&yanked])),
+        "R001"
+    );
+    assert_eq!(code(resolve_core(&core, &["app"], &[&yanked])), "R003");
+    assert_eq!(code(resolve_core(&core, &["tool@1.1"], &[&yanked])), "R010");
+}
+
+#[test]
+fn pkg_config_provider_default_is_keyed_by_the_bare_module() {
+    let mut core = index(
+        "core",
+        vec![
+            pkg("zlib 1.3").provides(&["pc:zlib=1.3"]),
+            pkg("zlib-ng 2.2").provides(&["pc:zlib=1.3.1"]),
+            pkg("app 1").depends(&["pc:zlib>=1.3"]),
+        ],
+    );
+    core.defaults
+        .providers
+        .insert("pc:zlib".into(), name("zlib-ng"));
+    let r = resolve_core(&core, &["app"], &[]).unwrap();
+    assert_eq!(labels(&r), ["app 1-r1", "zlib-ng 2.2-r1"]);
+}
+
+/// A universe that is known to resolve, because it contains a planted
+/// solution next to decoys.
+#[derive(Debug, Clone)]
+struct Planted {
+    core: Index,
+    requests: Vec<Request>,
+    installed: Vec<Meta>,
+    upgrade: bool,
+}
+
+const PLANTED_VERSIONS: [&str; 5] = ["1", "1.5", "2", "2.1~rc1", "3"];
+
+/// Planted universes over the names `p0` to `p7`.
+///
+/// Each planted name has one planted candidate that provides
+/// `so:lib<i>.so.1` and `pc:p<i>=<version>` and depends only on other
+/// planted candidates, in forms they satisfy. Decoys are other versions and
+/// variants of any name with arbitrary dependencies, provides of their own
+/// name, conflicts and replaces. Requests name planted packages, sometimes
+/// with a prefix of the planted version, and any candidate may be
+/// installed.
+fn arb_planted() -> impl Strategy<Value = Planted> {
+    let names = 8usize;
+    let planted = (
+        0..PLANTED_VERSIONS.len(),
+        prop::bool::weighted(0.7),
+        prop::collection::vec((0..names, 0..6usize), 0..3),
+    );
+    let decoy_dep = prop_oneof![
+        (0..names).prop_map(|k| format!("so:lib{k}.so.1")),
+        (0..names).prop_map(|k| format!("so:libmissing{k}.so.1")),
+        (0..names).prop_map(|k| format!("p{k}")),
+        (0..names).prop_map(|k| format!("p{k}<2")),
+        (0..names).prop_map(|k| format!("p{k}>=2")),
+        (0..names).prop_map(|k| format!("p{k}@1")),
+        (0..names).prop_map(|k| format!("pc:p{k}>=2")),
+    ];
+    let decoy = (
+        0..names,
+        0..PLANTED_VERSIONS.len(),
+        prop::bool::weighted(0.2),
+        prop::collection::vec(decoy_dep, 0..3),
+        any::<bool>(),
+        prop::option::weighted(0.15, 0..names),
+        prop::option::weighted(0.05, 0..names),
+    );
+    (
+        prop::collection::vec(planted, names),
+        prop::collection::vec(decoy, 0..20),
+        prop::collection::vec((0..names, prop::bool::weighted(0.3)), 1..4),
+        prop::collection::vec(
+            prop::option::weighted(0.3, 0..PLANTED_VERSIONS.len() + 1),
+            names,
+        ),
+        any::<bool>(),
+    )
+        .prop_map(|(planted, decoys, requests, installed, upgrade)| {
+            let in_set: Vec<usize> = (0..planted.len()).filter(|i| planted[*i].1).collect();
+            let in_set = if in_set.is_empty() { vec![0] } else { in_set };
+            let version = |i: usize| PLANTED_VERSIONS[planted[i].0];
+            let major = |i: usize| version(i).split('.').next().unwrap_or("1").to_owned();
+            let mut metas = Vec::new();
+            for &i in &in_set {
+                let deps: Vec<String> = planted[i]
+                    .2
+                    .iter()
+                    .map(|(target, kind)| {
+                        let j = in_set[target % in_set.len()];
+                        match kind {
+                            0 => format!("p{j}"),
+                            1 => format!("p{j}>={}", version(j)),
+                            2 => format!("p{j}<={}", version(j)),
+                            3 => format!("p{j}@{}", major(j)),
+                            4 => format!("so:lib{j}.so.1"),
+                            _ => format!("pc:p{j}>={}", version(j)),
+                        }
+                    })
+                    .filter(|d| !d.starts_with(&format!("p{i}")) || d.starts_with("pc:"))
+                    .collect();
+                let deps: Vec<&str> = deps.iter().map(String::as_str).collect();
+                let provides = [format!("so:lib{i}.so.1"), format!("pc:p{i}={}", version(i))];
+                let provides: Vec<&str> = provides.iter().map(String::as_str).collect();
+                metas.push(
+                    pkg(&format!("p{i} {}", version(i)))
+                        .depends(&deps)
+                        .provides(&provides),
+                );
+            }
+            for (n, v, is_static, deps, provides, conflict, replace) in decoys {
+                let text = format!(
+                    "p{n} {}{}",
+                    PLANTED_VERSIONS[v],
+                    if is_static { " static" } else { "" }
+                );
+                let label = |m: &Meta| format!("{} {} {:?}", m.name, m.version, m.variant);
+                let decoy = pkg(&text);
+                if metas.iter().any(|m| label(m) == label(&decoy)) {
+                    continue;
+                }
+                let deps: Vec<&str> = deps.iter().map(String::as_str).collect();
+                let provides: Vec<String> = if provides && !is_static {
+                    vec![
+                        format!("so:lib{n}.so.1"),
+                        format!("pc:p{n}={}", PLANTED_VERSIONS[v]),
+                    ]
+                } else {
+                    vec![]
+                };
+                let provides: Vec<&str> = provides.iter().map(String::as_str).collect();
+                let conflicts: Vec<String> =
+                    conflict.map(|c| format!("p{c}")).into_iter().collect();
+                let conflicts: Vec<&str> = conflicts.iter().map(String::as_str).collect();
+                let replaces: Vec<String> = replace.map(|c| format!("p{c}")).into_iter().collect();
+                let replaces: Vec<&str> = replaces.iter().map(String::as_str).collect();
+                metas.push(
+                    decoy
+                        .depends(&deps)
+                        .provides(&provides)
+                        .conflicts(&conflicts)
+                        .replaces(&replaces),
+                );
+            }
+            let requests = requests
+                .into_iter()
+                .map(|(i, with_prefix)| {
+                    let i = in_set[i % in_set.len()];
+                    if with_prefix {
+                        req(&format!("p{i}@{}", major(i)))
+                    } else {
+                        req(&format!("p{i}"))
+                    }
+                })
+                .collect();
+            let mut chosen = BTreeSet::new();
+            let installed = installed
+                .into_iter()
+                .enumerate()
+                .filter_map(|(n, pick)| {
+                    let pick = pick?;
+                    let of_name: Vec<&Meta> = metas
+                        .iter()
+                        .filter(|m| m.name.as_str() == format!("p{n}"))
+                        .collect();
+                    let meta = of_name.get(pick % of_name.len().max(1))?;
+                    chosen.insert(meta.name.clone()).then(|| (*meta).clone())
+                })
+                .collect();
+            Planted {
+                core: index("core", metas),
+                requests,
+                installed,
+                upgrade,
+            }
+        })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2048))]
+
+    #[test]
+    fn universes_with_a_solution_resolve(planted in arb_planted()) {
+        let installed: Vec<&Meta> = planted.installed.iter().collect();
+        let mut i = input("system", planted.requests.clone(), &installed);
+        if planted.upgrade {
+            i.upgrade = Upgrade::All;
+        }
+        let result = universe(&[(&planted.core, 0)]).resolve(&i);
+        match result {
+            Ok(r) => check_sound(&r, &planted.requests),
+            Err(e) => prop_assert!(false, "{e}"),
+        }
+    }
 }

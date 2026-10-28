@@ -205,12 +205,35 @@ fn r007_names_the_variant_that_would_provide() {
 }
 
 #[test]
+fn r007_gives_the_static_hint_only_when_the_static_variant_is_selected() {
+    let core = index(
+        "core",
+        vec![
+            pkg("foo 1"),
+            pkg("foo 1 static").provides(&["so:libx.so.1"]),
+            pkg("app 1").depends(&["so:libx.so.1"]),
+        ],
+    );
+    assert_eq!(
+        message(
+            &[(&core, 0)],
+            "system",
+            vec![req_at("foo", &at(3, 5)), req_at("app", &at(4, 5))]
+        ),
+        "error[R007]: view \"system\": so:libx.so.1 is needed by app 1-r1\n  \
+         foo provides it in the static variant, but foo is selected\n    \
+         requested at /etc/laft/system.stav:3:5\n  \
+         hint: request foo in a version or variant that provides so:libx.so.1"
+    );
+}
+
+#[test]
 fn r008_names_the_repositories() {
     let core = index("core", vec![pkg("mesa 25.2.5")]);
     let mine = index("mine", vec![pkg("mesa 25.1.0")]);
     assert_eq!(
         message(&[(&mine, 0), (&core, 0)], "system", vec![req("mesa")]),
-        "error[R008]: package mesa is in repositories core and mine, both with priority 0\n  \
+        "error[R008]: view \"system\": package mesa is in repositories core and mine, both with priority 0\n  \
          hint: give one repository a higher priority"
     );
 }

@@ -15,11 +15,13 @@
 //!    reasons it is there. [`Resolution::why`] explains a package, and an
 //!    [`Error`] explains a failure with the chain back to a request.
 //!
-//! Selection is greedy and deterministic. Without an upgrade, installed
-//! versions are kept whenever they still satisfy everything, including
-//! versions a repository pruned from its index. Versions a repository
-//! yanked are never selected. When a dependency contradicts an earlier
-//! choice, the resolver learns the dependency's constraint and starts over.
+//! Each pass selects greedily and deterministically. Without an upgrade,
+//! installed versions are kept whenever they still satisfy everything,
+//! including versions a repository pruned from its index. Versions a
+//! repository yanked are never selected. When a pass hits a conflict, the
+//! resolver learns a constraint that rules it out and starts a new pass,
+//! backtracking over those constraints until it finds a resolution, shows
+//! that none exists, or reaches a bound on its work.
 //!
 //! ```
 //! use laft_core::Timestamp;

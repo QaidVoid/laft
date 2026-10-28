@@ -8,8 +8,8 @@ use crate::error::{Bound, BoundSource, Error, ErrorKind};
 use crate::explain::{Chain, Learned, Package, Reason, Warning, Why};
 use crate::universe::{Candidate, Key, Source, Universe, order, provides};
 
-/// The most passes one resolution may take. Every restart adds a constraint
-/// that was not there before, so a valid repository never comes close.
+/// The most passes one resolution may take. A resolution without conflicts
+/// takes one pass, and each conflict usually costs one or two more.
 const MAX_PASSES: usize = 1000;
 
 /// A package reference requested for a view.
@@ -81,7 +81,8 @@ pub struct Resolution<'a> {
     /// The effective member of every alternatives group present in the view,
     /// by group.
     pub alternatives: BTreeMap<Name, Name>,
-    /// The constraints learned on restarts, in the order they were learned.
+    /// The constraints the search learned from conflicts and kept, in the
+    /// order they were learned.
     pub learned: Vec<Learned>,
     /// Warnings to show the user.
     pub warnings: Vec<Warning>,
@@ -135,12 +136,22 @@ impl Resolution<'_> {
 impl<'a> Universe<'a> {
     /// Resolves the requests of one view into one package per name.
     ///
-    /// Requests are selected first, in name order, then dependencies
-    /// breadth first. Without an upgrade, the installed version of a name is
-    /// kept whenever it satisfies everything. When a dependency contradicts
-    /// an earlier choice that no request fixed, the resolver learns the
-    /// dependency's constraint and starts over. Conflicts, replacements and
-    /// alternatives are checked on the complete set.
+    /// Each pass selects greedily: requests first, in name order, then
+    /// dependencies breadth first. Without an upgrade, the installed version
+    /// of a name is kept whenever it satisfies everything. Conflicts,
+    /// replacements and alternatives are checked on the complete set.
+    ///
+    /// When a pass hits a conflict, the resolver learns a constraint that
+    /// rules the conflict out and starts a new pass. A dependency that an
+    /// earlier choice contradicts is first learned as a constraint on the
+    /// depended-on name, and if that leads nowhere, the depending package is
+    /// avoided instead, so an older or other candidate of it is tried. Every
+    /// other failure avoids the package whose dependency or conflict failed.
+    /// The search backtracks over these choices depth first, in a fixed
+    /// order, so it finds a resolution whenever one exists that does not
+    /// depend on choosing between several provider names. It gives up with
+    /// R009 after a bounded number of passes. When no resolution exists, the
+    /// error is the first failure the search met.
     ///
     /// The result depends only on the universe's contents and on `input`,
     /// never on the order of repositories, index entries or requests.
@@ -191,11 +202,12 @@ impl<'a> Universe<'a> {
         };
         let ctx = Ctx::new(self, input);
         let (requests, renames) = ctx.normalize().map_err(fail)?;
-        let mut learned: BTreeMap<Name, Vec<Learned>> = BTreeMap::new();
-        let mut history = Vec::new();
+        let mut path: Vec<Fact<'a>> = Vec::new();
+        let mut choices: Vec<(usize, std::vec::IntoIter<Fact<'a>>)> = Vec::new();
+        let mut first = None;
         for _ in 0..MAX_PASSES {
-            let mut pass = Pass::new(&ctx, &requests, &learned);
-            match pass.run() {
+            let mut pass = Pass::new(&ctx, &requests, &path);
+            let options = match pass.run() {
                 Ok(()) => {
                     let alternatives = pass.alternatives().map_err(fail)?;
                     let mut warnings = renames;
@@ -204,24 +216,78 @@ impl<'a> Universe<'a> {
                         view: input.view.clone(),
                         packages: pass.into_packages(),
                         alternatives,
-                        learned: history,
+                        learned: path.iter().map(Fact::learned).collect(),
                         warnings,
                     });
                 }
-                Err(Stop::Fail(kind)) => return Err(fail(kind)),
-                Err(Stop::Restart(l)) => {
-                    if learned
-                        .get(&l.name)
-                        .is_some_and(|list| list.iter().any(|x| x.req == l.req))
-                    {
-                        return Err(fail(Box::new(pass.unsatisfiable(&l.name, None))));
+                Err(Stop::Fatal(kind)) => return Err(fail(kind)),
+                Err(Stop::Conflict { error, options }) => {
+                    if let Some(error) = error {
+                        first.get_or_insert(error);
                     }
-                    learned.entry(l.name.clone()).or_default().push(l.clone());
-                    history.push(l);
+                    options
                 }
+            };
+            choices.push((path.len(), options.into_iter()));
+            loop {
+                let Some((len, options)) = choices.last_mut() else {
+                    let error = first.expect("every exhausted branch ends in a failure");
+                    return Err(fail(error));
+                };
+                path.truncate(*len);
+                if let Some(fact) = options.next() {
+                    path.push(fact);
+                    break;
+                }
+                choices.pop();
             }
         }
-        Err(fail(Box::new(ErrorKind::RestartLimit { learned: history })))
+        Err(fail(Box::new(ErrorKind::RestartLimit {
+            passes: MAX_PASSES,
+            learned: path.iter().map(Fact::learned).collect(),
+        })))
+    }
+}
+
+/// A constraint the search assumes on its current branch.
+#[derive(Debug, Clone, Copy)]
+enum Fact<'a> {
+    /// Every candidate of `name` must satisfy `dep`, which `by` has.
+    Require {
+        name: &'a Name,
+        dep: &'a Dep,
+        by: &'a Meta,
+    },
+    /// The candidate is never selected.
+    Avoid(Candidate<'a>),
+}
+
+impl Fact<'_> {
+    fn learned(&self) -> Learned {
+        match *self {
+            Self::Require { name, dep, by } => Learned::Require {
+                name: name.clone(),
+                dep: dep.clone(),
+                by: Package::of(by),
+            },
+            Self::Avoid(candidate) => Learned::Avoid {
+                package: Package::of(candidate.meta),
+            },
+        }
+    }
+}
+
+/// Whether `meta` satisfies `dep`: by its version for a dependency on its
+/// own name, by replacing the name for a dependency on another name, and by
+/// its provides otherwise.
+fn satisfies(meta: &Meta, dep: &Dep) -> bool {
+    match dep {
+        Dep::Pkg(name, req) if *name == meta.name => req.matches(&meta.version, meta.rev),
+        Dep::Pkg(name, _) => meta
+            .replaces
+            .iter()
+            .any(|r| matches!(r, Dep::Pkg(replaced, _) if replaced == name)),
+        _ => provides(meta, dep),
     }
 }
 
@@ -312,11 +378,11 @@ impl<'u, 'a> Ctx<'u, 'a> {
         }
     }
 
-    fn prefer(&self, name: &str) -> bool {
+    fn prefer(&self, name: &Name) -> bool {
         match &self.input.upgrade {
             Upgrade::None => true,
             Upgrade::All => false,
-            Upgrade::Names(names) => !names.iter().any(|n| n.as_str() == name),
+            Upgrade::Names(names) => !names.contains(name),
         }
     }
 
@@ -366,15 +432,19 @@ impl<'u, 'a> Ctx<'u, 'a> {
             .unwrap_or_default()
     }
 
-    /// The best candidate of `name` that `accept` takes, and whether it is
-    /// the installed one kept by preference. With `dynamic_first`, a
-    /// dynamic candidate wins over any static one.
+    /// The candidate of `name` to select among those `accept` takes, and
+    /// whether it is the installed one kept by preference.
+    ///
+    /// When the installed version is preferred and accepted, it wins.
+    /// Otherwise the best accepted candidate wins, except that with
+    /// `dynamic_first` the best dynamic one wins over every static one.
     fn best(
         &self,
-        name: &str,
+        name: &Name,
         accept: impl Fn(&Candidate<'a>) -> bool,
         dynamic_first: bool,
     ) -> Result<Option<(Candidate<'a>, bool)>, Box<ErrorKind>> {
+        let name = name.as_str();
         let installed = match self.installed.get(name) {
             Some(InstalledState::Listed(c) | InstalledState::Extra { candidate: c, .. }) => {
                 Some(*c)
@@ -383,7 +453,7 @@ impl<'u, 'a> Ctx<'u, 'a> {
         };
         let candidates = self.ordered(name)?;
         if let Some(c) = installed
-            && self.prefer(name)
+            && self.prefer(&c.meta.name)
             && accept(&c)
         {
             return Ok(Some((c, true)));
@@ -423,7 +493,10 @@ impl<'u, 'a> Ctx<'u, 'a> {
         }
     }
 
-    /// Whether `name` has any candidate at all.
+    /// Whether `name` has a visible candidate: an index candidate of its
+    /// owner, or an installed package the owner pruned or no repository
+    /// lists. An ambiguous name counts, because several repositories list
+    /// it. A yanked installed package does not count.
     fn has_candidates(&self, name: &str) -> bool {
         self.is_ambiguous(name)
             || self
@@ -432,7 +505,9 @@ impl<'u, 'a> Ctx<'u, 'a> {
     }
 
     /// Sorts the requests, follows renames and merges the requests of each
-    /// name.
+    /// name. A request follows a rename only without a version prefix,
+    /// because the replacing package has versions of its own. A replacer is
+    /// always a name with candidates, so one step reaches it.
     fn normalize(&self) -> Result<(Vec<Normalized>, Vec<Warning>), Box<ErrorKind>> {
         let mut requests: Vec<&Request> = self.input.requests.iter().collect();
         requests.sort_by_cached_key(|r| (r.pkg.to_string(), r.origin.clone()));
@@ -444,7 +519,7 @@ impl<'u, 'a> Ctx<'u, 'a> {
             if !self.has_candidates(name.as_str()) {
                 match self.universe.replacers(name.as_str()) {
                     [] => {}
-                    [one] => {
+                    [one] if request.pkg.prefix().is_none() => {
                         warnings.push(Warning::Renamed {
                             from: name.clone(),
                             to: (*one).clone(),
@@ -452,12 +527,12 @@ impl<'u, 'a> Ctx<'u, 'a> {
                         });
                         target = ((*one).clone(), None);
                     }
-                    several => {
+                    replacers => {
                         return Err(Box::new(ErrorKind::NoCandidate {
                             request: request.pkg.to_string(),
                             origin: request.origin.clone(),
                             available: Vec::new(),
-                            replaced_by: several.iter().map(|n| (*n).clone()).collect(),
+                            replaced_by: replacers.iter().map(|n| (*n).clone()).collect(),
                         }));
                     }
                 }
@@ -518,28 +593,41 @@ impl<'u, 'a> Ctx<'u, 'a> {
 }
 
 /// Why a pass ended early.
-enum Stop {
-    Restart(Learned),
-    Fail(Box<ErrorKind>),
+enum Stop<'a> {
+    /// No other choice can avoid the failure, so the search ends.
+    Fatal(Box<ErrorKind>),
+    /// A conflict that a learned constraint may avoid.
+    Conflict {
+        /// What to report when no option leads to a resolution, or `None`
+        /// for a dependency that contradicts an earlier choice, which is not
+        /// a failure by itself.
+        error: Option<Box<ErrorKind>>,
+        /// Constraints that each rule the conflict out, in the order to
+        /// try them. Together they cover every resolution that the
+        /// constraints of the branch allow, except that a choice between
+        /// several provider names is never revisited.
+        options: Vec<Fact<'a>>,
+    },
 }
 
-impl From<ErrorKind> for Stop {
-    fn from(kind: ErrorKind) -> Self {
-        Self::Fail(Box::new(kind))
+impl From<Box<ErrorKind>> for Stop<'_> {
+    fn from(kind: Box<ErrorKind>) -> Self {
+        Self::Fatal(kind)
     }
 }
 
-impl From<Box<ErrorKind>> for Stop {
-    fn from(kind: Box<ErrorKind>) -> Self {
-        Self::Fail(kind)
+impl<'a> Stop<'a> {
+    fn failed(error: ErrorKind, options: Vec<Fact<'a>>) -> Self {
+        Self::Conflict {
+            error: Some(Box::new(error)),
+            options,
+        }
     }
 }
 
 struct Sel<'a> {
     candidate: Candidate<'a>,
     reasons: Vec<Reason>,
-    /// Whether a request with a version prefix fixed the version.
-    forced: bool,
     kept: bool,
 }
 
@@ -547,36 +635,49 @@ struct Sel<'a> {
 struct Pass<'p, 'u, 'a> {
     ctx: &'p Ctx<'u, 'a>,
     requests: &'p [Normalized],
-    learned: &'p BTreeMap<Name, Vec<Learned>>,
+    /// The constraints of the branch, in the order they were learned.
+    facts: &'p [Fact<'a>],
+    required: BTreeMap<&'a Name, Vec<&'a Dep>>,
+    avoided: BTreeSet<StoreId>,
     selected: BTreeMap<Name, Sel<'a>>,
     providers: BTreeMap<Key<'a>, BTreeSet<&'a Name>>,
     queue: VecDeque<&'a Name>,
 }
 
 impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
-    fn new(
-        ctx: &'p Ctx<'u, 'a>,
-        requests: &'p [Normalized],
-        learned: &'p BTreeMap<Name, Vec<Learned>>,
-    ) -> Self {
+    fn new(ctx: &'p Ctx<'u, 'a>, requests: &'p [Normalized], facts: &'p [Fact<'a>]) -> Self {
+        let mut required: BTreeMap<&'a Name, Vec<&'a Dep>> = BTreeMap::new();
+        let mut avoided = BTreeSet::new();
+        for fact in facts {
+            match *fact {
+                Fact::Require { name, dep, .. } => required.entry(name).or_default().push(dep),
+                Fact::Avoid(candidate) => {
+                    avoided.insert(candidate.id);
+                }
+            }
+        }
         Self {
             ctx,
             requests,
-            learned,
+            facts,
+            required,
+            avoided,
             selected: BTreeMap::new(),
             providers: BTreeMap::new(),
             queue: VecDeque::new(),
         }
     }
 
-    fn learned_ok(&self, name: &Name, candidate: &Candidate<'_>) -> bool {
-        self.learned.get(name).is_none_or(|list| {
-            list.iter()
-                .all(|l| l.req.matches(&candidate.meta.version, candidate.meta.rev))
-        })
+    /// Whether the constraints of the branch allow `candidate` of `name`.
+    fn allowed(&self, name: &Name, candidate: &Candidate<'_>) -> bool {
+        !self.avoided.contains(&candidate.id)
+            && self
+                .required
+                .get(name)
+                .is_none_or(|deps| deps.iter().all(|dep| satisfies(candidate.meta, dep)))
     }
 
-    fn select(&mut self, candidate: Candidate<'a>, reasons: Vec<Reason>, forced: bool, kept: bool) {
+    fn select(&mut self, candidate: Candidate<'a>, reasons: Vec<Reason>, kept: bool) {
         let name = &candidate.meta.name;
         for provide in &candidate.meta.provides {
             self.providers
@@ -589,7 +690,6 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             Sel {
                 candidate,
                 reasons,
-                forced,
                 kept,
             },
         );
@@ -605,7 +705,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         .expect("every selected package traces back to a request")
     }
 
-    fn run(&mut self) -> Result<(), Stop> {
+    fn run(&mut self) -> Result<(), Stop<'a>> {
         for request in self.requests {
             let accept = |c: &Candidate<'a>| {
                 c.meta.variant == request.variant
@@ -613,44 +713,42 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                         .prefix
                         .as_ref()
                         .is_none_or(|p| p.matches(&c.meta.version))
-                    && self.learned_ok(&request.name, c)
+                    && self.allowed(&request.name, c)
             };
-            match self.ctx.best(request.name.as_str(), accept, false)? {
-                Some((candidate, kept)) => self.select(
-                    candidate,
-                    request.reasons.clone(),
-                    request.prefix.is_some(),
-                    kept,
-                ),
-                None => return Err(self.no_candidate(request)?.into()),
+            match self.ctx.best(&request.name, accept, false)? {
+                Some((candidate, kept)) => self.select(candidate, request.reasons.clone(), kept),
+                None => return Err(self.no_candidate(request)?),
             }
         }
         while let Some(name) = self.queue.pop_front() {
-            let Some(meta) = self.selected.get(name).map(|s| s.candidate.meta) else {
-                continue;
-            };
-            for dep in &meta.depends {
-                self.satisfy(dep, meta)?;
+            let candidate = self
+                .selected
+                .get(name)
+                .map(|s| s.candidate)
+                .expect("only selected names are queued");
+            for dep in &candidate.meta.depends {
+                self.satisfy(dep, candidate)?;
             }
         }
-        self.check_conflicts()?;
-        Ok(())
+        self.check_conflicts()
     }
 
-    fn no_candidate(&self, request: &Normalized) -> Result<ErrorKind, Box<ErrorKind>> {
+    fn no_candidate(&self, request: &Normalized) -> Result<Stop<'a>, Box<ErrorKind>> {
         let name = &request.name;
-        let matching = self.ctx.ordered(name.as_str())?.any(|c| {
+        let wanted = |c: &Candidate<'_>| {
             c.meta.variant == request.variant
                 && request
                     .prefix
                     .as_ref()
                     .is_none_or(|p| p.matches(&c.meta.version))
-        });
-        if matching {
-            return Ok(self.unsatisfiable(name, None));
+        };
+        if self.ctx.ordered(name.as_str())?.any(|c| wanted(&c)) {
+            return Ok(Stop::failed(self.unsatisfiable(name, None), Vec::new()));
         }
-        if let Some((candidate, yank)) = self.ctx.yanked(name.as_str()) {
-            return Ok(yanked(
+        if let Some((candidate, yank)) = self.ctx.yanked(name.as_str())
+            && wanted(&candidate)
+        {
+            return Ok(Stop::Fatal(Box::new(yanked(
                 candidate,
                 yank,
                 request.text.clone(),
@@ -660,27 +758,28 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                     origin: request.origin.clone(),
                     request: request.text.clone(),
                 },
-            ));
+            ))));
         }
-        Ok(ErrorKind::NoCandidate {
+        Ok(Stop::Fatal(Box::new(ErrorKind::NoCandidate {
             request: request.text.clone(),
             origin: request.origin.clone(),
             available: self.ctx.available(name.as_str()),
             replaced_by: Vec::new(),
-        })
+        })))
     }
 
-    /// R005 for `name`: every learned constraint, `extra`, and the request's
-    /// prefix.
+    /// R005 for `name`: every constraint the branch requires of it, `extra`,
+    /// and the request's prefix.
     fn unsatisfiable(&self, name: &Name, extra: Option<Bound>) -> ErrorKind {
         let mut constraints: Vec<Bound> = self
-            .learned
-            .get(name)
-            .into_iter()
-            .flatten()
-            .map(|l| Bound {
-                dep: l.dep(),
-                from: BoundSource::Package(l.by.clone()),
+            .facts
+            .iter()
+            .filter_map(|fact| match *fact {
+                Fact::Require { name: n, dep, by } if n == name => Some(Bound {
+                    dep: dep.clone(),
+                    from: BoundSource::Package(Package::of(by)),
+                }),
+                _ => None,
             })
             .collect();
         constraints.extend(extra);
@@ -699,9 +798,9 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         }
     }
 
-    fn satisfy(&mut self, dep: &'a Dep, by: &'a Meta) -> Result<(), Stop> {
+    fn satisfy(&mut self, dep: &'a Dep, by: Candidate<'a>) -> Result<(), Stop<'a>> {
         let reason = Reason::Dependency {
-            by: by.name.clone(),
+            by: by.meta.name.clone(),
             dep: dep.clone(),
         };
         match (dep, Key::of_dep(dep)) {
@@ -711,77 +810,126 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         }
     }
 
+    /// Satisfies a dependency on `name`. A dependency without a version
+    /// requirement on a name without candidates follows the rename when
+    /// exactly one package name replaces it, and is met by a candidate of
+    /// that name that replaces it.
     fn satisfy_name(
         &mut self,
         dep: &'a Dep,
         name: &'a Name,
         req: &'a VersionReq,
-        by: &'a Meta,
+        by: Candidate<'a>,
         reason: Reason,
-    ) -> Result<(), Stop> {
+    ) -> Result<(), Stop<'a>> {
         if let Some(sel) = self.selected.get_mut(name) {
             let meta = sel.candidate.meta;
             if req.matches(&meta.version, meta.rev) {
                 sel.reasons.push(reason);
                 return Ok(());
             }
-            if sel.forced {
-                let bound = Bound {
-                    dep: dep.clone(),
-                    from: BoundSource::Package(Package::of(by)),
-                };
-                return Err(self.unsatisfiable(name, Some(bound)).into());
-            }
-            return Err(Stop::Restart(Learned {
-                name: name.clone(),
-                req: req.clone(),
-                by: Package::of(by),
-            }));
+            return Err(Stop::Conflict {
+                error: None,
+                options: vec![
+                    Fact::Require {
+                        name,
+                        dep,
+                        by: by.meta,
+                    },
+                    Fact::Avoid(by),
+                ],
+            });
         }
-        let accept = |c: &Candidate<'a>| {
-            req.matches(&c.meta.version, c.meta.rev) && self.learned_ok(name, c)
-        };
-        if let Some((candidate, kept)) = self.ctx.best(name.as_str(), accept, true)? {
-            self.select(candidate, vec![reason], false, kept);
+        let accept =
+            |c: &Candidate<'a>| req.matches(&c.meta.version, c.meta.rev) && self.allowed(name, c);
+        if let Some((candidate, kept)) = self.ctx.best(name, accept, true)? {
+            self.select(candidate, vec![reason], kept);
             return Ok(());
         }
-        if self
+        if *req == VersionReq::Any
+            && let [one] = self.ctx.universe.replacers(name.as_str())
+            && !self.ctx.has_candidates(name.as_str())
+        {
+            return self.satisfy_replacement(dep, one, by, reason);
+        }
+        let error = if self
             .ctx
             .ordered(name.as_str())?
             .any(|c| req.matches(&c.meta.version, c.meta.rev))
         {
             let bound = Bound {
                 dep: dep.clone(),
-                from: BoundSource::Package(Package::of(by)),
+                from: BoundSource::Package(Package::of(by.meta)),
             };
-            return Err(self.unsatisfiable(name, Some(bound)).into());
-        }
-        if let Some((candidate, yank)) = self.ctx.yanked(name.as_str()) {
-            return Err(yanked(
+            self.unsatisfiable(name, Some(bound))
+        } else if let Some((candidate, yank)) = self.ctx.yanked(name.as_str())
+            && req.matches(&candidate.meta.version, candidate.meta.rev)
+        {
+            yanked(
                 candidate,
                 yank,
                 dep.to_string(),
-                Some(Package::of(by)),
-                self.chain(&by.name),
+                Some(Package::of(by.meta)),
+                self.chain(&by.meta.name),
             )
-            .into());
+        } else {
+            ErrorKind::Unsatisfied {
+                dep: dep.clone(),
+                by: Package::of(by.meta),
+                chain: self.chain(&by.meta.name),
+                available: self.ctx.available(name.as_str()),
+            }
+        };
+        Err(Stop::failed(error, vec![Fact::Avoid(by)]))
+    }
+
+    /// Satisfies `dep`, on a name without candidates, with a candidate of
+    /// `to` that replaces the name.
+    fn satisfy_replacement(
+        &mut self,
+        dep: &'a Dep,
+        to: &'a Name,
+        by: Candidate<'a>,
+        reason: Reason,
+    ) -> Result<(), Stop<'a>> {
+        if let Some(sel) = self.selected.get_mut(to) {
+            if satisfies(sel.candidate.meta, dep) {
+                sel.reasons.push(reason);
+                return Ok(());
+            }
+            return Err(Stop::Conflict {
+                error: None,
+                options: vec![
+                    Fact::Require {
+                        name: to,
+                        dep,
+                        by: by.meta,
+                    },
+                    Fact::Avoid(by),
+                ],
+            });
         }
-        Err(ErrorKind::Unsatisfied {
+        let accept = |c: &Candidate<'a>| satisfies(c.meta, dep) && self.allowed(to, c);
+        if let Some((candidate, kept)) = self.ctx.best(to, accept, true)? {
+            self.select(candidate, vec![reason], kept);
+            return Ok(());
+        }
+        let error = ErrorKind::Unsatisfied {
             dep: dep.clone(),
-            by: Package::of(by),
-            chain: self.chain(&by.name),
-            available: self.ctx.available(name.as_str()),
-        }
-        .into())
+            by: Package::of(by.meta),
+            chain: self.chain(&by.meta.name),
+            available: self.ctx.available(to.as_str()),
+        };
+        Err(Stop::failed(error, vec![Fact::Avoid(by)]))
     }
 
     fn satisfy_provide(
         &mut self,
         dep: &'a Dep,
         key: Key<'a>,
-        by: &'a Meta,
+        by: Candidate<'a>,
         reason: Reason,
-    ) -> Result<(), Stop> {
+    ) -> Result<(), Stop<'a>> {
         let satisfied = self.providers.get(&key).and_then(|names| {
             names
                 .iter()
@@ -811,13 +959,13 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                     candidate,
                     yank,
                     dep.to_string(),
-                    Some(Package::of(by)),
-                    pass.chain(&by.name),
+                    Some(Package::of(by.meta)),
+                    pass.chain(&by.meta.name),
                 ),
                 None => ErrorKind::Unsatisfied {
                     dep: dep.clone(),
-                    by: Package::of(by),
-                    chain: pass.chain(&by.name),
+                    by: Package::of(by.meta),
+                    chain: pass.chain(&by.meta.name),
                     available: Vec::new(),
                 },
             }
@@ -825,16 +973,16 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
 
         let names = self.ctx.provider_names(key);
         let mut usable = Vec::new();
-        let mut wrong = None;
+        let mut wrong = Vec::new();
         for name in &names {
             if self.selected.contains_key(*name) {
-                wrong.get_or_insert(*name);
+                wrong.push(*name);
             } else if self.ctx.is_ambiguous(name.as_str())
                 || self
                     .ctx
                     .best(
-                        name.as_str(),
-                        |c| provides(c.meta, dep) && self.learned_ok(name, c),
+                        name,
+                        |c| provides(c.meta, dep) && self.allowed(name, c),
                         true,
                     )?
                     .is_some()
@@ -844,21 +992,31 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         }
 
         if usable.is_empty() {
-            if let Some(name) = wrong {
+            let mut options = Vec::new();
+            let mut error = None;
+            for name in wrong {
                 let provider = self
                     .ctx
                     .ordered(name.as_str())?
                     .find(|c| provides(c.meta, dep));
                 if let (Some(provider), Some(sel)) = (provider, self.selected.get(name)) {
-                    return Err(ErrorKind::WrongProvider {
+                    options.push(Fact::Require {
+                        name,
+                        dep,
+                        by: by.meta,
+                    });
+                    error.get_or_insert_with(|| ErrorKind::WrongProvider {
                         dep: dep.clone(),
-                        by: Package::of(by),
+                        by: Package::of(by.meta),
                         provider: Package::of(provider.meta),
                         selected: Package::of(sel.candidate.meta),
                         chain: self.chain(name),
-                    }
-                    .into());
+                    });
                 }
+            }
+            options.push(Fact::Avoid(by));
+            if let Some(error) = error {
+                return Err(Stop::failed(error, options));
             }
             for name in &names {
                 if self
@@ -866,15 +1024,19 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                     .ordered(name.as_str())?
                     .any(|c| provides(c.meta, dep))
                 {
-                    return Err(self.unsatisfiable(name, None).into());
+                    let bound = Bound {
+                        dep: dep.clone(),
+                        from: BoundSource::Package(Package::of(by.meta)),
+                    };
+                    return Err(Stop::failed(self.unsatisfiable(name, Some(bound)), options));
                 }
             }
-            return Err(unsatisfied(self).into());
+            return Err(Stop::failed(unsatisfied(self), options));
         }
 
         let installed: Vec<&&'a Name> = usable
             .iter()
-            .filter(|n| self.ctx.input.installed.contains_key(**n) && self.ctx.prefer(n.as_str()))
+            .filter(|n| self.ctx.input.installed.contains_key(**n) && self.ctx.prefer(n))
             .collect();
         let pick = if let [one] = installed.as_slice() {
             **one
@@ -889,45 +1051,49 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         {
             *default
         } else {
-            return Err(ErrorKind::AmbiguousProvider {
+            let error = ErrorKind::AmbiguousProvider {
                 dep: dep.clone(),
                 providers: usable.iter().map(|n| (*n).clone()).collect(),
-                by: Package::of(by),
-                chain: self.chain(&by.name),
-            }
-            .into());
+                by: Package::of(by.meta),
+                chain: self.chain(&by.meta.name),
+            };
+            return Err(Stop::failed(error, vec![Fact::Avoid(by)]));
         };
         let best = self.ctx.best(
-            pick.as_str(),
-            |c| provides(c.meta, dep) && self.learned_ok(pick, c),
+            pick,
+            |c| provides(c.meta, dep) && self.allowed(pick, c),
             true,
         )?;
         match best {
             Some((candidate, kept)) => {
-                self.select(candidate, vec![reason], false, kept);
+                self.select(candidate, vec![reason], kept);
                 Ok(())
             }
-            None => Err(unsatisfied(self).into()),
+            None => Err(Stop::failed(unsatisfied(self), vec![Fact::Avoid(by)])),
         }
     }
 
-    fn conflict(&self, a: &Name, b: &Name, replaces: bool) -> Stop {
-        let label = |n: &Name| {
+    /// R006 between selected `a` and `b`, avoided by dropping either one.
+    fn conflict(&self, a: &Name, b: &Name, replaces: bool) -> Stop<'a> {
+        let sel = |n: &Name| {
             self.selected
                 .get(n)
-                .map(|s| Package::of(s.candidate.meta))
                 .expect("conflicts are checked between selected packages")
         };
-        Stop::from(ErrorKind::Conflict {
-            package: label(a),
+        let error = ErrorKind::Conflict {
+            package: Package::of(sel(a).candidate.meta),
             package_chain: self.chain(a),
-            other: label(b),
+            other: Package::of(sel(b).candidate.meta),
             other_chain: self.chain(b),
             replaces,
-        })
+        };
+        Stop::failed(
+            error,
+            vec![Fact::Avoid(sel(a).candidate), Fact::Avoid(sel(b).candidate)],
+        )
     }
 
-    fn check_conflicts(&self) -> Result<(), Stop> {
+    fn check_conflicts(&self) -> Result<(), Stop<'a>> {
         let matches = |name: &Name, req: &VersionReq| {
             self.selected
                 .get(name)
