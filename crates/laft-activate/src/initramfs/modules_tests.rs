@@ -91,3 +91,15 @@ fn modinfo_values_are_found_by_key() {
         ["i915/a.bin", "i915/b.bin"]
     );
 }
+
+#[test]
+fn a_dependency_cycle_still_lists_every_module_in_build_order() {
+    let index = ModuleIndex::parse(
+        "kernel/a.ko:\nkernel/b.ko:\nkernel/c.ko: kernel/a.ko\n",
+        "",
+        "softdep a pre: b\nsoftdep b pre: a\n",
+        "kernel/b.ko\nkernel/a.ko\nkernel/c.ko\n",
+    )
+    .unwrap();
+    assert_eq!(index.select(&names(&["c"]), &[]), ["b", "a", "c"]);
+}

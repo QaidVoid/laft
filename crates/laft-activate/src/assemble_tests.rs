@@ -756,3 +756,63 @@ fn a_trigger_that_rewrites_an_existing_file_in_place_fails_the_assembly() {
         Err(other) => panic!("{other}"),
     }
 }
+
+/// The system packages with `fontconfig` replaced by one whose `fc-cache`
+/// is `script`, assembled.
+fn with_fc_cache(fixture: &Fixture, script: &[u8]) -> Result<Assembled> {
+    let fontconfig = Pkg::new("fontconfig", "9")
+        .file("usr/bin/fc-cache", script)
+        .build(&fixture.pkgs);
+    let mut packages = fixture.system();
+    packages.retain(|p| p.name != "fontconfig");
+    packages.push(&fontconfig);
+    fixture.apply(&packages, &Host::default())
+}
+
+#[test]
+fn a_failed_optional_trigger_leaves_none_of_its_outputs() {
+    let Some(fixture) = Fixture::new() else {
+        return;
+    };
+    let assembled = with_fc_cache(
+        &fixture,
+        b"#!/bin/sh\necho partial > /usr/lib/fontconfig/cache/partial\necho 'no fonts' >&2\nexit 1\n",
+    )
+    .unwrap();
+    assert_eq!(
+        assembled.triggers["fontconfig"].status,
+        laft_store::TriggerStatus::Failed
+    );
+    assert!(assembled.warnings.iter().any(|w| matches!(
+        w, Warning::TriggerFailed { instance, reason } if instance == "fontconfig" && reason.contains("no fonts")
+    )));
+    assert!(
+        !fixture
+            .generation_dir(1)
+            .join("usr/lib/fontconfig")
+            .exists()
+    );
+}
+
+#[test]
+fn a_trigger_that_runs_too_long_is_killed() {
+    let Some(fixture) = Fixture::new() else {
+        return;
+    };
+    trigger::set_timeout(Some(std::time::Duration::from_secs(1)));
+    let assembled = with_fc_cache(
+        &fixture,
+        b"#!/bin/sh\necho partial > /usr/lib/fontconfig/cache/partial\nwhile :; do :; done\n",
+    );
+    trigger::set_timeout(None);
+    let assembled = assembled.unwrap();
+    assert!(assembled.warnings.iter().any(|w| matches!(
+        w, Warning::TriggerFailed { instance, reason } if instance == "fontconfig" && reason.contains("did not finish")
+    )));
+    assert!(
+        !fixture
+            .generation_dir(1)
+            .join("usr/lib/fontconfig")
+            .exists()
+    );
+}

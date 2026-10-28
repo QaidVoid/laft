@@ -150,3 +150,7 @@ impl CopiesRecord {
         self.files.insert(path.to_owned(), hash);
     }
 }
+
+#[cfg(test)]
+#[path = "state_tests.rs"]
+mod tests;

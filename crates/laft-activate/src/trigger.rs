@@ -23,6 +23,27 @@ use crate::{fsx, tree};
 /// How long one run of a trigger's tool may take before it is killed.
 const TIMEOUT: Duration = Duration::from_secs(300);
 
+#[cfg(test)]
+thread_local! {
+    static TEST_TIMEOUT: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
+
+/// The time a run may take: [`TIMEOUT`], or what a test on this thread set.
+fn timeout() -> Duration {
+    #[cfg(test)]
+    if let Some(timeout) = TEST_TIMEOUT.get() {
+        return timeout;
+    }
+    TIMEOUT
+}
+
+/// Makes runs on this thread time out after `timeout`, or after
+/// [`TIMEOUT`] for `None`.
+#[cfg(test)]
+pub(crate) fn set_timeout(timeout: Option<Duration>) {
+    TEST_TIMEOUT.set(timeout);
+}
+
 /// The most of a tool's standard error that a message quotes, in bytes.
 const STDERR_LIMIT: usize = 4096;
 
@@ -489,7 +510,7 @@ impl Run<'_> {
         let waiter = thread::spawn(move || {
             let _ = done.send(child.wait());
         });
-        let status = match finished.recv_timeout(TIMEOUT) {
+        let status = match finished.recv_timeout(timeout()) {
             Ok(status) => status,
             Err(_) => {
                 // The waiter has not reaped the child, so the pid still
@@ -502,7 +523,7 @@ impl Run<'_> {
                 return Err(Failure::Tool(format!(
                     "{} did not finish within {} seconds",
                     self.tool,
-                    TIMEOUT.as_secs()
+                    timeout().as_secs()
                 )));
             }
         };
