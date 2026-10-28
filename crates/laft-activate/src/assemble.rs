@@ -266,13 +266,17 @@ fn carry_over(
     };
     let generation = root.generation(booted)?;
     let mut dirs: Vec<String> = generation.packages.iter().map(|p| p.dir.clone()).collect();
-    for carried in generation
+    let carried: Vec<String> = generation
         .carried_modules
         .iter()
         .filter(|c| &c.kernel == kernel)
-    {
-        let prefix = format!("{}-", carried.id);
-        dirs.extend(store.list()?.into_iter().filter(|d| d.starts_with(&prefix)));
+        .map(|c| format!("{}-", c.id))
+        .collect();
+    if !carried.is_empty() {
+        let entries = store.list()?;
+        for prefix in &carried {
+            dirs.extend(entries.iter().filter(|d| d.starts_with(prefix)).cloned());
+        }
     }
     let mut carry = Vec::new();
     for dir in dirs {

@@ -162,8 +162,12 @@ pub(crate) fn resolve(
         declared.users.insert(
             name.clone(),
             DeclaredUser {
-                uid: uids[name],
-                gid: gids[primary],
+                uid: *uids
+                    .get(name)
+                    .expect("assign gives every user an id or errors"),
+                gid: *gids
+                    .get(primary)
+                    .expect("assign gives every group an id or errors"),
                 description: user.description.clone(),
                 home: user.home.clone().unwrap_or(home),
                 create_home: user.create_home.unwrap_or(!user.system),
@@ -182,7 +186,9 @@ pub(crate) fn resolve(
         declared.groups.insert(
             name.clone(),
             DeclaredGroup {
-                gid: gids[name],
+                gid: *gids
+                    .get(name)
+                    .expect("assign gives every group an id or errors"),
                 members,
             },
         );
