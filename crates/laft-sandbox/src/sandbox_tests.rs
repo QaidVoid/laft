@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 use std::sync::mpsc;
@@ -10,8 +11,8 @@ use rustix::io::Errno;
 use tempfile::TempDir;
 
 use crate::error::Step;
-use crate::test_support::namespaces_refused;
-use crate::{Command, Error, Network, Sandbox};
+use crate::test_support::sandbox_refused;
+use crate::{Command, Error, MAX_OPEN_FILES, Network, Sandbox};
 
 /// A sandbox whose view is the host's `/usr`, bound read-only, so that real
 /// programs run inside. Its `/build` and `/out` are temporary directories.
@@ -51,21 +52,34 @@ impl Fixture {
 /// The value, or `None` after printing why this environment cannot run
 /// sandboxes.
 fn supported<T>(result: Result<T, Error>) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(error) if namespaces_refused(&error) => {
-            println!("skipping: user namespaces are unavailable: {error}");
-            None
-        }
-        Err(error)
-            if error.step() == Step::Exec
-                && Errno::from_io_error(error.io_error()) == Some(Errno::NOENT) =>
-        {
-            println!("skipping: the host's /usr cannot run /usr/bin/sh as a view: {error}");
-            None
-        }
-        Err(error) => panic!("{error}"),
+    let error = match result {
+        Ok(value) => return Some(value),
+        Err(error) => error,
+    };
+    if let Some(reason) = sandbox_refused(&error) {
+        println!("skipping: {reason}");
+        return None;
     }
+    if error.step() == Step::Exec && errno(&error) == Some(Errno::NOENT) {
+        println!("skipping: the host's /usr cannot run /usr/bin/sh as a view: {error}");
+        return None;
+    }
+    panic!("{error}")
+}
+
+/// The expected error of a command that must fail, or `None` after printing
+/// why this environment cannot run sandboxes.
+fn failure<T: std::fmt::Debug>(result: Result<T, Error>) -> Option<Error> {
+    let error = result.unwrap_err();
+    if let Some(reason) = sandbox_refused(&error) {
+        println!("skipping: {reason}");
+        return None;
+    }
+    Some(error)
+}
+
+fn errno(error: &Error) -> Option<Errno> {
+    error.io_error().and_then(Errno::from_io_error)
 }
 
 fn stdout(output: &Output) -> String {
@@ -313,19 +327,109 @@ fn missing_directories_are_reported_before_forking() {
 #[test]
 fn missing_program_is_reported_as_an_exec_failure() {
     let fixture = Fixture::new();
-    let result = fixture
-        .sandbox
-        .command("/usr/bin/laft-no-such-program")
-        .status();
-    let error = match result {
-        Err(error) if namespaces_refused(&error) => {
-            println!("skipping: user namespaces are unavailable: {error}");
+    for program in ["/usr/bin/laft-no-such-program", "laft-no-such-program"] {
+        let result = fixture.sandbox.command(program).status();
+        let Some(error) = failure(result) else {
             return;
-        }
-        other => other.unwrap_err(),
+        };
+        assert_eq!(error.step(), Step::Exec, "{program}: {error}");
+        assert_eq!(errno(&error), Some(Errno::NOENT), "{program}");
+    }
+}
+
+#[test]
+fn program_without_a_slash_is_found_in_the_view() {
+    let fixture = Fixture::new();
+    let Ok(host) = std::fs::canonicalize("/usr/bin/sh") else {
+        println!("skipping: the host has no /usr/bin/sh");
+        return;
     };
-    assert_eq!(error.step(), Step::Exec);
-    assert_eq!(Errno::from_io_error(error.io_error()), Some(Errno::NOENT));
+    let command = fixture
+        .sandbox
+        .command("sh")
+        .arg("-c")
+        .arg("readlink /proc/$$/exe");
+    let Some(output) = supported(command.output()) else {
+        return;
+    };
+    assert_eq!(stdout(&output).trim_end(), host.to_str().unwrap());
+}
+
+#[test]
+fn output_gives_the_command_a_null_stdin() {
+    let fixture = Fixture::new();
+    let Some(output) = supported(fixture.shell("stat -L -c %t:%T /proc/self/fd/0").output()) else {
+        return;
+    };
+    assert_eq!(
+        stdout(&output),
+        "1:3
+",
+        "{output:?}"
+    );
+}
+
+#[test]
+fn spawn_mirrors_a_command_killed_by_a_signal() {
+    let fixture = Fixture::new();
+    let command = fixture
+        .shell("echo started; exec sleep 1000")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped());
+    let Some(mut child) = supported(command.spawn()) else {
+        return;
+    };
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    assert_eq!(line, "started\n");
+    let waiter = child.id().to_string();
+    let init = children_of(&waiter);
+    assert_eq!(init.len(), 1, "{init:?}");
+    // PID 1 of a namespace takes only SIGKILL and SIGSTOP from outside unless
+    // it handles the signal.
+    let pid = rustix::process::Pid::from_raw(init[0]).unwrap();
+    rustix::process::kill_process(pid, rustix::process::Signal::KILL).unwrap();
+    let status = child.wait().unwrap();
+    assert_eq!(status.signal(), Some(libc::SIGKILL), "{status:?}");
+}
+
+/// The processes whose parent is `pid`, read from `/proc`.
+fn children_of(pid: &str) -> Vec<i32> {
+    std::fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            let child = name.parse().ok()?;
+            let stat = std::fs::read_to_string(format!("/proc/{name}/stat")).ok()?;
+            let parent = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?;
+            (parent == pid).then_some(child)
+        })
+        .collect()
+}
+
+#[test]
+fn core_dumps_are_off_and_open_files_are_limited() {
+    let fixture = Fixture::new();
+    let Some(output) = fixture.run("cat /proc/self/limits") else {
+        return;
+    };
+    let limits = stdout(&output);
+    let limit = |name: &str| -> Vec<String> {
+        let line = limits
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .unwrap_or_else(|| panic!("no {name} in {limits}"));
+        line.split_whitespace().take(2).map(str::to_owned).collect()
+    };
+    assert_eq!(limit("Max core file size"), ["0", "0"]);
+    let hard = rustix::process::getrlimit(rustix::process::Resource::Nofile).maximum;
+    let open_files = hard.map_or(MAX_OPEN_FILES, |hard| hard.min(MAX_OPEN_FILES));
+    assert_eq!(
+        limit("Max open files"),
+        [open_files.to_string(), open_files.to_string()]
+    );
 }
 
 #[test]
@@ -334,12 +438,8 @@ fn setup_failure_names_the_step() {
     std::fs::remove_dir(fixture.out()).unwrap();
     std::fs::write(fixture.out(), "a file, not a directory").unwrap();
     let result = fixture.sandbox.command("/usr/bin/true").status();
-    let error = match result {
-        Err(error) if namespaces_refused(&error) => {
-            println!("skipping: user namespaces are unavailable: {error}");
-            return;
-        }
-        other => other.unwrap_err(),
+    let Some(error) = failure(result) else {
+        return;
     };
     assert_eq!(error.step(), Step::Attach, "{error}");
     assert!(

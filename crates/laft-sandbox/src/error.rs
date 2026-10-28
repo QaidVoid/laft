@@ -2,99 +2,71 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// A step of sandbox setup or view entry. A failing step is reported with
-/// its description, and a sandbox child sends the step's code to its parent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum Step {
-    Resolve,
-    Pipe,
-    Unshare,
-    MapIds,
-    Limits,
-    Fork,
-    Propagation,
-    CloneTree,
-    SetAttributes,
-    RootFs,
-    Populate,
-    Attach,
-    MountProc,
-    MountDev,
-    MountTmp,
-    PivotRoot,
-    Hostname,
-    Capabilities,
-    NoNewPrivs,
-    Descriptors,
-    Exec,
-    Wait,
-    InvalidPath,
-    OpenTarget,
-    NotRegularFile,
+/// Declares [`Step`] with the description of each step, so that the list
+/// of codes a sandbox child may send cannot miss a variant.
+macro_rules! steps {
+    ($($step:ident => $description:literal,)+) => {
+        /// A step of sandbox setup or view entry. A failing step is reported
+        /// with its description, and a sandbox child sends the step's code to
+        /// its parent.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[repr(u8)]
+        pub(crate) enum Step {
+            $($step,)+
+        }
+
+        impl Step {
+            const ALL: &[Self] = &[$(Self::$step,)+];
+
+            fn describe(self) -> &'static str {
+                match self {
+                    $(Self::$step => $description,)+
+                }
+            }
+        }
+    };
+}
+
+steps! {
+    Resolve => "resolving a sandbox directory",
+    Pipe => "creating the setup pipe",
+    Unshare => "creating the namespaces",
+    MapIds => "mapping the build user",
+    Limits => "setting resource limits",
+    Fork => "starting the namespace init",
+    DeathSignal => "tying the namespace init to its parent",
+    Propagation => "changing mount propagation",
+    CloneTree => "cloning a mount",
+    SetAttributes => "setting mount attributes",
+    RootFs => "creating the root filesystem",
+    Populate => "creating mount points",
+    Attach => "attaching a mount",
+    MountProc => "mounting /proc",
+    MountDev => "mounting /dev",
+    MountTmp => "mounting /tmp",
+    PivotRoot => "switching to the new root",
+    Hostname => "setting the hostname",
+    Capabilities => "dropping capabilities",
+    NoNewPrivs => "setting no_new_privs",
+    WorkingDirectory => "changing to /build",
+    Descriptors => "closing inherited descriptors",
+    Exec => "executing the command",
+    Wait => "waiting for the command",
+    Unknown => "setting up the sandbox at a step with an unknown code",
+    InvalidPath => "expecting an absolute path below /usr, got",
+    OpenTarget => "opening a mount target",
+    NotRegularFile => "expecting a regular file at",
 }
 
 impl Step {
-    const ALL: [Self; 25] = [
-        Self::Resolve,
-        Self::Pipe,
-        Self::Unshare,
-        Self::MapIds,
-        Self::Limits,
-        Self::Fork,
-        Self::Propagation,
-        Self::CloneTree,
-        Self::SetAttributes,
-        Self::RootFs,
-        Self::Populate,
-        Self::Attach,
-        Self::MountProc,
-        Self::MountDev,
-        Self::MountTmp,
-        Self::PivotRoot,
-        Self::Hostname,
-        Self::Capabilities,
-        Self::NoNewPrivs,
-        Self::Descriptors,
-        Self::Exec,
-        Self::Wait,
-        Self::InvalidPath,
-        Self::OpenTarget,
-        Self::NotRegularFile,
-    ];
-
-    pub(crate) fn from_code(code: u8) -> Option<Self> {
-        Self::ALL.into_iter().find(|step| *step as u8 == code)
-    }
-
-    fn describe(self) -> &'static str {
-        match self {
-            Self::Resolve => "resolving a sandbox directory",
-            Self::Pipe => "creating the setup pipe",
-            Self::Unshare => "creating the namespaces",
-            Self::MapIds => "mapping the build user",
-            Self::Limits => "setting resource limits",
-            Self::Fork => "starting the namespace init",
-            Self::Propagation => "changing mount propagation",
-            Self::CloneTree => "cloning a mount",
-            Self::SetAttributes => "setting mount attributes",
-            Self::RootFs => "creating the root filesystem",
-            Self::Populate => "creating mount points",
-            Self::Attach => "attaching a mount",
-            Self::MountProc => "mounting /proc",
-            Self::MountDev => "mounting /dev",
-            Self::MountTmp => "mounting /tmp",
-            Self::PivotRoot => "switching to the new root",
-            Self::Hostname => "setting the hostname",
-            Self::Capabilities => "dropping capabilities",
-            Self::NoNewPrivs => "setting no_new_privs",
-            Self::Descriptors => "closing inherited descriptors",
-            Self::Exec => "executing the command",
-            Self::Wait => "waiting for the command",
-            Self::InvalidPath => "expecting an absolute path below /usr, got",
-            Self::OpenTarget => "opening a mount target",
-            Self::NotRegularFile => "expecting a regular file at",
-        }
+    /// The step whose code is `code`, or [`Step::Unknown`] for a code
+    /// that names no step.
+    pub(crate) fn from_code(code: u8) -> Self {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|step| *step as u8 == code)
+            .unwrap_or(Self::Unknown)
     }
 }
 
@@ -102,12 +74,13 @@ impl Step {
 ///
 /// The message names the step that failed and, where there is one, the path
 /// it was about, for example `mounting /proc: Operation not permitted (os
-/// error 1)`.
+/// error 1)`. Input that is malformed before any system call is made carries
+/// no operating system error.
 #[derive(Debug)]
 pub struct Error {
     step: Step,
     path: Option<PathBuf>,
-    source: io::Error,
+    source: Option<io::Error>,
 }
 
 impl Error {
@@ -115,7 +88,7 @@ impl Error {
         Self {
             step,
             path: None,
-            source: source.into(),
+            source: Some(source.into()),
         }
     }
 
@@ -123,7 +96,16 @@ impl Error {
         Self {
             step,
             path: Some(path.to_owned()),
-            source: source.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// An error about the input `path` itself, which no system call reported.
+    pub(crate) fn malformed(step: Step, path: &Path) -> Self {
+        Self {
+            step,
+            path: Some(path.to_owned()),
+            source: None,
         }
     }
 
@@ -132,13 +114,15 @@ impl Error {
         self.step
     }
 
-    /// The operating system error behind the failure.
+    /// The operating system error behind the failure, or `None` when the
+    /// input was rejected without one: a privileged path that is malformed
+    /// or that names something other than a regular file.
     ///
     /// A missing kernel feature shows up as `ENOSYS`, and a kernel or
     /// policy that forbids unprivileged namespaces as `EPERM`, `EACCES` or
     /// `ENOSPC`.
-    pub fn io_error(&self) -> &io::Error {
-        &self.source
+    pub fn io_error(&self) -> Option<&io::Error> {
+        self.source.as_ref()
     }
 }
 
@@ -148,12 +132,17 @@ impl fmt::Display for Error {
         if let Some(path) = &self.path {
             write!(f, " {}", path.display())?;
         }
-        write!(f, ": {}", self.source)
+        if let Some(source) = &self.source {
+            write!(f, ": {source}")?;
+        }
+        Ok(())
     }
 }
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
+        self.source
+            .as_ref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
     }
 }

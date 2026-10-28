@@ -160,7 +160,8 @@ fn malformed_privileged_paths_are_rejected_before_unsharing() {
         for path in ["usr/bin/doas", "/etc/shadow", "/usr", "/usr/../etc/shadow"] {
             let result = enter(base, &[Path::new(path)]);
             ensure!(
-                matches!(&result, Err(error) if error.step() == Step::InvalidPath),
+                matches!(&result, Err(error) if error.step() == Step::InvalidPath
+                    && error.io_error().is_none()),
                 "{path} gave {result:?}"
             );
         }
@@ -182,6 +183,60 @@ fn privileged_paths_must_be_regular_files() {
         ensure!(
             matches!(&result, Err(error) if error.step() == Step::NotRegularFile),
             "a directory gave {result:?}"
+        );
+        Ok(())
+    });
+}
+
+#[test]
+fn privileged_path_missing_from_the_generation_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+    in_user_namespace(|| {
+        generation_and_view(base)?;
+        let missing = Path::new("/usr/bin/laft-missing");
+        let error = match enter(base, &[missing]) {
+            Ok(()) => return Err("a missing privileged file was accepted".to_owned()),
+            Err(error) => error,
+        };
+        let errno = error.io_error().and_then(Errno::from_io_error);
+        ensure!(
+            error.step() == Step::CloneTree && errno == Some(Errno::NOENT),
+            "a missing privileged file gave {error:?}"
+        );
+        ensure!(
+            error.to_string().contains("/usr/bin/laft-missing"),
+            "the error does not name the path: {error}"
+        );
+        Ok(())
+    });
+}
+
+#[test]
+fn privileged_paths_that_are_links_or_directories_in_the_view_are_skipped() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+    in_user_namespace(|| {
+        generation_and_view(base)?;
+        let view = base.join("view/usr/bin");
+        fs::remove_file(view.join("doas")).map_err(text)?;
+        std::os::unix::fs::symlink("tool", view.join("doas")).map_err(text)?;
+        fs::create_dir(view.join("passwd")).map_err(text)?;
+        let privileged = [Path::new("/usr/bin/doas"), Path::new("/usr/bin/passwd")];
+        enter(base, &privileged).map_err(text)?;
+
+        let usr = base.join("gen/usr/bin");
+        ensure!(
+            fs::read_link(usr.join("doas")).map_err(text)? == Path::new("tool"),
+            "the link in the view was replaced"
+        );
+        ensure!(
+            fs::read_to_string(usr.join("doas")).map_err(text)? == "view tool",
+            "a privileged file was bound over the link's target"
+        );
+        ensure!(
+            usr.join("passwd").is_dir(),
+            "the directory in the view was replaced"
         );
         Ok(())
     });

@@ -44,21 +44,23 @@ const BOTH_EMPTY: MoveMountFlags =
 ///    inside propagates back to the host.
 /// 4. Open `generation` and `view`, refusing symlinks on the whole path.
 /// 5. Clone each privileged file of the generation as a detached mount,
-///    read-only and `nodev` with setuid allowed. This happens before step 7
-///    covers the generation's `usr`, which is where the files live.
+///    read-only and `nodev` with setuid allowed. The files live in the
+///    generation's `usr`, so they must be cloned before the view covers it.
 /// 6. Clone `view` as a detached mount, read-only, `nosuid` and `nodev`, so
 ///    that no setuid file or device node in a view grants anything.
 /// 7. Attach the view clone over the generation's `usr`. Only `usr` is
 ///    covered, so the rest of the generation, such as its rendered
 ///    configuration, stays the system's.
 /// 8. Attach each privileged clone over the same path, which now resolves
-///    inside the view. A path the view lacks is skipped, because a view only
-///    gains the privileged programs it already contains.
+///    inside the view. A path that is absent from the view, or not a regular
+///    file there, is skipped, because a view only gains the privileged
+///    programs it already contains. A symlink anywhere on the path counts as
+///    absent, so a privileged file is never bound over a link.
 ///
 /// Every lookup of a privileged path is relative to `generation`, stays
 /// beneath it and refuses symlinks, and every mount is made through a
 /// descriptor, so a symlink planted in either tree cannot redirect a mount.
-/// Privileged sources and targets must be regular files.
+/// Privileged sources must be regular files.
 ///
 /// Requires Linux 5.12 or newer for `mount_setattr`.
 ///
@@ -68,9 +70,10 @@ const BOTH_EMPTY: MoveMountFlags =
 /// names something other than a regular file, when `generation` or `view` is
 /// not a directory reached without symlinks, when the caller lacks
 /// `CAP_SYS_ADMIN` or has more than one thread, and when the kernel lacks the
-/// mount API (`ENOSYS`). A failure
-/// after step 2 leaves the process in the new namespace with some of the
-/// mounts made, so the caller must exit rather than continue.
+/// mount API (`ENOSYS`). A malformed path or a source that is not a regular
+/// file is reported without an operating system error. A failure after the
+/// `unshare` leaves the process in the new namespace with some of the mounts
+/// made, so the caller must exit rather than continue.
 ///
 /// # Examples
 ///
@@ -86,7 +89,7 @@ const BOTH_EMPTY: MoveMountFlags =
 pub fn enter_view(generation: &Path, view: &Path, privileged: &[&Path]) -> Result<(), Error> {
     let targets = privileged
         .iter()
-        .map(|path| below_usr(path).ok_or_else(|| Error::at(Step::InvalidPath, path, Errno::INVAL)))
+        .map(|path| below_usr(path).ok_or_else(|| Error::malformed(Step::InvalidPath, path)))
         .collect::<Result<Vec<_>, _>>()?;
 
     sys::unshare(UnshareFlags::NEWNS).map_err(|e| Error::new(Step::Unshare, e))?;
@@ -103,7 +106,9 @@ pub fn enter_view(generation: &Path, view: &Path, privileged: &[&Path]) -> Resul
     for (path, target) in privileged.iter().zip(&targets) {
         let at = |step| move |errno| Error::at(step, path, errno);
         let file = open_beneath(generation, target).map_err(at(Step::CloneTree))?;
-        regular_file(&file, path)?;
+        if !regular_file(&file).map_err(at(Step::NotRegularFile))? {
+            return Err(Error::malformed(Step::NotRegularFile, path));
+        }
         let source = rustix::mount::open_tree(&file, c"", CLONE).map_err(at(Step::CloneTree))?;
         sys::mount_setattr(
             source.as_fd(),
@@ -138,10 +143,12 @@ pub fn enter_view(generation: &Path, view: &Path, privileged: &[&Path]) -> Resul
     for ((path, target), source) in privileged.iter().zip(&targets).zip(&sources) {
         let file = match open_beneath(generation, target) {
             Ok(file) => file,
-            Err(Errno::NOENT) => continue,
+            Err(Errno::NOENT | Errno::LOOP | Errno::NOTDIR) => continue,
             Err(errno) => return Err(Error::at(Step::OpenTarget, path, errno)),
         };
-        regular_file(&file, path)?;
+        if !regular_file(&file).map_err(|e| Error::at(Step::OpenTarget, path, e))? {
+            continue;
+        }
         rustix::mount::move_mount(source, c"", &file, c"", BOTH_EMPTY)
             .map_err(|e| Error::at(Step::Attach, path, e))?;
     }
@@ -186,13 +193,9 @@ fn open_beneath(generation: BorrowedFd<'_>, path: &Path) -> Result<OwnedFd, Errn
     )
 }
 
-fn regular_file(file: &OwnedFd, path: &Path) -> Result<(), Error> {
-    let stat = rustix::fs::fstat(file).map_err(|e| Error::at(Step::NotRegularFile, path, e))?;
-    if FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile {
-        Ok(())
-    } else {
-        Err(Error::at(Step::NotRegularFile, path, Errno::INVAL))
-    }
+fn regular_file(file: &OwnedFd) -> Result<bool, Errno> {
+    let stat = rustix::fs::fstat(file)?;
+    Ok(FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile)
 }
 
 #[cfg(test)]

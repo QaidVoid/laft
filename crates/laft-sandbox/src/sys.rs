@@ -20,7 +20,7 @@ struct MountAttr {
 }
 
 fn last_errno() -> Errno {
-    Errno::from_raw_os_error(io::Error::last_os_error().raw_os_error().unwrap_or(0))
+    Errno::from_io_error(&io::Error::last_os_error()).unwrap_or(Errno::IO)
 }
 
 /// Sets and clears per-mount attributes of the single mount `mount` refers
@@ -55,7 +55,9 @@ pub(crate) fn mount_setattr(
 }
 
 /// Moves the calling process into new namespaces of the kinds in `flags`.
-/// `flags` never contains `UnshareFlags::FILES`.
+///
+/// No caller passes `UnshareFlags::FILES`. It is removed anyway as defence
+/// in depth, because it is the flag that makes `unshare` unsafe.
 pub(crate) fn unshare(flags: UnshareFlags) -> Result<(), Errno> {
     let flags = flags.difference(UnshareFlags::FILES);
     // SAFETY: `unshare` is only unsafe with `CLONE_FILES`, which could leave

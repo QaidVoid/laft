@@ -147,6 +147,7 @@ impl Sandbox {
         Command {
             sandbox: self.clone(),
             inner,
+            stdin_set: false,
         }
     }
 }
@@ -160,6 +161,7 @@ impl Sandbox {
 pub struct Command {
     sandbox: Sandbox,
     inner: process::Command,
+    stdin_set: bool,
 }
 
 impl Command {
@@ -182,9 +184,11 @@ impl Command {
         self
     }
 
-    /// Sets the command's standard input. It is inherited by default.
+    /// Sets the command's standard input. It is inherited by default, except
+    /// by [`Command::output`].
     pub fn stdin(mut self, stdin: impl Into<Stdio>) -> Self {
         self.inner.stdin(stdin);
+        self.stdin_set = true;
         self
     }
 
@@ -212,6 +216,9 @@ impl Command {
     /// Use piped standard streams to read the command's output while it
     /// runs.
     ///
+    /// `SIGCHLD` has its default disposition in the sandbox, even when the
+    /// caller ignores it, so the command can wait for its own children.
+    ///
     /// # Errors
     ///
     /// Fails when a directory of the sandbox does not exist, when a step of
@@ -219,7 +226,9 @@ impl Command {
     /// user namespaces, or when the program cannot be executed. The error
     /// names the step.
     pub fn spawn(self) -> Result<Child, Error> {
-        let Self { sandbox, mut inner } = self;
+        let Self {
+            sandbox, mut inner, ..
+        } = self;
         let setup = Setup::new(&sandbox)?;
         let (reader, writer) =
             rustix::pipe::pipe_with(PipeFlags::CLOEXEC).map_err(|e| Error::new(Step::Pipe, e))?;
@@ -234,8 +243,10 @@ impl Command {
         drop(inner);
         spawned.map_err(|error| {
             let mut code = [0u8];
+            // The setup hook reports its step before failing. Without a
+            // report, the hook succeeded and `exec` failed.
             let step = match rustix::io::read(&reader, &mut code) {
-                Ok(1) => Step::from_code(code[0]).unwrap_or(Step::Exec),
+                Ok(1) => Step::from_code(code[0]),
                 _ => Step::Exec,
             };
             Error::new(step, error)
@@ -245,10 +256,16 @@ impl Command {
     /// Runs the command to completion with captured standard output and
     /// standard error, and returns them with its exit status.
     ///
+    /// Standard input is null unless [`Command::stdin`] set it, so a command
+    /// that reads it sees end of file at once.
+    ///
     /// # Errors
     ///
     /// Fails like [`Command::spawn`], or when reading the output fails.
-    pub fn output(self) -> Result<Output, Error> {
+    pub fn output(mut self) -> Result<Output, Error> {
+        if !self.stdin_set {
+            self.inner.stdin(Stdio::null());
+        }
         let child = self.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
         child
             .wait_with_output()
@@ -337,10 +354,14 @@ impl Setup {
         rustix::process::setrlimit(Resource::Nofile, open_files).map_err(fail(Step::Limits))?;
         rustix::process::setrlimit(Resource::Core, no_core).map_err(fail(Step::Limits))?;
 
+        // A caller that ignores SIGCHLD makes the kernel reap children on its
+        // own, so `wait_for` could not learn how PID 1 ended. The ignored
+        // disposition would also survive the fork and `exec` into the
+        // command, which then could not wait for its own children.
+        sys::default_signal(libc::SIGCHLD);
         // The new PID namespace applies to children only. This process stays
         // outside as the one the caller waits for, and the forked child
         // becomes PID 1 of the sandbox.
-        sys::default_signal(libc::SIGCHLD);
         // SAFETY: both sides of the fork only make system calls and never
         // allocate or take locks.
         match unsafe { sys::fork() }.map_err(fail(Step::Fork))? {
@@ -353,7 +374,7 @@ impl Setup {
         // When the waiting process dies, for example from `Child::kill`, the
         // kernel kills PID 1 and with it the whole namespace.
         rustix::process::set_parent_process_death_signal(Some(Signal::KILL))
-            .map_err(fail(Step::Fork))?;
+            .map_err(fail(Step::DeathSignal))?;
         rustix::mount::mount_change(
             c"/",
             MountPropagationFlags::PRIVATE | MountPropagationFlags::REC,
@@ -412,7 +433,7 @@ impl Setup {
         rustix::system::setdomainname(HOSTNAME.as_bytes()).map_err(fail(Step::Hostname))?;
         drop_capabilities()?;
         rustix::thread::set_no_new_privs(true).map_err(fail(Step::NoNewPrivs))?;
-        rustix::process::chdir(c"/build").map_err(fail(Step::PivotRoot))?;
+        rustix::process::chdir(c"/build").map_err(fail(Step::WorkingDirectory))?;
         sys::cloexec_from(3).map_err(fail(Step::Descriptors))
     }
 
