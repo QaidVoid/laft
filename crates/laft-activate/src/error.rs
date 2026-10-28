@@ -547,7 +547,8 @@ pub enum Warning {
     /// Laft, so it is left in place and Laft forgets it.
     ChangedCopyKept(String),
     /// Laft did not run as root, so the privileged copies were made and
-    /// recorded but keep the caller as owner and carry no capabilities.
+    /// recorded but keep the caller as owner and carry neither setuid,
+    /// setgid nor capabilities.
     PrivilegesNotApplied(Vec<String>),
 }
 
@@ -580,7 +581,7 @@ impl fmt::Display for Warning {
             ),
             Self::PrivilegesNotApplied(paths) => write!(
                 f,
-                "not running as root: the owner and capabilities of {} were recorded in privileged.json but not applied",
+                "not running as root: the owner, setuid and setgid bits and capabilities of {} were recorded in privileged.json but not applied",
                 paths.join(", ")
             ),
         }

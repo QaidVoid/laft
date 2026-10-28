@@ -391,7 +391,12 @@ fn assembles_a_complete_generation() {
         inode(&fixture.store_file(&p.laft, "usr/bin/doas"))
     );
     assert_eq!(fs::read(&doas).unwrap(), b"doas binary");
-    assert_eq!(mode(&doas), 0o4755);
+    let expected = if crate::fsx::is_root() { 0o4755 } else { 0o755 };
+    assert_eq!(
+        mode(&doas),
+        expected,
+        "a copy owned by an unprivileged caller is never setuid"
+    );
     assert_eq!(mode(&fixture.store_file(&p.laft, "usr/bin/doas")), 0o555);
     let privileged = PrivilegedRecord::read(&dir).unwrap();
     assert_eq!(privileged, assembled.privileged);

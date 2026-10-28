@@ -90,7 +90,9 @@ impl PrivilegedRecord {
 /// `generation` is the record the generation gets, `owner` names the store
 /// entry that contributes a tree path, and `views` the declared views of
 /// the generation with their versions. Without root, the copies keep the
-/// caller as owner and get no capabilities, and a warning says so.
+/// caller as owner and get neither setuid, setgid nor capabilities, so they
+/// never carry the caller's own privileges, and a warning says so. The
+/// record still lists the configured owner and mode.
 pub(crate) fn apply(
     root: &Root,
     tree: &Path,
@@ -234,7 +236,8 @@ fn plan(
 /// Copies the file `rel` of `tree` to a new inode and renames the copy
 /// over it, so the store file it was linked to is never opened for
 /// writing. The owner is set before the mode, because changing the owner
-/// clears setuid bits.
+/// clears setuid bits. Without `privileged`, the setuid and setgid bits are
+/// left out, because the copy is not owned by the configured owner.
 fn copy(
     tree: &Path,
     rel: &str,
@@ -258,6 +261,7 @@ fn copy(
     if privileged {
         fchown(&copy, Some(uid), Some(gid)).map_err(io(&tmp))?;
     }
+    let mode = if privileged { mode } else { mode & !0o6000 };
     copy.set_permissions(fs::Permissions::from_mode(mode))
         .map_err(io(&tmp))?;
     if let Some(caps) = caps.filter(|_| privileged) {
