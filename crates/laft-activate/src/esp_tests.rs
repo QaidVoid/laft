@@ -262,3 +262,18 @@ fn a_directory_is_not_an_esp() {
     let env = Env::new();
     assert!(check_esp(&esp(&env)).is_err());
 }
+
+#[test]
+fn boot_state_is_read_like_laft_boot_reads_it() {
+    let env = Env::new();
+    generation(&env, 1, "6.17.4-laft1", b"one", "{}");
+    let esp = esp(&env);
+    env.write("laft/state/boot.json", r#"{"version":2,"attempts":[]}"#);
+    let err = install_boot(&env.root, &esp).unwrap_err().to_string();
+    assert!(err.contains("unsupported version 2"), "{err}");
+    env.write(
+        "laft/state/boot.json",
+        r#"{"bad":[1],"unknown":true,"version":1}"#,
+    );
+    assert!(install_boot(&env.root, &esp).is_err());
+}

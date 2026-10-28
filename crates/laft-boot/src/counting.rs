@@ -4,110 +4,8 @@
 //! of it consumes one try. When none are left, it is marked bad and the
 //! machine falls back to the last generation that booted completely.
 
-use std::collections::BTreeSet;
-
-use laft_core::Timestamp;
-use serde::{Deserialize, Serialize};
-
-/// The only version of the boot state this program reads and writes.
-const VERSION: u32 = 1;
-
-/// How many events the state keeps, the most recent ones.
-const MAX_EVENTS: usize = 20;
-
-/// The boot trial and fallback state, stored in `/laft/state/boot.json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct BootState {
-    /// Generations that used up their trial without completing a boot.
-    pub(crate) bad: BTreeSet<u64>,
-    /// Fallbacks that happened, oldest first.
-    pub(crate) events: Vec<Event>,
-    /// Generations that completed a boot.
-    pub(crate) good: BTreeSet<u64>,
-    /// The generation that completed a boot most recently.
-    pub(crate) last_good: Option<u64>,
-    /// The boot default that is on trial, if any.
-    pub(crate) trial: Option<Trial>,
-    /// The format version, 1.
-    pub(crate) version: u32,
-}
-
-impl Default for BootState {
-    fn default() -> Self {
-        Self {
-            bad: BTreeSet::new(),
-            events: Vec::new(),
-            good: BTreeSet::new(),
-            last_good: None,
-            trial: None,
-            version: VERSION,
-        }
-    }
-}
-
-/// A generation on trial.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Trial {
-    /// The generation.
-    #[serde(rename = "gen")]
-    pub(crate) generation: u64,
-    /// The boots it may still start before it counts as failed.
-    pub(crate) tries_left: u32,
-}
-
-/// Something that happened to the boot default.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Event {
-    /// The generation that failed.
-    pub(crate) from: u64,
-    /// What happened.
-    pub(crate) kind: EventKind,
-    /// When it happened.
-    pub(crate) time: Timestamp,
-    /// The generation that replaced it.
-    pub(crate) to: u64,
-}
-
-/// The kinds of [`Event`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum EventKind {
-    /// The boot default failed every try and was replaced.
-    Fallback,
-}
-
-impl BootState {
-    /// Reads the state from `bytes`.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the document is not a version 1 boot state.
-    pub(crate) fn parse(bytes: &[u8]) -> Result<Self, String> {
-        let state: Self = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-        if state.version != VERSION {
-            return Err(format!("unsupported version {}", state.version));
-        }
-        Ok(state)
-    }
-
-    /// The state as canonical JSON, the form it is stored in.
-    ///
-    /// # Errors
-    ///
-    /// Fails when a generation number is too large for canonical JSON.
-    pub(crate) fn to_json(&self) -> Result<Vec<u8>, String> {
-        laft_core::to_canonical_json(self).map_err(|e| e.to_string())
-    }
-
-    /// Forgets good and bad generations that no longer exist.
-    pub(crate) fn prune(&mut self, existing: &BTreeSet<u64>) {
-        self.good.retain(|n| existing.contains(n));
-        self.bad.retain(|n| existing.contains(n));
-    }
-}
+use laft_core::{BootEvent, BootEventKind, BootState, Timestamp};
+use serde::Deserialize;
 
 /// What boot counting decided for one boot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,14 +57,12 @@ pub(crate) fn decide(
     match state.last_good.filter(|&t| t != generation && valid(t)) {
         None => Decision::Exhausted(state),
         Some(to) => {
-            state.events.push(Event {
+            state.push_event(BootEvent {
                 from: generation,
-                kind: EventKind::Fallback,
+                kind: BootEventKind::Fallback,
                 time: now,
                 to,
             });
-            let excess = state.events.len().saturating_sub(MAX_EVENTS);
-            state.events.drain(..excess);
             Decision::Fallback { state, to }
         }
     }

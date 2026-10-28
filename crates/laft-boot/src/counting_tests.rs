@@ -1,10 +1,8 @@
 use std::collections::BTreeSet;
 
-use laft_core::Timestamp;
+use laft_core::{BootEvent, BootEventKind, BootState, BootTrial, Timestamp};
 
-use super::{BootState, Decision, Event, EventKind, Trial, decide, menu_index, set_default_entry};
-
-const EXAMPLE: &str = r#"{"bad":[40],"events":[{"from":40,"kind":"fallback","time":"2026-10-26T08:01:12Z","to":39}],"good":[38,39,41],"last_good":41,"trial":{"gen":42,"tries_left":2},"version":1}"#;
+use super::{Decision, decide, menu_index, set_default_entry};
 
 fn now() -> Timestamp {
     "2026-10-28T14:02:00Z".parse().unwrap()
@@ -14,7 +12,7 @@ fn on_trial(generation: u64, tries_left: u32) -> BootState {
     BootState {
         good: BTreeSet::from([41]),
         last_good: Some(41),
-        trial: Some(Trial {
+        trial: Some(BootTrial {
             generation,
             tries_left,
         }),
@@ -24,19 +22,6 @@ fn on_trial(generation: u64, tries_left: u32) -> BootState {
 
 fn any(_: u64) -> bool {
     true
-}
-
-#[test]
-fn stored_state_round_trips_as_canonical_json() {
-    let state = BootState::parse(EXAMPLE.as_bytes()).expect("valid");
-    assert_eq!(state.trial.map(|t| t.tries_left), Some(2));
-    assert_eq!(state.to_json().unwrap(), EXAMPLE.as_bytes());
-}
-
-#[test]
-fn other_versions_are_rejected() {
-    let other = EXAMPLE.replace(r#""version":1"#, r#""version":2"#);
-    assert!(BootState::parse(other.as_bytes()).is_err());
 }
 
 #[test]
@@ -81,9 +66,9 @@ fn exhausted_trial_falls_back_to_the_last_good_generation() {
     let mut expected = on_trial(42, 0);
     expected.trial = None;
     expected.bad.insert(42);
-    expected.events.push(Event {
+    expected.events.push(BootEvent {
         from: 42,
-        kind: EventKind::Fallback,
+        kind: BootEventKind::Fallback,
         time: now(),
         to: 41,
     });
@@ -116,9 +101,9 @@ fn exhausted_trial_without_a_usable_good_generation_boots_anyway() {
 fn only_the_most_recent_events_are_kept() {
     let mut state = on_trial(42, 0);
     for n in 0..20 {
-        state.events.push(Event {
+        state.events.push(BootEvent {
             from: n,
-            kind: EventKind::Fallback,
+            kind: BootEventKind::Fallback,
             time: Timestamp::from_secs(n),
             to: n + 1,
         });
@@ -129,15 +114,6 @@ fn only_the_most_recent_events_are_kept() {
     assert_eq!(state.events.len(), 20);
     assert_eq!(state.events[0].from, 1);
     assert_eq!(state.events[19].from, 42);
-}
-
-#[test]
-fn pruning_forgets_generations_that_are_gone() {
-    let mut state = BootState::parse(EXAMPLE.as_bytes()).unwrap();
-    state.prune(&BTreeSet::from([39, 41, 42]));
-    assert_eq!(state.good, BTreeSet::from([39, 41]));
-    assert!(state.bad.is_empty());
-    assert_eq!(state.last_good, Some(41));
 }
 
 #[test]

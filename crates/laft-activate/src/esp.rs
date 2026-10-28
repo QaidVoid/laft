@@ -9,9 +9,9 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use laft_core::{Blake3Hash, Timestamp};
+use laft_core::{Blake3Hash, BootState, Timestamp};
 use laft_store::Root;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::config::{Boot, BootConfig};
 use crate::error::{Error, Result, corrupt, io};
@@ -242,14 +242,9 @@ fn menu_settings(root: &Root, number: Option<u64>) -> Result<Boot> {
 
 /// The generations that `laft/state/boot.json` marks as failed to boot.
 fn failed_generations(root: &Root) -> Result<BTreeSet<u64>> {
-    #[derive(Deserialize)]
-    struct BootState {
-        #[serde(default)]
-        bad: BTreeSet<u64>,
-    }
     let path = root.path().join("laft/state/boot.json");
     match fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice::<BootState>(&bytes)
+        Ok(bytes) => BootState::parse(&bytes)
             .map(|state| state.bad)
             .map_err(|e| corrupt(&path, e)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(BTreeSet::new()),

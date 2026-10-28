@@ -14,13 +14,13 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use laft_core::Timestamp;
+use laft_core::{BootState, Timestamp};
 use rustix::io::Errno;
 use rustix::mount::{MountFlags, UnmountFlags};
 
 use crate::cmdline::Cmdline;
 use crate::config::{Config, Filesystem};
-use crate::counting::{self, BootState, Decision};
+use crate::counting::{self, Decision};
 use crate::device::{DeviceSpec, Devices};
 use crate::generation::{self, Generation};
 use crate::log::{Log, console};
@@ -377,6 +377,7 @@ impl Boot {
         let path = state_path();
         let written = state
             .to_json()
+            .map_err(|e| e.to_string())
             .and_then(|bytes| files::write_atomic(&path, &bytes).map_err(|e| e.to_string()));
         if let Err(e) = written {
             self.log
