@@ -100,6 +100,34 @@ fn yanked_package_cannot_also_be_available() {
     gone.id = both.packages[0].id;
     both.yanked.push(gone);
     assert!(both.validate().is_err());
+
+    let mut same = index(T0);
+    let mut gone = yank("hello");
+    gone.version = same.packages[0].meta.version.clone();
+    same.yanked.push(gone);
+    let error = same.validate().expect_err("the identity is available");
+    assert!(error.to_string().contains("also available"), "{error}");
+}
+
+#[test]
+fn yanks_are_sorted_without_duplicates() {
+    let mut sorted = index(T0);
+    sorted.yanked = vec![yank("hello"), yank("zlib")];
+    sorted.validate().expect("sorted by name");
+
+    let mut unsorted = sorted.clone();
+    unsorted.yanked.reverse();
+    assert!(unsorted.validate().is_err());
+
+    let mut twice = index(T0);
+    twice.yanked = vec![yank("hello"), yank("hello")];
+    assert!(twice.validate().is_err());
+
+    let mut same_id = index(T0);
+    let mut other = yank("zlib");
+    other.id = yank("hello").id;
+    same_id.yanked = vec![yank("hello"), other];
+    assert!(same_id.validate().is_err());
 }
 
 #[test]

@@ -82,7 +82,9 @@ pub struct Index {
     /// The available packages, by name ascending, then by version and
     /// revision descending, then dynamic before static.
     pub packages: Vec<IndexEntry>,
-    /// Withdrawn packages, which are not in `packages`.
+    /// Withdrawn packages, in the order of `packages` and without
+    /// duplicates. None has the store id or the name, version, revision and
+    /// variant of an available package.
     pub yanked: Vec<Yank>,
 }
 
@@ -178,6 +180,7 @@ impl Index {
             provide.parse::<Provide>().map_err(|e| err(e.to_string()))?;
         }
         let mut ids = BTreeSet::new();
+        let mut identities = BTreeSet::new();
         for entry in &self.packages {
             let package = entry.meta.identity();
             entry.meta.validate().map_err(|e| err(e.to_string()))?;
@@ -199,10 +202,15 @@ impl Index {
             if !ids.insert(entry.id) {
                 return Err(err(format!("store id {} is listed twice", entry.id)));
             }
+            let m = &entry.meta;
+            identities.insert((&m.name, &m.version, m.rev, m.variant));
         }
         fn order(e: &IndexEntry) -> (&Name, Reverse<(&Version, u32)>, Variant) {
             let m = &e.meta;
             (&m.name, Reverse((&m.version, m.rev)), m.variant)
+        }
+        fn yank_order(y: &Yank) -> (&Name, Reverse<(&Version, u32)>, Variant) {
+            (&y.name, Reverse((&y.version, y.rev)), y.variant)
         }
         if self
             .packages
@@ -223,12 +231,27 @@ impl Index {
                     yank.name
                 )));
             }
-            if ids.contains(&yank.id) {
+            if !ids.insert(yank.id) {
                 return Err(err(format!(
-                    "store id {} is both available and yanked",
+                    "store id {} is yanked twice or both available and yanked",
                     yank.id
                 )));
             }
+            if identities.contains(&(&yank.name, &yank.version, yank.rev, yank.variant)) {
+                return Err(err(format!(
+                    "yanked package {} {}-r{} is also available",
+                    yank.name, yank.version, yank.rev
+                )));
+            }
+        }
+        if self
+            .yanked
+            .windows(2)
+            .any(|pair| yank_order(&pair[0]) >= yank_order(&pair[1]))
+        {
+            return Err(err(
+                "`yanked` must be sorted like `packages`, without duplicates".into(),
+            ));
         }
         Ok(())
     }
