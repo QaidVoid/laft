@@ -720,3 +720,117 @@ fn a_root_service_gets_its_declared_groups() {
         assert!(error.to_string().contains("set the groups"), "{error}");
     }
 }
+
+/// The root of the fixture that [`exec_in_a_child_process`] works in, set
+/// only in the environment of the child test process.
+const EXEC_ROOT: &str = "LAFT_SVC_TEST_EXEC_ROOT";
+
+/// Runs `Launcher::exec` for the longrun `daemon`, which replaces this
+/// process on success. A failure exits with the launcher's status.
+#[test]
+#[ignore = "run by launcher_exec_starts_a_longrun in a child process"]
+fn exec_in_a_child_process() {
+    let Some(root) = std::env::var_os(EXEC_ROOT) else {
+        return;
+    };
+    let error = Launcher::new(root)
+        .exec("daemon", ExecMode::Supervised)
+        .expect_err("exec only returns on failure");
+    eprintln!("laft svc: {error}");
+    std::process::exit(crate::SETUP_FAILED);
+}
+
+/// Runs [`exec_in_a_child_process`] for the fixture below `root`.
+fn exec_daemon(root: &Path) -> std::process::Output {
+    Command::new(std::env::current_exe().expect("the test binary"))
+        .args([
+            "--exact",
+            "launcher::tests::exec_in_a_child_process",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env(EXEC_ROOT, root)
+        .output()
+        .expect("runs")
+}
+
+#[test]
+fn launcher_exec_starts_a_longrun() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    let as_root = rustix::process::geteuid().is_root();
+    let user = if as_root {
+        fs::write(
+            fixture.path("etc/passwd"),
+            "root:x:0:0:root:/root:/bin/sh\nnobody:x:65534:65534::/var/empty:/bin/sh\n",
+        )
+        .expect("write");
+        fs::write(fixture.path("etc/group"), "root:x:0:\nnobody:x:65534:\n").expect("write");
+        "nobody"
+    } else {
+        println!("skipping the privilege drop: it needs root");
+        "root"
+    };
+    let work = fixture.path("work");
+    fs::create_dir(&work).expect("mkdir");
+    for dir in [fixture.dir.path(), work.as_path()] {
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o777)).expect("chmod");
+    }
+    let out = work.join("out");
+    let script = format!(
+        "fd3=closed; [ -w /proc/self/fd/3 ] && fd3=open; \
+         echo \"$(id -u) $(ulimit -n) $(umask) $(pwd) $HOME $fd3\" > {}",
+        out.display()
+    );
+    let mut spec = resolve("daemon", &Service::longrun(&["/bin/sh", "-c", &script]));
+    spec.user = user.into();
+    spec.after = vec!["dbus".into()];
+    spec.cwd = work.display().to_string();
+    spec.umask = 0o027;
+    spec.limits.nofile = Some(256);
+    spec.ready = crate::SpecReady::Notify { fd: 3 };
+    spec.state_dirs = vec![SpecDir {
+        path: "/var/lib/daemon".into(),
+        mode: 0o750,
+        owner: (!as_root).then(|| "me".into()),
+        group: None,
+    }];
+    fixture.install(&spec);
+
+    let gated = exec_daemon(fixture.dir.path());
+    assert_eq!(gated.status.code(), Some(crate::SETUP_FAILED));
+    assert!(
+        String::from_utf8_lossy(&gated.stderr).contains("daemon waiting for dbus"),
+        "{}",
+        String::from_utf8_lossy(&gated.stderr)
+    );
+    assert!(!out.exists() && !fixture.path("var/lib/daemon").exists());
+
+    fixture.mark("dbus");
+    let started = exec_daemon(fixture.dir.path());
+    assert_eq!(
+        started.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&started.stderr)
+    );
+    let (uid, home) = if as_root {
+        (65534, "/var/empty")
+    } else {
+        (rustix::process::getuid().as_raw(), "/root")
+    };
+    assert_eq!(
+        read(&out),
+        format!("{uid} 256 0027 {} {home} open\n", work.display())
+    );
+    let state = fs::metadata(fixture.path("var/lib/daemon")).expect("created");
+    assert_eq!(state.mode() & 0o7777, 0o750);
+    assert_eq!(
+        state.uid(),
+        if as_root {
+            uid
+        } else {
+            rustix::process::getuid().as_raw()
+        }
+    );
+}
