@@ -56,7 +56,7 @@ impl Default for EtcConfig {
 /// The declared accounts and how they combine with accounts created outside
 /// Laft.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Users {
     /// With `true`, accounts created outside Laft are kept. With `false`,
     /// the account databases contain exactly the declared accounts. Default
@@ -214,8 +214,8 @@ pub struct BootConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Boot {
-    /// The boot loader. Only `limine` exists.
-    pub loader: String,
+    /// The boot loader.
+    pub loader: Loader,
     /// The mountpoint of the EFI system partition. Default `/boot`.
     pub esp: String,
     /// The package that provides the kernel. Default `linux`.
@@ -239,7 +239,7 @@ pub struct Boot {
 impl Default for Boot {
     fn default() -> Self {
         Self {
-            loader: "limine".into(),
+            loader: Loader::Limine,
             esp: "/boot".into(),
             kernel: "linux".into(),
             cmdline: vec!["quiet".into(), "loglevel=3".into()],
@@ -250,6 +250,15 @@ impl Default for Boot {
             initrd: Initrd::default(),
         }
     }
+}
+
+/// A boot loader Laft can install.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Loader {
+    /// Limine, the only one.
+    #[default]
+    Limine,
 }
 
 /// Which CPU microcode the initramfs carries.
@@ -298,7 +307,7 @@ impl Default for Initrd {
 }
 
 /// A mounted filesystem.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Fs {
     /// The device, such as `UUID=...` or `/dev/mapper/cryptroot`.
@@ -310,20 +319,6 @@ pub struct Fs {
     /// Whether the filesystem is checked before it is mounted. With `None`,
     /// true for ext2, ext3, ext4, f2fs and vfat.
     pub fsck: Option<bool>,
-    /// Whether the filesystem is mounted at boot. Default `true`.
-    pub auto: bool,
-}
-
-impl Default for Fs {
-    fn default() -> Self {
-        Self {
-            device: None,
-            fstype: String::new(),
-            options: Vec::new(),
-            fsck: None,
-            auto: true,
-        }
-    }
 }
 
 /// A LUKS device unlocked in the initramfs.

@@ -359,3 +359,59 @@ fn writing_the_tree_keeps_modes_and_links_store_files() {
     );
     assert!(tree.write(&generation).is_err(), "nothing is overwritten");
 }
+
+#[test]
+fn identity_values_that_would_corrupt_their_files_are_rejected() {
+    let env = Env::new();
+    type Change = fn(&mut EtcConfig);
+    let cases: [(&str, Change); 9] = [
+        ("hostname", |c| c.hostname = "forge\n10.0.0.1 bank".into()),
+        ("hostname", |c| c.hostname = "-forge".into()),
+        ("hostname", |c| c.hostname = String::new()),
+        ("timezone", |c| c.timezone = "../../../etc/shadow".into()),
+        ("timezone", |c| c.timezone = "/etc/shadow".into()),
+        ("locale", |c| c.locale = "C.UTF-8\nLC_ALL=x".into()),
+        ("keymap", |c| c.keymap = Some("us\nFONT=x".into())),
+        ("keymap", |c| c.keymap = Some("..".into())),
+        ("console_font", |c| c.console_font = Some("a b".into())),
+    ];
+    for (field, change) in cases {
+        let mut config = base();
+        change(&mut config);
+        let err = render_config(&env, &config, &[]).expect_err(field);
+        match err {
+            Error::Config(errors) => assert!(
+                errors.iter().any(
+                    |e| matches!(e, ConfigError::InvalidValue { context, .. } if context == field)
+                ),
+                "{field}: {errors:?}"
+            ),
+            other => panic!("{field}: {other}"),
+        }
+    }
+    let mut config = base();
+    config.hostname = "build-01.example.org".into();
+    config.timezone = "America/Argentina/Buenos_Aires".into();
+    config.locale = "sr_RS.UTF-8@latin".into();
+    config.keymap = Some("de-latin1-nodeadkeys".into());
+    config.console_font = Some("Lat2-Terminus16".into());
+    render_config(&env, &config, &[]).expect("renders");
+}
+
+#[test]
+fn generated_entries_must_have_plain_paths_below_etc() {
+    let env = Env::new();
+    let config = base();
+    for path in ["../escape", "/abs", "sv//x", "static/x"] {
+        let generated = BTreeMap::from([(path.to_owned(), text("x\n".into()))]);
+        let err = render(
+            &config,
+            &declared(&config),
+            &env.root.store(),
+            &[],
+            &generated,
+        )
+        .expect_err(path);
+        assert!(matches!(err, Error::Config(_)), "{path}: {err}");
+    }
+}

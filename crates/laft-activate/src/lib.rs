@@ -57,8 +57,8 @@ pub use accounts::{
 pub use assemble::{Assembled, Assembly, assemble, recover};
 pub use boot::{BootActivation, activate_boot};
 pub use config::{
-    Boot, BootConfig, EtcConfig, File, Fs, Group, Initrd, Kernel, Luks, Microcode, Privileged,
-    Security, User, Users,
+    Boot, BootConfig, EtcConfig, File, Fs, Group, Initrd, Kernel, Loader, Luks, Microcode,
+    Privileged, Security, User, Users,
 };
 pub use error::{ConfigError, Conflict, ConflictKind, Error, Result, Warning};
 pub use esp::{BootInstall, check_esp, install_boot};

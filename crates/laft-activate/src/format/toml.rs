@@ -94,6 +94,11 @@ fn inline(value: &Value) -> Result<String, String> {
     Ok(match value {
         Value::Null => return Err("TOML cannot represent a null inside a list".into()),
         Value::Bool(b) => b.to_string(),
+        Value::Number(n) if n.is_u64() && n.as_i64().is_none() => {
+            return Err(format!(
+                "TOML integers are signed 64 bit numbers, so {n} is out of range"
+            ));
+        }
         Value::Number(n) => n.to_string(),
         Value::String(s) => quote(s),
         Value::Array(items) => {

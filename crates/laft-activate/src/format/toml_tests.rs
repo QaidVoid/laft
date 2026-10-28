@@ -42,3 +42,11 @@ fn lists_cannot_mix_tables_with_other_values() {
     assert!(render(&json!({ "a": [[{ "b": 1 }, 2]] })).is_err());
     assert!(render(&json!({ "a": [1, null] })).is_err());
 }
+
+#[test]
+fn integers_beyond_the_signed_64_bit_range_are_refused() {
+    let err = render(&json!({ "big": 18_446_744_073_709_551_615_u64 })).unwrap_err();
+    assert!(err.contains("18446744073709551615"), "{err}");
+    let edge = render(&json!({ "max": i64::MAX, "min": i64::MIN })).expect("renders");
+    assert!(edge.contains(&i64::MAX.to_string()), "{edge}");
+}

@@ -34,3 +34,20 @@ fn a_misspelled_luks_option_is_rejected_when_the_configuration_is_read() {
         "{err}"
     );
 }
+
+#[test]
+fn only_the_limine_loader_is_accepted() {
+    let config: BootConfig =
+        serde_json::from_str(r#"{"boot": {"loader": "limine"}}"#).expect("limine is known");
+    assert_eq!(config.boot.loader, super::Loader::Limine);
+    let err = serde_json::from_str::<BootConfig>(r#"{"boot": {"loader": "grub"}}"#).unwrap_err();
+    assert!(err.to_string().contains("grub"), "{err}");
+}
+
+#[test]
+fn file_systems_have_no_auto_setting_and_users_no_unknown_keys() {
+    let fs = r#"{"fs": {"/": {"fstype": "ext4", "auto": false}}}"#;
+    assert!(serde_json::from_str::<BootConfig>(fs).is_err());
+    let users = r#"{"users": {"mutabel": false}}"#;
+    assert!(serde_json::from_str::<super::EtcConfig>(users).is_err());
+}
