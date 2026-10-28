@@ -278,3 +278,13 @@ proptest! {
         let _ = Manifest::from_json(&bytes);
     }
 }
+
+#[test]
+fn architectures_parse_from_their_text_form() {
+    for arch in [Arch::X86_64V3, Arch::Any] {
+        assert_eq!(arch.as_str().parse::<Arch>(), Ok(arch));
+    }
+    for text in ["", "aarch64", "x86_64", "ANY", "x86_64-v3 "] {
+        assert!(text.parse::<Arch>().is_err(), "{text:?}");
+    }
+}

@@ -1,8 +1,10 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::str::FromStr;
 
 use laft_core::{
-    Blake3Hash, Name, StoreId, Variant, Version, system_gid, system_uid, to_canonical_json,
+    Blake3Hash, Name, ParseError, StoreId, Variant, Version, system_gid, system_uid,
+    to_canonical_json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +44,23 @@ impl Arch {
 impl fmt::Display for Arch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Arch {
+    type Err = ParseError;
+
+    /// Parses the form [`Arch::as_str`] writes.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "x86_64-v3" => Ok(Self::X86_64V3),
+            "any" => Ok(Self::Any),
+            _ => Err(ParseError::new(
+                "architecture",
+                s,
+                "expected `x86_64-v3` or `any`",
+            )),
+        }
     }
 }
 

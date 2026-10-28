@@ -13,7 +13,9 @@ pub struct ParseError {
 }
 
 impl ParseError {
-    pub(crate) fn new(what: &'static str, input: &str, reason: &'static str) -> Self {
+    /// The error for `input`, which was parsed as a `what`, for example
+    /// `architecture`, and rejected because of `reason`.
+    pub fn new(what: &'static str, input: &str, reason: &'static str) -> Self {
         Self {
             what,
             input: input.to_owned(),
