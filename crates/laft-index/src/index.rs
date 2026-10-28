@@ -261,6 +261,11 @@ impl Index {
     /// # Errors
     ///
     /// Fails when the index is not valid.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a valid index held an integer above 2^53, which
+    /// [`Self::validate`] rules out.
     pub fn to_json(&self) -> Result<Vec<u8>, Error> {
         self.validate()?;
         Ok(laft_core::to_canonical_json(self)
@@ -284,6 +289,12 @@ impl Index {
     /// # Errors
     ///
     /// Fails when the index is not valid.
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`Self::to_json`] does, or if zstd rejects the fixed
+    /// compression level or fails to compress into memory, which it does
+    /// only when it cannot allocate.
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
         let json = self.to_json()?;
         let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), LEVEL)

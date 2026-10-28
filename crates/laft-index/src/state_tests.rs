@@ -667,3 +667,25 @@ fn corrupt_record_is_an_error_rather_than_a_first_sync() {
         |k| matches!(k, ErrorKind::CorruptState { .. }),
     );
 }
+
+#[test]
+fn record_beyond_canonical_json_is_an_error_rather_than_a_panic() {
+    let mut client = Client::new();
+    let trust = client.direct();
+    client.repo.channel = "testing".parse().expect("valid name");
+    let mut testing = index(T0);
+    testing.channel = client.repo.channel.clone();
+    client
+        .accept(&trust, &client.root.sign_index(&testing))
+        .expect("testing index");
+    let path = client.state.dir.join("core.json");
+    let text = fs::read_to_string(&path).expect("readable");
+    let huge = (1u64 << 60).to_string();
+    fs::write(&path, text.replace(&T0.to_string(), &huge)).expect("tampered");
+
+    client.repo.channel = "current".parse().expect("valid name");
+    assert_kind(
+        client.accept(&trust, &client.root.sign_index(&index(T0))),
+        |k| matches!(k, ErrorKind::CorruptState { .. }),
+    );
+}

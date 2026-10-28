@@ -535,8 +535,9 @@ impl IndexState {
     /// renamed into place, then the directory is synced.
     fn write_record<T: Serialize>(&self, path: &Path, record: &T) -> Result<(), Error> {
         self.ensure_dir()?;
-        let bytes = laft_core::to_canonical_json(record)
-            .expect("records hold no integer above 2^53, so they are canonical JSON");
+        // A record read back from a tampered file can hold an integer that
+        // canonical JSON cannot represent.
+        let bytes = laft_core::to_canonical_json(record).map_err(|e| corrupt(path, e))?;
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
         let tmp = self.dir.join(format!(".{}.tmp", name.unwrap_or_default()));
         remove(&tmp)?;

@@ -127,6 +127,11 @@ impl Keys {
     /// # Errors
     ///
     /// Fails when the document is not valid.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a valid document held an integer above 2^53, which
+    /// [`Self::validate`] rules out.
     pub fn to_json(&self) -> Result<Vec<u8>, Error> {
         self.validate()?;
         Ok(laft_core::to_canonical_json(self)
