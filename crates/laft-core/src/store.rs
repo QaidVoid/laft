@@ -26,8 +26,9 @@ impl StoreId {
     /// `<id>-<name>-<version>`, plus `+<variant>` for variants other than
     /// dynamic.
     ///
-    /// Only the id identifies the entry. The rest is for people reading
-    /// directory listings, and tools must never parse it back.
+    /// The name carries the upstream version only, not the revision. Only the
+    /// id identifies the entry. The rest is for people reading directory
+    /// listings, and tools must never parse it back.
     pub fn dir_name(&self, name: &Name, version: &Version, variant: Variant) -> String {
         match variant {
             Variant::Dynamic => format!("{self}-{name}-{version}"),

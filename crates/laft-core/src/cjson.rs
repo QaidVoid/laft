@@ -4,19 +4,16 @@ use std::fmt::Write as _;
 use serde::Serialize;
 use serde_json::{Number, Value};
 
-/// The largest integer magnitude that survives a round trip through an IEEE
-/// 754 double, `2^53 - 1`.
-const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
-
 /// Why a value could not be serialized as canonical JSON.
 #[derive(Debug)]
 pub enum CanonicalJsonError {
     /// The value could not be represented as JSON at all, for example a map
     /// with non-string keys.
     Serialize(serde_json::Error),
-    /// An integer outside `-(2^53 - 1)..=2^53 - 1`. Canonical JSON numbers are
-    /// doubles, so such an integer would be rounded, and two different values
-    /// could serialize to the same bytes.
+    /// An integer whose digits are not the canonical form of any double, such
+    /// as `2^53 + 1`. Canonical JSON numbers are doubles, so such an integer
+    /// would be rounded, and two different values could serialize to the same
+    /// bytes.
     UnsafeInteger(Number),
 }
 
@@ -24,10 +21,9 @@ impl fmt::Display for CanonicalJsonError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Serialize(e) => write!(f, "cannot serialize as JSON: {e}"),
-            Self::UnsafeInteger(n) => write!(
-                f,
-                "integer {n} is outside the range a double represents exactly"
-            ),
+            Self::UnsafeInteger(n) => {
+                write!(f, "integer {n} cannot be represented exactly as a double")
+            }
         }
     }
 }
@@ -57,10 +53,16 @@ impl std::error::Error for CanonicalJsonError {
 /// # Ok::<(), laft_core::CanonicalJsonError>(())
 /// ```
 ///
+/// An integer is accepted when its digits are exactly how some double is
+/// written, so the output of this function always canonicalizes to itself
+/// again. Non-finite floats
+/// have no JSON form: serde turns NaN and infinities into `null` before this
+/// function sees them, so callers that hash floats must keep them finite.
+///
 /// # Errors
 ///
 /// Fails when the value cannot be represented as JSON, or contains an integer
-/// whose magnitude exceeds `2^53 - 1`.
+/// whose digits are not the canonical form of a double.
 pub fn to_canonical_json<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, CanonicalJsonError> {
     let value = serde_json::to_value(value).map_err(CanonicalJsonError::Serialize)?;
     let mut out = String::new();
@@ -103,22 +105,30 @@ fn write_value(value: &Value, out: &mut String) -> Result<(), CanonicalJsonError
 }
 
 fn write_number(n: &Number, out: &mut String) -> Result<(), CanonicalJsonError> {
-    if let Some(i) = n.as_i64() {
-        if i.unsigned_abs() > MAX_SAFE_INTEGER {
-            return Err(CanonicalJsonError::UnsafeInteger(n.clone()));
+    let integer = n
+        .as_i64()
+        .map(i128::from)
+        .or_else(|| n.as_u64().map(i128::from));
+    if let Some(i) = integer {
+        let text = i.to_string();
+        if i.unsigned_abs() > 1 << 53 {
+            let mut as_double = String::new();
+            write_double(i as f64, &mut as_double);
+            if as_double != text {
+                return Err(CanonicalJsonError::UnsafeInteger(n.clone()));
+            }
         }
-        // Writing to a String cannot fail.
-        let _ = write!(out, "{i}");
-    } else if n.is_u64() {
-        return Err(CanonicalJsonError::UnsafeInteger(n.clone()));
+        out.push_str(&text);
     } else if let Some(f) = n.as_f64() {
         write_double(f, out);
     }
     Ok(())
 }
 
-/// Writes a finite double the way ECMAScript's `Number.prototype.toString`
-/// does, which is the number format canonical JSON requires.
+/// Writes a double in the number format canonical JSON requires, which is
+/// ECMAScript's `Number.prototype.toString`.
+///
+/// `f` must be finite. JSON values never hold anything else.
 fn write_double(f: f64, out: &mut String) {
     if f == 0.0 {
         out.push('0');
@@ -169,6 +179,10 @@ fn write_double(f: f64, out: &mut String) {
 /// decimal expansion of `x` is the `k` shortest digits plus one more digit,
 /// `5`.
 fn prefer_even_on_tie(x: f64, digits: String, exponent: i32) -> String {
+    // Ties are resolved upward, so only an odd last digit can be wrong.
+    if digits.as_bytes().last().is_none_or(|d| d % 2 == 0) {
+        return digits;
+    }
     // 800 fractional digits exceed the longest exact expansion of any double,
     // so this prints `x` exactly.
     let exact = format!("{x:.800e}");

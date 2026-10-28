@@ -3,8 +3,8 @@ use std::fmt;
 /// An identifier or text form that failed to parse.
 ///
 /// The message names what was being parsed, quotes the input and says what is
-/// wrong with it, for example `invalid package name "Foo": uppercase letters are
-/// not allowed`.
+/// wrong with it, for example `invalid package name "gtk+3": only lowercase
+/// letters, digits, `-`, `_` and `.` are allowed`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
     what: &'static str,

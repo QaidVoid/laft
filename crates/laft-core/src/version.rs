@@ -273,10 +273,13 @@ impl<'a> Iterator for Tokens<'a> {
         } else if first.is_ascii_digit() {
             self.rest.bytes().take_while(u8::is_ascii_digit).count()
         } else {
+            // At least one byte, so a byte outside the version alphabet cannot
+            // stall the iterator.
             self.rest
                 .bytes()
                 .take_while(u8::is_ascii_alphabetic)
                 .count()
+                .max(1)
         };
         let (token, rest) = self.rest.split_at(len);
         self.rest = rest;

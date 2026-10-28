@@ -1,3 +1,4 @@
+use proptest::prelude::*;
 use serde_json::json;
 
 use super::*;
@@ -90,15 +91,18 @@ fn doubles_use_ecmascript_number_formatting() {
 }
 
 #[test]
-fn integers_beyond_double_precision_are_rejected() {
-    assert_eq!(canonical(&json!(9007199254740991_i64)), "9007199254740991");
-    assert_eq!(
-        canonical(&json!(-9007199254740991_i64)),
-        "-9007199254740991"
-    );
+fn integers_must_be_the_canonical_form_of_a_double() {
+    for exact in [
+        9007199254740991_i64,
+        9007199254740992,
+        -9007199254740992,
+        -4796566914205686000,
+    ] {
+        assert_eq!(canonical(&json!(exact)), exact.to_string());
+    }
     for unsafe_value in [
-        json!(9007199254740992_i64),
-        json!(-9007199254740992_i64),
+        json!(9007199254740993_i64),
+        json!(-9007199254740993_i64),
         json!(u64::MAX),
     ] {
         assert!(matches!(
@@ -114,4 +118,29 @@ fn control_characters_use_short_escapes_or_lowercase_hex() {
         canonical(&json!("\u{8}\t\n\u{c}\r\u{1}\u{1f}\u{7f}")),
         "\"\\b\\t\\n\\f\\r\\u0001\\u001f\u{7f}\""
     );
+}
+
+#[test]
+fn large_doubles_canonicalize_to_themselves() {
+    for value in [
+        json!(9007199254740992.0),
+        json!(1e18),
+        json!(-4.796566914205686e18),
+    ] {
+        let once = canonical(&value);
+        let reparsed: Value = serde_json::from_str(&once).expect("canonical output is valid JSON");
+        assert_eq!(canonical(&reparsed), once);
+    }
+}
+
+proptest! {
+    #[test]
+    fn canonical_output_is_a_fixed_point(f in any::<f64>().prop_filter("finite", |f| f.is_finite()), i in any::<i64>()) {
+        for value in [json!(f), json!({ "f": f, "list": [f, f / 3.0] }), json!(i)] {
+            let Ok(once) = to_canonical_json(&value) else { continue };
+            let reparsed: Value = serde_json::from_slice(&once).expect("canonical output is valid JSON");
+            let twice = to_canonical_json(&reparsed).expect("canonical output canonicalizes again");
+            prop_assert_eq!(&twice, &once);
+        }
+    }
 }
