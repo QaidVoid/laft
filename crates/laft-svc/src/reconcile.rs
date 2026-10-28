@@ -76,6 +76,13 @@ pub struct Plan {
 /// policy. Stops happen in reverse dependency order of the old generation,
 /// starts in dependency order of the new one.
 ///
+/// Services of the early boot graph are never stopped or started, because
+/// no supervisor runs them: stage 1 starts them in a fixed order at boot.
+/// The one change applied live is the rerun of a changed early oneshot,
+/// whose `down` and `up` commands the launcher runs directly. Every other
+/// change that would stop or start an early service is listed in
+/// [`Plan::reboot`] instead.
+///
 /// ```
 /// use laft_svc::{ServiceConfig, ServiceSet, reconcile, runit, standard_services};
 ///
@@ -111,28 +118,29 @@ pub fn plan(old: &BTreeMap<String, Unit>, new: &BTreeMap<String, Unit>) -> Plan 
         let oneshot = new
             .get(name)
             .is_some_and(|u| u.spec.kind == ServiceKind::Oneshot);
+        let early = [old.get(name), new.get(name)]
+            .into_iter()
+            .flatten()
+            .any(|u| u.spec.early);
         match class {
+            Class::Changed(OnChange::Ignore) | Class::Unchanged => {}
+            Class::Changed(OnChange::Reboot) => plan.reboot.push(name.clone()),
+            Class::Changed(OnChange::Rerun) if oneshot => {
+                start.insert(name.as_str(), Start::Rerun(name.clone()));
+            }
+            Class::Restructured
+                if new[name].spec.early && new[name].spec.on_change == OnChange::Ignore => {}
+            _ if early => plan.reboot.push(name.clone()),
             Class::Added => {
                 start.insert(name.as_str(), Start::Start(name.clone()));
             }
             Class::Removed => {
                 stop.insert(name.as_str());
             }
-            Class::Restructured
-                if new[name].spec.early && new[name].spec.on_change == OnChange::Ignore => {}
-            Class::Restructured | Class::Changed(OnChange::Restart) => {
+            Class::Restructured | Class::Changed(OnChange::Restart | OnChange::Rerun) => {
                 stop.insert(name.as_str());
                 start.insert(name.as_str(), Start::Start(name.clone()));
             }
-            Class::Changed(OnChange::Rerun) if oneshot => {
-                start.insert(name.as_str(), Start::Rerun(name.clone()));
-            }
-            Class::Changed(OnChange::Rerun) => {
-                stop.insert(name.as_str());
-                start.insert(name.as_str(), Start::Start(name.clone()));
-            }
-            Class::Changed(OnChange::Reboot) => plan.reboot.push(name.clone()),
-            Class::Changed(OnChange::Ignore) | Class::Unchanged => {}
         }
         plan.classes.insert(name.clone(), class);
     }

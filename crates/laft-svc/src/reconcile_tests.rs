@@ -137,3 +137,26 @@ fn restructured_early_service_that_ignores_changes_is_only_redefined() {
     assert!(plan.stop.is_empty() && plan.start.is_empty());
     assert!(plan.add.is_empty() && plan.remove.is_empty());
 }
+
+#[test]
+fn a_changed_early_longrun_waits_for_a_reboot() {
+    let mut new = example();
+    let udevd = new.services.get_mut("udevd").expect("standard");
+    udevd.env.insert("UDEV_LOG".into(), "debug".into());
+    let plan = reconcile(&example(), &new);
+    assert_eq!(plan.classes["udevd"], Class::Changed(OnChange::Restart));
+    assert!(plan.stop.is_empty() && plan.start.is_empty() && plan.wait.is_empty());
+    assert_eq!(plan.reboot, ["udevd"]);
+}
+
+#[test]
+fn a_removed_early_oneshot_waits_for_a_reboot() {
+    let mut new = example();
+    new.services.get_mut("swap").expect("standard").enable = false;
+    let early = new.services.get_mut("early").expect("standard");
+    early.after.retain(|dep| dep != "swap");
+    let plan = reconcile(&example(), &new);
+    assert_eq!(plan.classes["swap"], Class::Removed);
+    assert!(plan.stop.is_empty() && plan.start.is_empty());
+    assert_eq!(plan.reboot, ["swap"]);
+}
