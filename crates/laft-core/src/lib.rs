@@ -2,8 +2,9 @@
 //!
 //! Package names, versions, variants, package references, dependencies,
 //! hashes, store identifiers, timestamps, the static system accounts,
-//! canonical JSON, file capabilities and the trigger table live here, so
-//! that every tool parses and prints them the same way.
+//! canonical JSON, file capabilities, the trigger table and the LUKS options
+//! of the boot live here, so that every tool parses and prints them the same
+//! way.
 
 #![forbid(unsafe_code)]
 
@@ -14,6 +15,7 @@ mod cjson;
 mod dep;
 mod error;
 mod hash;
+mod luks;
 mod name;
 mod pkgref;
 mod store;
@@ -29,6 +31,7 @@ pub use cjson::{CanonicalJsonError, to_canonical_json};
 pub use dep::{Constraint, Constraints, Dep, Op, PcName, Provide, Soname, VersionReq};
 pub use error::ParseError;
 pub use hash::{Blake3Hash, Sha256Hash};
+pub use luks::LuksOption;
 pub use name::Name;
 pub use pkgref::PkgRef;
 pub use store::{STORE_DIR, StoreId};

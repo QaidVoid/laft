@@ -1,4 +1,6 @@
-use super::{Config, Filesystem, Luks, LuksOption};
+use laft_core::LuksOption;
+
+use super::{Config, Filesystem, Luks};
 
 const EXAMPLE: &str = r#"{
   "esp": {"device": "UUID=4A2B-91C0", "options": "", "type": "vfat"},

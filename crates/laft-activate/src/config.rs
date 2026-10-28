@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use laft_core::LuksOption;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -331,9 +332,9 @@ impl Default for Fs {
 pub struct Luks {
     /// The encrypted device, `UUID=...` or `/dev/...`.
     pub device: String,
-    /// Options for the unlocked device: `discard`, `no-read-workqueue` and
-    /// `no-write-workqueue`.
-    pub options: BTreeSet<String>,
+    /// Options for the unlocked device. An unknown option fails reading the
+    /// configuration, because the initramfs would refuse it at boot.
+    pub options: BTreeSet<LuksOption>,
 }
 
 /// The security settings, the `security` field of the system
@@ -375,3 +376,7 @@ impl Default for Privileged {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;

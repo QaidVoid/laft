@@ -12,7 +12,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use laft_core::{Blake3Hash, StoreId};
+use laft_core::{Blake3Hash, LuksOption, StoreId};
 use laft_store::{Generation, Store};
 use serde::{Deserialize, Serialize};
 
@@ -315,7 +315,7 @@ pub(crate) fn build(inputs: &Inputs<'_>) -> Result<BootRecord> {
             .map(|(name, luks)| LuksJson {
                 device: luks.device.clone(),
                 name: name.clone(),
-                options: luks.options.iter().cloned().collect(),
+                options: luks.options.iter().copied().collect(),
             })
             .collect(),
         modules: module_paths,
@@ -622,7 +622,7 @@ struct FsJson {
 struct LuksJson {
     device: String,
     name: String,
-    options: Vec<String>,
+    options: Vec<LuksOption>,
 }
 
 /// The filesystem mounted at `mountpoint` as `laft-boot` mounts it.

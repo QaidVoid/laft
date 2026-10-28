@@ -3,6 +3,7 @@
 //! It holds nothing specific to one generation, so generations with the same
 //! boot configuration share one initramfs.
 
+use laft_core::LuksOption;
 use serde::Deserialize;
 
 use crate::device::DeviceSpec;
@@ -65,18 +66,6 @@ pub(crate) struct Luks {
     pub(crate) name: String,
     /// The options for the unlocked device.
     pub(crate) options: Vec<LuksOption>,
-}
-
-/// An option for an unlocked LUKS device.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum LuksOption {
-    /// Pass discard requests to the encrypted device.
-    Discard,
-    /// Decrypt reads synchronously, without the read workqueue.
-    NoReadWorkqueue,
-    /// Encrypt writes synchronously, without the write workqueue.
-    NoWriteWorkqueue,
 }
 
 #[derive(Deserialize)]

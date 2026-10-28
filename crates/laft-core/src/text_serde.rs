@@ -1,6 +1,8 @@
 //! Serde support for identifiers, which serialize as their text form.
 
-use crate::{Blake3Hash, Dep, Name, Provide, Soname, StoreId, Timestamp, Variant, Version};
+use crate::{
+    Blake3Hash, Dep, LuksOption, Name, Provide, Soname, StoreId, Timestamp, Variant, Version,
+};
 
 /// Implements `serde::Serialize` and `serde::Deserialize` for each listed
 /// type through its text form: serializing writes its `Display` output as a
@@ -61,7 +63,7 @@ macro_rules! impl_serde_as_text {
 }
 
 crate::impl_serde_as_text!(
-    Blake3Hash, Dep, Name, Provide, Soname, StoreId, Timestamp, Variant, Version
+    Blake3Hash, Dep, LuksOption, Name, Provide, Soname, StoreId, Timestamp, Variant, Version
 );
 
 #[cfg(test)]

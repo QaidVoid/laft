@@ -1,7 +1,9 @@
 use std::path::Path;
 
+use laft_core::LuksOption;
+
 use super::{FsckOutcome, cryptsetup_args, fsck_outcome};
-use crate::config::{Luks, LuksOption};
+use crate::config::Luks;
 
 #[test]
 fn cryptsetup_opens_the_device_with_its_options() {

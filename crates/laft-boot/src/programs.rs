@@ -4,7 +4,9 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::config::{Luks, LuksOption};
+use laft_core::LuksOption;
+
+use crate::config::Luks;
 
 /// The static `cryptsetup` in the initramfs.
 pub(crate) const CRYPTSETUP: &str = "/usr/bin/cryptsetup";
