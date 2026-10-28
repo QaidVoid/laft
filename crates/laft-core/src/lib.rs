@@ -1,22 +1,27 @@
 //! Identifiers and formats shared by every Laft component.
 //!
-//! Package names, versions, variants, package references, hashes, store
-//! identifiers and canonical JSON live here, so that every tool parses and
-//! prints them the same way.
+//! Package names, versions, variants, package references, dependencies,
+//! hashes, store identifiers, the static system accounts and canonical JSON
+//! live here, so that every tool parses and prints them the same way.
 
 #![forbid(unsafe_code)]
 
+mod account;
 mod base32;
 mod cjson;
+mod dep;
 mod error;
 mod hash;
 mod name;
 mod pkgref;
 mod store;
+mod text_serde;
 mod variant;
 mod version;
 
+pub use account::{system_gid, system_uid};
 pub use cjson::{CanonicalJsonError, to_canonical_json};
+pub use dep::{Constraint, Dep, Op, PcName, Provide, Soname, VersionReq};
 pub use error::ParseError;
 pub use hash::{Blake3Hash, Sha256Hash};
 pub use name::Name;
