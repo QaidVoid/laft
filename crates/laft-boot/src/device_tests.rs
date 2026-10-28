@@ -3,6 +3,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::{DeviceSpec, Devices};
+use crate::config::Config;
 use crate::probe::PROBE_LEN;
 
 fn spec(text: &str) -> DeviceSpec {
@@ -117,4 +118,76 @@ fn kernel_names_must_be_block_devices() {
     let devices = Devices::new(tmp.path().join("sys"), tmp.path().join("dev"));
     assert_eq!(devices.find(&spec("/dev/sda1")), None);
     assert_eq!(devices.find(&spec("/dev/mapper/cryptroot")), None);
+}
+
+#[test]
+fn each_luks_device_is_found_through_its_own_spec() {
+    let tmp = tempfile::tempdir().unwrap();
+    announce(tmp.path(), "vda1", 4096, &xfs([0x11; 16]));
+    announce(tmp.path(), "vdb1", 4096, &xfs([0x22; 16]));
+    announce(tmp.path(), "vdc1", 4096, &xfs([0x33; 16]));
+    let config = Config::parse(
+        br#"{
+          "esp": {"device": "UUID=4A2B-91C0", "options": "", "type": "vfat"},
+          "laft": {"device": "/dev/mapper/cryptlaft", "options": "", "type": "ext4"},
+          "luks": [
+            {"device": "UUID=33333333-3333-3333-3333-333333333333", "name": "cryptlaft", "options": []},
+            {"device": "UUID=22222222-2222-2222-2222-222222222222", "name": "cryptswap", "options": []}
+          ],
+          "modules": [],
+          "release": "6.17.5-laft1",
+          "root": {"device": "UUID=11111111-1111-1111-1111-111111111111", "options": "", "type": "xfs"},
+          "root_wait_secs": 0,
+          "shell": true,
+          "tries": 3,
+          "version": 1
+        }"#,
+        "6.17.5-laft1",
+    )
+    .expect("valid configuration");
+    let mut devices = Devices::new(tmp.path().join("sys"), tmp.path().join("dev"));
+    let found = devices
+        .wait_for_unlock(&config, Duration::ZERO, Duration::ZERO)
+        .expect("every device is present");
+    let pairs: Vec<_> = found
+        .iter()
+        .map(|(luks, node)| (luks.name.as_str(), node.clone()))
+        .collect();
+    assert_eq!(
+        pairs,
+        [
+            ("cryptlaft", tmp.path().join("dev/vdc1")),
+            ("cryptswap", tmp.path().join("dev/vdb1")),
+        ]
+    );
+}
+
+#[test]
+fn unlocking_waits_for_the_root_too() {
+    let tmp = tempfile::tempdir().unwrap();
+    announce(tmp.path(), "vdb1", 4096, &xfs([0x22; 16]));
+    let config = Config::parse(
+        br#"{
+          "esp": {"device": "UUID=4A2B-91C0", "options": "", "type": "vfat"},
+          "laft": null,
+          "luks": [{"device": "UUID=22222222-2222-2222-2222-222222222222", "name": "cryptswap", "options": []}],
+          "modules": [],
+          "release": "6.17.5-laft1",
+          "root": {"device": "UUID=11111111-1111-1111-1111-111111111111", "options": "", "type": "xfs"},
+          "root_wait_secs": 0,
+          "shell": true,
+          "tries": 3,
+          "version": 1
+        }"#,
+        "6.17.5-laft1",
+    )
+    .expect("valid configuration");
+    let mut devices = Devices::new(tmp.path().join("sys"), tmp.path().join("dev"));
+    let err = devices
+        .wait_for_unlock(&config, Duration::ZERO, Duration::ZERO)
+        .unwrap_err();
+    assert!(
+        err.starts_with("timed out after 0s waiting for UUID=11111111-1111-1111-1111-111111111111"),
+        "{err}"
+    );
 }

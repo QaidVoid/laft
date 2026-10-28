@@ -168,22 +168,8 @@ impl Boot {
     /// Waits for the boot devices and unlocks every LUKS device that is not
     /// unlocked yet.
     fn unlock(&mut self, config: &Config) -> Result<(), String> {
-        let mut specs = Vec::new();
-        for luks in &config.luks {
-            specs.push(DeviceSpec::parse(&luks.device)?);
-        }
-        for fs in [Some(&config.root), config.laft.as_ref()]
-            .into_iter()
-            .flatten()
-        {
-            match DeviceSpec::parse(&fs.device)? {
-                DeviceSpec::Mapper(_) => {}
-                spec => specs.push(spec),
-            }
-        }
         let timeout = self.root_wait(config);
-        let found = self.devices.wait(&specs, timeout, POLL)?;
-        for (luks, device) in config.luks.iter().zip(found) {
+        for (luks, device) in self.devices.wait_for_unlock(config, timeout, POLL)? {
             let mapper = DeviceSpec::Mapper(luks.name.clone());
             if self.devices.find(&mapper).is_some() {
                 continue;
