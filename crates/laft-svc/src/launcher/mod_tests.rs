@@ -173,6 +173,32 @@ fn oneshot_runs_with_its_environment_umask_and_working_directory() {
 }
 
 #[test]
+fn a_oneshot_gets_its_limits_and_the_launcher_keeps_its_own() {
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+    let fixture = Fixture::new();
+    let original = getrlimit(Resource::Nofile);
+    let Some(hard) = original.maximum.filter(|&hard| hard > 64) else {
+        println!("skipping: the open file limit is unlimited or too small");
+        return;
+    };
+    let launcher_limit = Rlimit {
+        current: Some(hard - 1),
+        maximum: Some(hard),
+    };
+    setrlimit(Resource::Nofile, launcher_limit).expect("lowers the soft limit");
+    let out = fixture.path("out");
+    let mut spec = fixture.oneshot("job", &format!("ulimit -n > {}", out.display()), &[], false);
+    spec.limits.nofile = Some(hard);
+    fixture.install(&spec);
+    let code = fixture.launcher.up("job");
+    let after = getrlimit(Resource::Nofile);
+    setrlimit(Resource::Nofile, original).expect("restores the test's limit");
+    assert_eq!(code.expect("runs"), 0);
+    assert_eq!(read(&out), format!("{hard}\n"));
+    assert_eq!(after, launcher_limit);
+}
+
+#[test]
 fn early_failure_is_recorded_and_dependents_skip() {
     let fixture = Fixture::new();
     let flag = fixture.path("swap-ran");

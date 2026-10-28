@@ -62,10 +62,14 @@ pub(crate) fn ensure_dir(
     Ok(())
 }
 
+/// The limits a process had before [`apply_limits`] changed them.
+pub(crate) type SavedLimits = Vec<(Resource, Rlimit)>;
+
 /// Applies the service's resource limits to the current process, each as
-/// soft and hard limit.
-pub(crate) fn apply_limits(spec: &Spec) -> Result<(), Error> {
+/// soft and hard limit, and returns the limits they replaced.
+pub(crate) fn apply_limits(spec: &Spec) -> Result<SavedLimits, Error> {
     let limits = &spec.limits;
+    let mut saved = Vec::new();
     for (resource, value) in [
         (Resource::Nofile, limits.nofile),
         (Resource::Nproc, limits.nproc),
@@ -77,12 +81,27 @@ pub(crate) fn apply_limits(spec: &Spec) -> Result<(), Error> {
                 current: Some(value),
                 maximum: Some(value),
             };
+            let previous = rustix::process::getrlimit(resource);
             rustix::process::setrlimit(resource, limit).map_err(|e| Error::Setup {
                 name: spec.name.clone(),
                 step: "set a resource limit",
                 source: e.into(),
             })?;
+            saved.push((resource, previous));
         }
+    }
+    Ok(saved)
+}
+
+/// Puts back the limits that [`apply_limits`] replaced. Raising a hard
+/// limit again needs `CAP_SYS_RESOURCE`, which the launcher has as root.
+pub(crate) fn restore_limits(name: &str, saved: SavedLimits) -> Result<(), Error> {
+    for (resource, limit) in saved.into_iter().rev() {
+        rustix::process::setrlimit(resource, limit).map_err(|e| Error::Setup {
+            name: name.to_owned(),
+            step: "restore a resource limit",
+            source: e.into(),
+        })?;
     }
     Ok(())
 }

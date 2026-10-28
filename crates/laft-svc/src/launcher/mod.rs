@@ -34,7 +34,8 @@ use rustix::process::{Pid, PidfdFlags, Signal};
 
 use self::accounts::{Accounts, Credentials};
 use self::process::{
-    apply_limits, command, drop_privileges, ensure_dir, place_fd, spawn_as, write_atomic,
+    apply_limits, command, drop_privileges, ensure_dir, place_fd, restore_limits, spawn_as,
+    write_atomic,
 };
 use crate::error::{Error, corrupt, io};
 use crate::spec::{Spec, SpecLog, SpecReady};
@@ -538,21 +539,24 @@ impl Launcher {
     /// Runs `argv` for the service in a child process with the service's
     /// accounts, directories, limits, umask, environment and working
     /// directory, and returns its exit status, or 128 plus the signal that
-    /// killed it.
+    /// killed it. The limits and the umask are set for the start only, and
+    /// the launcher's own are restored right after it.
     fn run(&self, spec: &Spec, argv: &[String]) -> Result<i32, Error> {
         let argv = self.argv(spec, argv)?;
         let accounts = Accounts::read(&self.root)?;
         let credentials = accounts.credentials(spec)?;
         self.prepare_dirs(spec, &accounts, &credentials)?;
-        apply_limits(spec)?;
+        let limits = apply_limits(spec)?;
         let umask = rustix::process::umask(rustix::fs::Mode::from_raw_mode(spec.umask));
         let child = spawn_as(&spec.name, &credentials, command(spec, &credentials, argv));
         rustix::process::umask(umask);
+        let restored = restore_limits(&spec.name, limits);
         let status = child?.wait().map_err(|source| Error::Exec {
             name: spec.name.clone(),
             program: argv[0].clone(),
             source,
         })?;
+        restored?;
         Ok(exit_code(status))
     }
 
