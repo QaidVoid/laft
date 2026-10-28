@@ -10,10 +10,9 @@ pub enum CanonicalJsonError {
     /// The value could not be represented as JSON at all, for example a map
     /// with non-string keys.
     Serialize(serde_json::Error),
-    /// An integer whose digits are not the canonical form of any double, such
-    /// as `2^53 + 1`. Canonical JSON numbers are doubles, so such an integer
-    /// would be rounded, and two different values could serialize to the same
-    /// bytes.
+    /// An integer whose digits are not how any double is canonically written,
+    /// such as `2^53 + 1` or `2^60`. Canonical JSON numbers are doubles, and
+    /// accepting such digits would give one double two canonical forms.
     UnsafeInteger(Number),
 }
 
@@ -22,7 +21,7 @@ impl fmt::Display for CanonicalJsonError {
         match self {
             Self::Serialize(e) => write!(f, "cannot serialize as JSON: {e}"),
             Self::UnsafeInteger(n) => {
-                write!(f, "integer {n} cannot be represented exactly as a double")
+                write!(f, "integer {n} is not the canonical form of a double")
             }
         }
     }
@@ -55,9 +54,11 @@ impl std::error::Error for CanonicalJsonError {
 ///
 /// An integer is accepted when its digits are exactly how some double is
 /// written, so the output of this function always canonicalizes to itself
-/// again. Non-finite floats
-/// have no JSON form: serde turns NaN and infinities into `null` before this
-/// function sees them, so callers that hash floats must keep them finite.
+/// again.
+///
+/// Non-finite floats have no JSON form. serde turns NaN and infinities into
+/// `null` before this function sees them, so callers that hash floats must
+/// keep them finite.
 ///
 /// # Errors
 ///
@@ -180,7 +181,11 @@ fn write_double(f: f64, out: &mut String) {
 /// `5`.
 fn prefer_even_on_tie(x: f64, digits: String, exponent: i32) -> String {
     // Ties are resolved upward, so only an odd last digit can be wrong.
-    if digits.as_bytes().last().is_none_or(|d| d % 2 == 0) {
+    if digits
+        .as_bytes()
+        .last()
+        .is_none_or(|d| (d - b'0').is_multiple_of(2))
+    {
         return digits;
     }
     // 800 fractional digits exceed the longest exact expansion of any double,

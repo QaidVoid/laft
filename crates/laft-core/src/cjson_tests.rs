@@ -92,15 +92,23 @@ fn doubles_use_ecmascript_number_formatting() {
 
 #[test]
 fn integers_must_be_the_canonical_form_of_a_double() {
-    for exact in [
+    for canonical_integer in [
         9007199254740991_i64,
         9007199254740992,
         -9007199254740992,
         -4796566914205686000,
     ] {
-        assert_eq!(canonical(&json!(exact)), exact.to_string());
+        assert_eq!(
+            canonical(&json!(canonical_integer)),
+            canonical_integer.to_string()
+        );
     }
+    assert_eq!(
+        canonical(&json!(14507731382879283000_u64)),
+        "14507731382879283000"
+    );
     for unsafe_value in [
+        json!(1152921504606846976_u64),
         json!(9007199254740993_i64),
         json!(-9007199254740993_i64),
         json!(u64::MAX),

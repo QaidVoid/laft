@@ -65,6 +65,13 @@ fn narrower_prefix_is_within_a_wider_one() {
 }
 
 #[test]
+fn ordering_terminates_on_characters_outside_the_alphabet() {
+    let odd = Version("1.0-\u{e9}x".to_owned());
+    assert_eq!(odd.cmp(&odd.clone()), Equal);
+    assert_eq!(odd.cmp(&v("1.0")), Greater);
+}
+
+#[test]
 fn rejects_versions_outside_the_alphabet() {
     for bad in ["", "1.0-1", "1.0+git", "1 0", "v1/2"] {
         assert!(
