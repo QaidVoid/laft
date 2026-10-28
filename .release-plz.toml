@@ -21,7 +21,7 @@ git_release_body = """
 name = "laft-core"
 git_tag_name = "v{{ version }}"
 git_release_enable = true
-changelog_include = ["laft-boot", "laft-elf", "laft-fetch", "laft-index", "laft-pkg", "laft-resolve", "laft-sandbox", "laft-store", "laft-svc"]
+changelog_include = ["laft-activate", "laft-boot", "laft-elf", "laft-fetch", "laft-index", "laft-pkg", "laft-resolve", "laft-sandbox", "laft-store", "laft-svc"]
 changelog_path = "./CHANGELOG.md"
 
 [changelog]

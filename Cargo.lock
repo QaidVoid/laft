@@ -362,6 +362,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "laft-activate"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "laft-core",
+ "laft-store",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "laft-boot"
 version = "0.1.0"
 dependencies = [

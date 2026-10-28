@@ -1,0 +1,36 @@
+---
+source: crates/laft-activate/src/accounts/apply_tests.rs
+expression: databases(&env)
+---
+=== passwd
+bob:x:1500:1500:Bob:/home/bob:/usr/bin/zsh
+root:x:0:0::/root:/usr/bin/bash
+sshd:x:31:31::/var/empty:/usr/bin/nologin
+alice:x:1000:1000::/home/alice:/usr/bin/bash
+nobody:x:65534:65534::/var/empty:/usr/bin/nologin
+=== group
+bob:x:1500:
+wheel:x:10:bob
+root:x:0:
+audio:x:20:
+sshd:x:31:
+shadow:x:41:
+users:x:100:
+alice:x:1000:
+nogroup:x:65534:
+=== shadow
+bob:$6$salt$bobhash:19000:0:99999:7:::
+root:!:::::::
+sshd:!:::::::
+alice:$6$salt$alicehash:::::::
+nobody:!:::::::
+=== gshadow
+bob:!::
+wheel:!::bob
+root:!::
+audio:!::
+sshd:!::
+shadow:!::
+users:!::
+alice:!::
+nogroup:!::
