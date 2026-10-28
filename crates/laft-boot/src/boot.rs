@@ -1,12 +1,12 @@
 //! The boot sequence of PID 1 in the initramfs.
 //!
 //! Each step that can fail drops to the emergency shell and is retried once
-//! the user leaves it. The decisions the steps take are made by the pure
+//! the user leaves it. The switch to the new root is the exception: it
+//! cannot be retried, so its failure is reported and the machine reboots. The decisions the steps take are made by the pure
 //! functions of the other modules. This module only carries them out.
 
 use std::fs::{self, File};
 use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -92,7 +92,16 @@ pub(crate) fn run() -> ! {
             Path::new(NEWROOT),
         ))
     });
-    boot.retry(|_| switch_root());
+    if let Err(e) = switch_root() {
+        let message = format!(
+            "{e}\nthe switch to the new root cannot be retried, because the initramfs \
+             may already be emptied; rebooting in 30 seconds"
+        );
+        boot.log.record_error(&message);
+        console(&message);
+        thread::sleep(Duration::from_secs(30));
+        shell::reboot();
+    }
     boot.reopen_console();
     boot.exec_init(&generation)
 }
@@ -208,13 +217,13 @@ impl Boot {
         let newroot = Path::new(NEWROOT);
         let timeout = self.root_wait(config);
         let root = self.resolve(&config.root, timeout)?;
-        if !is_mount_point(newroot) {
+        if !plan::is_mount_point(newroot) {
             self.fsck(&config.root, &root)?;
             plan::execute(&[mount_op(&root, newroot, &config.root)])?;
         }
         if let Some(laft) = &config.laft {
             let target = newroot.join("laft");
-            if !is_mount_point(&target) {
+            if !plan::is_mount_point(&target) {
                 let device = self.resolve(laft, timeout)?;
                 self.fsck(laft, &device)?;
                 plan::execute(&[mount_op(&device, &target, laft)])?;
@@ -452,18 +461,10 @@ fn state_path() -> PathBuf {
     Path::new(NEWROOT).join("laft/state/boot.json")
 }
 
-/// Whether `path` is the root of a mount, because it lies on another
-/// filesystem than its parent.
-fn is_mount_point(path: &Path) -> bool {
-    let dev = |p: &Path| fs::metadata(p).map(|m| m.dev()).ok();
-    match (dev(path), path.parent().and_then(dev)) {
-        (Some(own), Some(parent)) => own != parent,
-        _ => false,
-    }
-}
-
 /// Empties the initramfs to free its memory and makes the new root the
-/// root of the mount namespace.
+/// root of the mount namespace. It cannot be run again after a failure,
+/// because the emptied initramfs no longer has the emergency shell and a
+/// moved new root is no longer at `/newroot`.
 fn switch_root() -> Result<(), String> {
     let fail = |e: io::Error| format!("cannot enter the new root: {e}");
     std::env::set_current_dir(NEWROOT).map_err(fail)?;

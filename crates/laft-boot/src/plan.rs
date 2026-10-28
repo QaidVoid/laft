@@ -8,7 +8,7 @@
 use std::fmt;
 use std::fs::{self, DirBuilder};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, symlink};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, symlink};
 use std::path::{Path, PathBuf};
 
 use rustix::mount::{MountFlags, mount, mount_bind, mount_move, mount_remount};
@@ -49,7 +49,9 @@ pub(crate) enum Op {
         /// The flags the mount ends up with.
         flags: MountFlags,
     },
-    /// Moves the mount at `source` to `target`.
+    /// Moves the mount at `source` to `target`. A move that an earlier
+    /// attempt made, so that `source` is no longer a mount point but
+    /// `target` is, is skipped.
     Move {
         /// The current mount point.
         source: PathBuf,
@@ -175,7 +177,8 @@ pub(crate) fn activate(root: &Path, newroot: &Path, generation: u64, backend: &s
 
 /// Moves the kernel filesystems of the initramfs `root` into the new root
 /// `newroot`, creating their mount points there when missing. Moving `/run`
-/// takes the generation mount below it along.
+/// takes the generation mount below it along. The plan can be carried out
+/// again after it stopped halfway, because moves already made are skipped.
 pub(crate) fn move_kernel_filesystems(root: &Path, newroot: &Path) -> Vec<Op> {
     KERNEL_FILESYSTEMS
         .iter()
@@ -223,7 +226,11 @@ fn apply(op: &Op) -> io::Result<()> {
         Op::RemountBind { target, flags } => {
             mount_remount(target, *flags | MountFlags::BIND, c"")?;
         }
-        Op::Move { source, target } => mount_move(source, target)?,
+        Op::Move { source, target } => {
+            if is_mount_point(source) || !is_mount_point(target) {
+                mount_move(source, target)?;
+            }
+        }
         Op::Symlink { target, link } => {
             if fs::symlink_metadata(link).is_ok_and(|m| m.file_type().is_symlink()) {
                 fs::remove_file(link)?;
@@ -233,6 +240,16 @@ fn apply(op: &Op) -> io::Result<()> {
         Op::Write { path, contents } => fs::write(path, contents)?,
     }
     Ok(())
+}
+
+/// Whether `path` is the root of a mount, because it lies on another
+/// filesystem than its parent.
+pub(crate) fn is_mount_point(path: &Path) -> bool {
+    let dev = |p: &Path| fs::metadata(p).map(|m| m.dev()).ok();
+    match (dev(path), path.parent().and_then(dev)) {
+        (Some(own), Some(parent)) => own != parent,
+        _ => false,
+    }
 }
 
 #[cfg(test)]

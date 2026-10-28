@@ -189,7 +189,10 @@ fn mount_sequence(dir: &Path) {
     setup.push(Op::MkdirAll(root.join("run/laft")));
     execute(&setup).unwrap();
     execute(&activate(&root, &newroot, 7, "runit")).unwrap();
-    execute(&move_kernel_filesystems(&root, &newroot)).unwrap();
+    let moves = move_kernel_filesystems(&root, &newroot);
+    execute(&moves[..4]).unwrap();
+    execute(&moves).expect("a move that stopped halfway can be retried");
+    execute(&moves).expect("a finished move can be retried");
 
     let run = newroot.join("run/laft");
     assert_eq!(
@@ -226,7 +229,8 @@ fn mount_sequence(dir: &Path) {
         assert!(laft.contains(&flag.into()), "{laft:?}");
     }
     for name in super::KERNEL_FILESYSTEMS {
-        options(&newroot.join(name));
+        let moved = mounts.iter().filter(|(p, _)| *p == newroot.join(name));
+        assert_eq!(moved.count(), 1, "{name} is moved once");
         assert!(!mounts.iter().any(|(p, _)| *p == root.join(name)));
     }
     let err = fs::write(newroot.join("laft/new"), "x").unwrap_err();
