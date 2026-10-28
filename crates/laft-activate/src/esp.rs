@@ -86,9 +86,10 @@ impl MenuEntry {
 /// Files are content addressed: the kernel is named by the store id of its
 /// package and the initramfs by its content hash, so generations share
 /// identical files. Every file is written to a temporary name, synced and
-/// renamed. New boot files are in place before the menu that names them,
-/// and old ones are removed only after it, so a crash at any point leaves a
-/// menu whose files all exist. Limine itself is updated from the newest
+/// renamed, and its directory is synced. New boot files are in place before
+/// the menu that names them, and old ones are removed only after it, so a
+/// crash at any point leaves a menu whose files all exist. `entries.json`
+/// is durable before `limine.conf` is replaced. Limine itself is updated from the newest
 /// generation before the menu, so a new menu is never read by an old
 /// Limine.
 ///
@@ -183,11 +184,6 @@ pub fn install_boot(root: &Root, esp: &Path) -> Result<BootInstall> {
         .default
         .and_then(|d| entries.iter().position(|e| e.generation == d))
         .map_or(1, |i| i + 1);
-    write_in(
-        esp,
-        "limine.conf",
-        render_limine(&entries, default_index, &settings).as_bytes(),
-    )?;
     let index = EntriesJson {
         default_gen: install.default,
         entries: entries
@@ -202,17 +198,24 @@ pub fn install_boot(root: &Root, esp: &Path) -> Result<BootInstall> {
     };
     let json =
         laft_core::to_canonical_json(&index).map_err(|e| corrupt(&laft.join("entries.json"), e))?;
+    // The index lands first: until the menu is replaced, the old menu
+    // still lists only files that exist.
     write_in(&laft, "entries.json", &json)?;
-    sync_dir(&laft)?;
-    sync_dir(esp)?;
+    fault::point("esp.entries")?;
+    write_in(
+        esp,
+        "limine.conf",
+        render_limine(&entries, default_index, &settings).as_bytes(),
+    )?;
     fault::point("esp.config")?;
 
+    let mut names = Vec::new();
     for item in fs::read_dir(&laft).map_err(io(&laft))? {
-        let name = item
-            .map_err(io(&laft))?
-            .file_name()
-            .to_string_lossy()
-            .into_owned();
+        let name = item.map_err(io(&laft))?.file_name();
+        names.push(name.to_string_lossy().into_owned());
+    }
+    names.sort();
+    for name in names {
         let boot_file = name.ends_with(".vmlinuz") || name.ends_with(".initramfs");
         if (boot_file && !wanted.contains(&name)) || name.starts_with(".tmp-") {
             let path = laft.join(&name);
@@ -274,7 +277,11 @@ fn render_limine(entries: &[MenuEntry], default_index: usize, settings: &Boot) -
             ""
         };
         let created = entry.created.to_string();
-        let when = format!("{} {} UTC", &created[..10], &created[11..16]);
+        let (date, time) = created
+            .get(..10)
+            .zip(created.get(11..16))
+            .expect("a timestamp renders as an RFC 3339 date and time");
+        let when = format!("{date} {time} UTC");
         let _ = write!(
             out,
             "\n/Laft {}{failed}\n    comment: {when}, {} {}\n    protocol: linux\n    path: boot():/laft/{}\n    module_path: boot():/laft/{}\n    cmdline: {}\n",
@@ -312,7 +319,7 @@ fn tmp_name() -> String {
 }
 
 /// Copies `source` to `target` through a synced temporary file in the
-/// same directory.
+/// same directory, and syncs the directory, so the copy is durable.
 fn copy_in(source: &Path, target: &Path) -> Result<()> {
     let mut from = File::open(source).map_err(io(source))?;
     let dir = target.parent().unwrap_or(target);
@@ -320,17 +327,20 @@ fn copy_in(source: &Path, target: &Path) -> Result<()> {
     let mut to = create(&tmp)?;
     io::copy(&mut from, &mut to).map_err(io(&tmp))?;
     to.sync_all().map_err(io(&tmp))?;
-    fs::rename(&tmp, target).map_err(io(target))
+    fs::rename(&tmp, target).map_err(io(target))?;
+    sync_dir(dir)
 }
 
-/// Writes `bytes` to `dir/name` through a synced temporary file.
+/// Writes `bytes` to `dir/name` through a synced temporary file, and syncs
+/// the directory, so the new file is durable.
 fn write_in(dir: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     let tmp = dir.join(tmp_name());
     let mut file = create(&tmp)?;
     file.write_all(bytes).map_err(io(&tmp))?;
     file.sync_all().map_err(io(&tmp))?;
     let target = dir.join(name);
-    fs::rename(&tmp, &target).map_err(io(&target))
+    fs::rename(&tmp, &target).map_err(io(&target))?;
+    sync_dir(dir)
 }
 
 fn create(path: &Path) -> Result<File> {

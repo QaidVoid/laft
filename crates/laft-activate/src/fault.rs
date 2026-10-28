@@ -14,6 +14,7 @@ pub(crate) const POINTS: &[&str] = &[
     "assemble.privileged",
     "assemble.boot",
     "esp.files",
+    "esp.entries",
     "esp.config",
 ];
 

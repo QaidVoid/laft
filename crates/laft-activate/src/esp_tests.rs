@@ -277,3 +277,37 @@ fn boot_state_is_read_like_laft_boot_reads_it() {
     );
     assert!(install_boot(&env.root, &esp).is_err());
 }
+
+#[test]
+fn the_entry_index_is_written_before_the_menu() {
+    let env = Env::new();
+    generation(&env, 1, "6.17.4-laft1", b"one", "{}");
+    let esp = esp(&env);
+    install_boot(&env.root, &esp).unwrap();
+    generation(&env, 2, "6.17.5-laft1", b"two", "{}");
+
+    fault::fail_at(Some("esp.entries"));
+    let result = install_boot(&env.root, &esp);
+    fault::fail_at(None);
+    assert!(matches!(result, Err(Error::Injected("esp.entries"))));
+    let entries = fs::read_to_string(esp.join("laft/entries.json")).unwrap();
+    assert!(entries.contains(r#""gen":2"#), "{entries}");
+    let menu = fs::read_to_string(esp.join("limine.conf")).unwrap();
+    assert!(!menu.contains("/Laft 2"), "{menu}");
+}
+
+#[test]
+fn removed_files_are_reported_in_name_order() {
+    let env = Env::new();
+    generation(&env, 1, "6.17.4-laft1", b"one", "{}");
+    let esp = esp(&env);
+    fs::create_dir_all(esp.join("laft")).unwrap();
+    for name in ["c.vmlinuz", "a.initramfs", "b.vmlinuz"] {
+        fs::write(esp.join("laft").join(name), b"").unwrap();
+    }
+    let installed = install_boot(&env.root, &esp).unwrap();
+    assert_eq!(
+        installed.removed,
+        ["laft/a.initramfs", "laft/b.vmlinuz", "laft/c.vmlinuz"]
+    );
+}
