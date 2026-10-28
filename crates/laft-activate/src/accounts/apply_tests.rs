@@ -142,7 +142,6 @@ fn declared_groups_enforce_the_memberships_of_managed_users() {
 #[test]
 fn an_undeclared_account_with_a_declared_id_is_a_collision() {
     let env = Env::new();
-    with_bob(&env);
     let lock = env.lock();
     declare_generation(
         &lock,
@@ -156,6 +155,8 @@ fn an_undeclared_account_with_a_declared_id_is_a_collision() {
             },
         )]),
     );
+    // Created outside Laft after the generation was declared.
+    with_bob(&env);
     let err = apply_accounts(&lock, 1).expect_err("collides");
     assert_eq!(err.code(), Some("C0411"));
     assert_eq!(
@@ -448,4 +449,50 @@ fn a_tampered_accounts_record_is_refused() {
         fs::write(&path, text).expect("writable");
     }
     assert!(!env.path("etc/passwd").exists());
+}
+
+#[test]
+fn renaming_an_account_keeps_its_uid() {
+    let env = Env::new();
+    let lock = env.lock();
+    let first = declare_generation(&lock, 1, &users_with(&[("alice", alice())]));
+    apply_accounts(&lock, 1).expect("applies");
+    let uid = first.users["alice"].uid;
+
+    let bob = User {
+        uid: Some(uid),
+        ..alice()
+    };
+    let renamed = declare_generation(&lock, 2, &users_with(&[("bob", bob)]));
+    assert_eq!(renamed.users["bob"].uid, uid);
+    apply_accounts(&lock, 2).expect("applies");
+    let passwd = env.read("etc/passwd");
+    assert!(!has_entry(&passwd, "alice"), "{passwd}");
+    assert!(passwd.contains(&format!("bob:x:{uid}:")), "{passwd}");
+}
+
+#[test]
+fn an_undeclared_group_with_a_declared_gid_is_a_collision() {
+    let env = Env::new();
+    let lock = env.lock();
+    let mut users = users_with(&[]);
+    users.groups.insert(
+        "media".into(),
+        crate::Group {
+            gid: Some(1500),
+            ..crate::Group::default()
+        },
+    );
+    declare_generation(&lock, 1, &users);
+    with_bob(&env);
+    let err = apply_accounts(&lock, 1).expect_err("collides");
+    assert!(
+        matches!(
+            &err,
+            Error::IdCollision { kind: "group", declared, existing, id: 1500 }
+                if declared == "media" && existing == "bob"
+        ),
+        "{err}"
+    );
+    assert_eq!(env.read("etc/group"), BOB_GROUP);
 }

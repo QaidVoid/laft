@@ -106,12 +106,19 @@ pub(crate) fn resolve(
         .iter()
         .map(|p| (p.name.clone(), p.uid))
         .collect();
+    let kept_uids = kept(
+        users.mutable,
+        current.passwd.iter().map(|p| (p.name.as_str(), p.uid)),
+        |name| users.accounts.contains_key(name),
+        &allocations.managed_users,
+    );
     let uids = assign(
         "user",
         &user_wants,
         system_uid,
         &allocations.users,
         &current_uids,
+        &kept_uids,
         &mut errors,
     );
 
@@ -129,12 +136,19 @@ pub(crate) fn resolve(
         .iter()
         .map(|g| (g.name.clone(), g.gid))
         .collect();
+    let kept_gids = kept(
+        users.mutable,
+        current.group.iter().map(|g| (g.name.as_str(), g.gid)),
+        |name| groups.contains_key(name),
+        &allocations.managed_groups,
+    );
     let gids = assign(
         "group",
         &group_wants,
         system_gid,
         &allocations.groups,
         &current_gids,
+        &kept_gids,
         &mut errors,
     );
     if !errors.is_empty() {
@@ -343,16 +357,39 @@ impl<'a> Taken<'a> {
     }
 }
 
+/// The ids of the accounts in the current databases that this activation
+/// keeps without declaring them: with `mutable` accounts, those that are
+/// neither declared nor `managed`. Managed accounts that are no longer
+/// declared are removed, so their ids are free for an explicit claim.
+fn kept<'a>(
+    mutable: bool,
+    current: impl Iterator<Item = (&'a str, u32)>,
+    declared: impl Fn(&str) -> bool,
+    managed: &BTreeSet<String>,
+) -> BTreeMap<u32, &'a str> {
+    if !mutable {
+        return BTreeMap::new();
+    }
+    current
+        .filter(|(name, _)| !declared(name) && !managed.contains(*name))
+        .map(|(name, id)| (id, name))
+        .collect()
+}
+
 /// Assigns an id to every account in `wants`, in passes: fixed ids of the
 /// static accounts and explicit ids first, then recorded ids and ids the
 /// current databases give the same name, then preferred ids, then the
 /// lowest free id of each account's range.
+///
+/// An explicit id that an account in `kept` holds is refused, because both
+/// accounts would remain. Declared holders are refused by the later passes.
 fn assign<'a>(
     kind: &'static str,
     wants: &[Want<'a>],
     registry: fn(&str) -> Option<u32>,
     recorded: &BTreeMap<String, u32>,
     current: &BTreeMap<String, u32>,
+    kept: &BTreeMap<u32, &str>,
     errors: &mut Vec<ConfigError>,
 ) -> BTreeMap<String, u32> {
     let mut taken = Taken {
@@ -376,7 +413,14 @@ fn assign<'a>(
             (None, Some(id)) if id <= 100 || id == 65534 => {
                 errors.push(ConfigError::ReservedId { kind, name, id });
             }
-            (None, Some(id)) => taken.claim(want.name, id, errors),
+            (None, Some(id)) => match kept.get(&id) {
+                Some(&holder) => errors.push(ConfigError::DuplicateId {
+                    kind,
+                    id,
+                    names: [holder.to_owned(), name],
+                }),
+                None => taken.claim(want.name, id, errors),
+            },
             (None, None) => {}
         }
     }

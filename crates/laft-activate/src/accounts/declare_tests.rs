@@ -282,3 +282,29 @@ fn account_paths_must_be_normalized_absolute_paths() {
     };
     assert!(resolve_fresh(&users_with(&[("bob", user)])).is_ok());
 }
+
+#[test]
+fn an_explicit_id_held_by_an_account_that_stays_is_refused() {
+    let env = Env::new();
+    env.write("etc/passwd", "carol:x:1000:1000::/home/carol:/bin/sh\n");
+    env.write("etc/group", "carol:x:1000:\n");
+    let bob = User {
+        uid: Some(1000),
+        ..User::default()
+    };
+    let mut users = users_with(&[("bob", bob)]);
+    let Err(Error::Config(errors)) = declare(&env.lock(), &users) else {
+        panic!("carol keeps uid 1000");
+    };
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigError::DuplicateId { id: 1000, names, .. } if names.contains(&"carol".to_owned())
+        )),
+        "{errors:?}"
+    );
+
+    users.mutable = false;
+    let declared = declare(&env.lock(), &users).expect("carol is removed by this activation");
+    assert_eq!(declared.users["bob"].uid, 1000);
+}
