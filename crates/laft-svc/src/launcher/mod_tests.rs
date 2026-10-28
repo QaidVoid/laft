@@ -7,7 +7,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use tempfile::TempDir;
 
-use super::{ExecMode, Launcher, restarts};
+use super::{ExecMode, Launcher, parse_start_time, restarts, start_time};
 use crate::launcher::accounts::Credentials;
 use crate::launcher::process::{drop_privileges, spawn_as};
 use crate::spec::{Spec, SpecDir};
@@ -451,23 +451,34 @@ fn background_start_skips_after_a_failed_dependency() {
     assert_eq!(fixture.failures(), "kernel-fs failed\nudevd skipped\n");
 }
 
-#[test]
-fn stop_early_signals_each_listed_process() {
-    let fixture = Fixture::new();
+/// An early longrun `udevd` listed for `stop-early`, stopped with `TERM`.
+fn early_udevd(fixture: &Fixture) {
     let mut spec = resolve("udevd", &Service::longrun(&["/bin/true"]));
     spec.early = true;
     spec.stop_timeout_ms = 5000;
     fixture.install(&spec);
+    let list = fixture.path("run/laft/booted/services/runit/early-longruns");
+    fs::create_dir_all(list.parent().expect("has a parent")).expect("mkdir");
+    fs::write(&list, "udevd\nmissing\n").expect("write");
+}
+
+fn write_pid_file(fixture: &Fixture, text: &str) -> PathBuf {
+    let pid_file = fixture.path("run/runit/early/udevd.pid");
+    fs::create_dir_all(pid_file.parent().expect("has a parent")).expect("mkdir");
+    fs::write(&pid_file, text).expect("write");
+    pid_file
+}
+
+#[test]
+fn stop_early_signals_each_listed_process() {
+    let fixture = Fixture::new();
+    early_udevd(&fixture);
     let mut child = Command::new("/usr/bin/sleep")
         .arg("100")
         .spawn()
         .expect("spawns");
-    let list = fixture.path("run/laft/booted/services/runit/early-longruns");
-    fs::create_dir_all(list.parent().expect("has a parent")).expect("mkdir");
-    fs::write(&list, "udevd\nmissing\n").expect("write");
-    let pid_file = fixture.path("run/runit/early/udevd.pid");
-    fs::create_dir_all(pid_file.parent().expect("has a parent")).expect("mkdir");
-    fs::write(&pid_file, format!("{}\n", child.id())).expect("write");
+    let started = start_time(child.id()).expect("the child has a start time");
+    let pid_file = write_pid_file(&fixture, &format!("{} {started}\n", child.id()));
     let status = std::thread::scope(|scope| {
         let reaper = scope.spawn(|| child.wait().expect("waits"));
         assert_eq!(fixture.launcher.stop_early().expect("stops"), 0);
@@ -475,6 +486,80 @@ fn stop_early_signals_each_listed_process() {
     });
     assert_eq!(status.signal(), Some(15));
     assert!(!pid_file.exists());
+}
+
+#[test]
+fn stop_early_leaves_a_process_that_reused_the_pid_alone() {
+    let fixture = Fixture::new();
+    early_udevd(&fixture);
+    let mut child = Command::new("/usr/bin/sleep")
+        .arg("100")
+        .spawn()
+        .expect("spawns");
+    let started = start_time(child.id()).expect("the child has a start time");
+    for text in [
+        format!("{} {}\n", child.id(), started + 1),
+        format!("{}\n", child.id()),
+    ] {
+        let pid_file = write_pid_file(&fixture, &text);
+        assert_eq!(fixture.launcher.stop_early().expect("stops"), 0);
+        assert!(!pid_file.exists(), "a stale pid file is removed");
+        assert!(child.try_wait().expect("waits").is_none(), "{text:?}");
+    }
+    child.kill().expect("kills");
+    child.wait().expect("waits");
+}
+
+#[test]
+fn start_time_is_read_after_the_command_name() {
+    let stat = "42 (a) b) (c) S 1 42 42 0 -1 4194560 100 0 0 0 0 0 0 0 20 0 1 0 98765 1000 10";
+    assert_eq!(parse_start_time(stat), Some(98765));
+    assert_eq!(parse_start_time("42 (x) S 1"), None);
+    assert_eq!(parse_start_time("garbage"), None);
+}
+
+#[test]
+fn a_background_start_that_crashes_leaves_no_pid_file() {
+    let fixture = Fixture::new();
+    let mut spec = resolve("udevd", &Service::longrun(&["/bin/true"]));
+    spec.early = true;
+    fixture.install(&spec);
+    let mut crash = Command::new("/bin/sh");
+    crash.args(["-c", "exit 1"]);
+    let code = fixture
+        .launcher
+        .start_detached(&spec, crash)
+        .expect("never fails");
+    assert_eq!(code, 0);
+    assert_eq!(fixture.failures(), "udevd failed\n");
+    assert!(!fixture.path("run/runit/early/udevd.pid").exists());
+}
+
+#[test]
+fn a_ready_background_start_records_its_pid_and_start_time() {
+    let fixture = Fixture::new();
+    let mut spec = resolve("udevd", &Service::longrun(&["/bin/true"]));
+    spec.early = true;
+    fixture.install(&spec);
+    let marker = fixture.path("run/runit/ready/udevd");
+    let mut daemon = Command::new("/bin/sh");
+    let script = format!(
+        "mkdir -p {} && touch {}; exec sleep 100",
+        marker.parent().expect("has a parent").display(),
+        marker.display()
+    );
+    daemon.args(["-c", &script]);
+    fixture
+        .launcher
+        .start_detached(&spec, daemon)
+        .expect("never fails");
+    assert_eq!(fixture.failures(), "");
+    let text = read(&fixture.path("run/runit/early/udevd.pid"));
+    let (pid, started) = text.trim().split_once(' ').expect("pid and start time");
+    let pid: u32 = pid.parse().expect("a pid");
+    assert_eq!(start_time(pid), started.parse().ok());
+    early_udevd(&fixture);
+    assert_eq!(fixture.launcher.stop_early().expect("stops"), 0);
 }
 
 #[test]

@@ -305,6 +305,11 @@ impl Launcher {
     /// as listed in the booted generation: each gets its stop signal, and
     /// `SIGKILL` when it outlives its stop timeout.
     ///
+    /// A process is signaled only when its pid file names a process that
+    /// still has the start time recorded with it, so a pid that a crashed
+    /// service left behind and the kernel gave to another process is never
+    /// signaled. Every pid file is removed.
+    ///
     /// # Errors
     ///
     /// Fails when the list or a pid file cannot be read.
@@ -324,17 +329,14 @@ impl Launcher {
                 Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(io(&pid_file)(e)),
             };
-            let pid = text
-                .trim()
-                .parse()
-                .ok()
-                .and_then(Pid::from_raw)
-                .ok_or_else(|| corrupt(&pid_file, "not a process id"))?;
             let (signal, timeout) = match self.load(name) {
                 Ok(spec) => (spec.stop_signal, spec.stop_timeout_ms),
                 Err(_) => (Signal::TERM.as_raw(), 10_000),
             };
-            stop_process(pid, signal, timeout);
+            match same_process(&text) {
+                Some(pidfd) => stop_process(&pidfd, signal, timeout),
+                None => eprintln!("laft svc: {name}: the recorded process is gone"),
+            }
             let _ = fs::remove_file(&pid_file);
         }
         Ok(0)
@@ -387,17 +389,34 @@ impl Launcher {
 
     fn exec_background(&self, spec: &Spec) -> Result<i32, Error> {
         require(spec, ServiceKind::Longrun)?;
-        let name = &spec.name;
         if self.failed_dependency(spec)?.is_some() {
-            self.record_failure(name, "skipped")?;
+            self.record_failure(&spec.name, "skipped")?;
             return Ok(0);
         }
-        let spawned = Command::new(SELF_EXE)
-            .args(["svc", "exec", "--backend", "runit", "--detached", name])
+        let mut detached = Command::new(SELF_EXE);
+        detached
+            .args([
+                "svc",
+                "exec",
+                "--backend",
+                "runit",
+                "--detached",
+                &spec.name,
+            ])
             .env_clear()
-            .env("PATH", "/usr/bin")
-            .spawn();
-        let mut child = match spawned {
+            .env("PATH", "/usr/bin");
+        self.start_detached(spec, detached)
+    }
+
+    /// Starts `detached`, the process that becomes the early longrun
+    /// `spec`, records its pid and start time, and waits until the service
+    /// is ready, exits or its ready timeout passes. Anything but readiness
+    /// is recorded and announced as a failure, and a pid file whose
+    /// process exited is removed. A process still running after the
+    /// timeout keeps its pid file, so that it is stopped at shutdown.
+    fn start_detached(&self, spec: &Spec, mut detached: Command) -> Result<i32, Error> {
+        let name = &spec.name;
+        let mut child = match detached.spawn() {
             Ok(child) => child,
             Err(source) => {
                 eprintln!("laft svc: service {name}: cannot start: {source}");
@@ -406,18 +425,33 @@ impl Launcher {
                 return Ok(0);
             }
         };
+        let wait_error = |source| Error::Setup {
+            name: name.clone(),
+            step: "wait for the service",
+            source,
+        };
         let pid_file = self.early_pid_file(name);
         create_parent(&pid_file)?;
-        fs::write(&pid_file, format!("{}\n", child.id())).map_err(io(&pid_file))?;
+        let started = start_time(child.id()).ok_or_else(|| Error::Setup {
+            name: name.clone(),
+            step: "read the start time of the service",
+            source: io::ErrorKind::NotFound.into(),
+        })?;
+        fs::write(&pid_file, format!("{} {started}\n", child.id())).map_err(io(&pid_file))?;
         let deadline = Instant::now() + Duration::from_millis(spec.ready_timeout_ms());
+        let mut exited = false;
         while Instant::now() < deadline {
             if self.ready_marker(name).exists() {
                 return Ok(0);
             }
-            if child.try_wait().map_err(io(&pid_file))?.is_some() {
+            if child.try_wait().map_err(wait_error)?.is_some() {
+                exited = true;
                 break;
             }
             std::thread::sleep(POLL);
+        }
+        if exited {
+            let _ = fs::remove_file(&pid_file);
         }
         self.record_failure(name, "failed")?;
         self.announce_failure(name);
@@ -750,14 +784,38 @@ fn create_parent(path: &Path) -> Result<(), Error> {
     }
 }
 
-/// Sends `signal` to `pid`, waits up to `timeout_ms` for it to exit, then
-/// kills it. A process that is gone already needs nothing.
-fn stop_process(pid: Pid, signal: i32, timeout_ms: u64) {
-    let Ok(pidfd) = rustix::process::pidfd_open(pid, PidfdFlags::empty()) else {
-        return;
-    };
+/// The start time of process `pid` in clock ticks after boot, from
+/// `/proc/<pid>/stat`, or `None` when the process does not exist.
+fn start_time(pid: u32) -> Option<u64> {
+    parse_start_time(&fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+/// The start time field of a `/proc/<pid>/stat` line. The command name in
+/// parentheses may contain spaces and parentheses itself, so fields are
+/// counted after its last `)`, where the third field begins.
+fn parse_start_time(stat: &str) -> Option<u64> {
+    let (_, rest) = stat.rsplit_once(')')?;
+    rest.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// A descriptor for the process a pid file names, when that process still
+/// has the recorded start time. The descriptor is taken before the start
+/// time is compared, so it cannot refer to a process that took the pid
+/// later.
+fn same_process(pid_file: &str) -> Option<OwnedFd> {
+    let (pid, started) = pid_file.trim().split_once(' ')?;
+    let (pid, started): (u32, u64) = (pid.parse().ok()?, started.parse().ok()?);
+    let raw = Pid::from_raw(i32::try_from(pid).ok()?)?;
+    let pidfd = rustix::process::pidfd_open(raw, PidfdFlags::empty()).ok()?;
+    (start_time(pid) == Some(started)).then_some(pidfd)
+}
+
+/// Sends `signal` to the process of `pidfd`, waits up to `timeout_ms` for
+/// it to exit, then kills it. A process that is gone already needs
+/// nothing.
+fn stop_process(pidfd: &OwnedFd, signal: i32, timeout_ms: u64) {
     let signal = Signal::from_named_raw(signal).unwrap_or(Signal::TERM);
-    if rustix::process::pidfd_send_signal(&pidfd, signal).is_err() {
+    if rustix::process::pidfd_send_signal(pidfd, signal).is_err() {
         return;
     }
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
@@ -767,14 +825,14 @@ fn stop_process(pid: Pid, signal: i32, timeout_ms: u64) {
             tv_sec: left.as_secs().try_into().unwrap_or(i64::MAX),
             tv_nsec: left.subsec_nanos().into(),
         };
-        let mut fds = [PollFd::new(&pidfd, PollFlags::IN)];
+        let mut fds = [PollFd::new(pidfd, PollFlags::IN)];
         match rustix::event::poll(&mut fds, Some(&timeout)) {
             Ok(n) if n > 0 => return,
             Err(Errno::INTR) => continue,
             _ => break,
         }
     }
-    let _ = rustix::process::pidfd_send_signal(&pidfd, Signal::KILL);
+    let _ = rustix::process::pidfd_send_signal(pidfd, Signal::KILL);
 }
 
 #[cfg(test)]
