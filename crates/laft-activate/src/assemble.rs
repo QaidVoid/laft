@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, DirBuilder};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, symlink};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
 
 use laft_store::{
@@ -19,7 +19,7 @@ use crate::initramfs::{self, BootRecord, Host};
 use crate::privileged::{self, PrivilegedRecord};
 use crate::render::{Node, render};
 use crate::trigger::{self, Contributor};
-use crate::{declare, fault, fsx, install_boot, state};
+use crate::{declare, fault, install_boot, state};
 
 /// Everything a generation is assembled from, as plain values.
 #[derive(Debug, Clone, Copy)]
@@ -167,7 +167,7 @@ pub fn assemble(
     let dir = staged.path().to_path_buf();
     etc.write(&dir)?;
     for (path, entry) in services {
-        write_entry(&dir, path, entry)?;
+        entry.write(&dir.join(path)).map_err(Error::Services)?;
     }
     declared.write(&dir)?;
     DirBuilder::new()
@@ -233,22 +233,6 @@ pub fn assemble(
         boot,
         warnings,
     })
-}
-
-/// Writes one rendered service file below the generation tree `dir`.
-fn write_entry(dir: &Path, path: &str, entry: &Entry) -> Result<()> {
-    let target = dir.join(path);
-    if let Some(parent) = target.parent() {
-        DirBuilder::new()
-            .mode(0o755)
-            .recursive(true)
-            .create(parent)
-            .map_err(io(parent))?;
-    }
-    match entry {
-        Entry::File { mode, bytes } => fsx::write_new(&target, bytes, *mode),
-        Entry::Symlink(link) => symlink(link, &target).map_err(io(&target)),
-    }
 }
 
 /// The kernel modules of the running kernel to carry into a generation of

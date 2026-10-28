@@ -403,7 +403,7 @@ fn assembles_a_complete_generation() {
             .warnings
             .contains(&Warning::InactivePrivileged("/usr/bin/missing".into()))
     );
-    if !fsx::is_root() {
+    if !crate::fsx::is_root() {
         assert!(
             assembled
                 .warnings

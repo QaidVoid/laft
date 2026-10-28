@@ -204,36 +204,48 @@ impl Rendered {
     }
 
     /// Writes every entry below `generation_dir`, a generation tree under
-    /// construction, creating missing directories with mode `0o755`.
-    ///
-    /// Files are not synced one by one, because a generation is published
-    /// with one rename after its whole tree is synced.
+    /// construction, with [`Entry::write`].
     ///
     /// # Errors
     ///
     /// Fails when an entry exists already or cannot be written.
     pub fn write(&self, generation_dir: &Path) -> Result<(), Error> {
         for (relative, entry) in &self.entries {
-            let path = generation_dir.join(relative);
-            if let Some(parent) = path.parent() {
-                create_dirs(parent)?;
-            }
-            match entry {
-                Entry::File { mode, bytes } => {
-                    let mut file = OpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .mode(0o600)
-                        .open(&path)
-                        .map_err(io(&path))?;
-                    file.write_all(bytes).map_err(io(&path))?;
-                    file.set_permissions(fs::Permissions::from_mode(*mode))
-                        .map_err(io(&path))?;
-                }
-                Entry::Symlink(target) => symlink(target, &path).map_err(io(&path))?,
-            }
+            entry.write(&generation_dir.join(relative))?;
         }
         Ok(())
+    }
+}
+
+impl Entry {
+    /// Creates the entry at `path`, a new path inside a generation tree
+    /// under construction, and its missing parent directories with mode
+    /// `0o755`. A file gets exactly its mode, whatever the umask.
+    ///
+    /// The file is not synced, because a generation is published with one
+    /// rename after its whole tree is synced.
+    ///
+    /// # Errors
+    ///
+    /// Fails when something exists at `path` already or cannot be written.
+    pub fn write(&self, path: &Path) -> Result<(), Error> {
+        if let Some(parent) = path.parent() {
+            create_dirs(parent)?;
+        }
+        match self {
+            Self::File { mode, bytes } => {
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(path)
+                    .map_err(io(path))?;
+                file.write_all(bytes).map_err(io(path))?;
+                file.set_permissions(fs::Permissions::from_mode(*mode))
+                    .map_err(io(path))
+            }
+            Self::Symlink(target) => symlink(target, path).map_err(io(path)),
+        }
     }
 }
 
