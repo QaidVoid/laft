@@ -213,9 +213,12 @@ pub fn standard_services() -> BTreeMap<String, Service> {
     services
 }
 
-/// The name of the getty service for `tty`.
+/// The name of the getty service for `tty`: the terminal name in lowercase
+/// after [`GETTY_PREFIX`], so that `ttyS0` gets `getty-ttys0` and the name
+/// follows the rule for service names. Distinct valid terminal names stay
+/// distinct, because only the `S` and `USB` prefixes carry uppercase.
 pub fn getty_name(tty: &str) -> String {
-    format!("{GETTY_PREFIX}{tty}")
+    format!("{GETTY_PREFIX}{}", tty.to_ascii_lowercase())
 }
 
 /// The services that give every terminal of `getty` a login prompt, by name.
