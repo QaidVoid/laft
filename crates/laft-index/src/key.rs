@@ -203,24 +203,7 @@ fn decode_base64(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-macro_rules! serde_as_text {
-    ($($ty:ty),*) => {$(
-        impl serde::Serialize for $ty {
-            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serializer.collect_str(self)
-            }
-        }
-
-        impl<'de> serde::Deserialize<'de> for $ty {
-            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                let text = String::deserialize(deserializer)?;
-                text.parse().map_err(serde::de::Error::custom)
-            }
-        }
-    )*};
-}
-
-serde_as_text!(KeyId, PublicKey);
+laft_core::impl_serde_as_text!(KeyId, PublicKey);
 
 #[cfg(test)]
 #[path = "key_tests.rs"]
