@@ -1,0 +1,25 @@
+---
+source: crates/laft-svc/src/runit_tests.rs
+expression: out
+---
+=== services/runit/sv/plain/finish (555)
+#!/bin/sh
+exec /usr/bin/laft svc finish --backend runit plain "$1" "$2"
+=== services/runit/sv/plain/log/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc logger --backend runit plain
+=== services/runit/sv/plain/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc exec --backend runit plain 2>&1
+=== services/runit/sv/reload/control/t (555)
+#!/bin/sh
+read -r pid < supervise/pid && kill -s INT "$pid"
+=== services/runit/sv/reload/finish (555)
+#!/bin/sh
+exec /usr/bin/laft svc finish --backend runit reload "$1" "$2"
+=== services/runit/sv/reload/log/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc logger --backend runit reload
+=== services/runit/sv/reload/run (555)
+#!/bin/sh
+exec /usr/bin/laft svc exec --backend runit reload 2>&1

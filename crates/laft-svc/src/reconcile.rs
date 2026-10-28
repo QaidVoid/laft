@@ -47,7 +47,9 @@ pub struct Plan {
     /// Every service of either generation, by name.
     pub classes: BTreeMap<String, Class>,
     /// Services to stop, dependents before their dependencies in the old
-    /// generation.
+    /// generation. Stopping one through the supervisor sends its stop
+    /// signal, through the control hook of its service directory when that
+    /// signal is not `SIGTERM`.
     pub stop: Vec<String>,
     /// Services whose service directory leaves the supervisor's scan
     /// directory, by name.

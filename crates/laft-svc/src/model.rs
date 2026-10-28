@@ -148,6 +148,33 @@ pub enum Signal {
 }
 
 impl Signal {
+    const ALL: [Self; 6] = [
+        Self::Term,
+        Self::Int,
+        Self::Hup,
+        Self::Quit,
+        Self::Usr1,
+        Self::Usr2,
+    ];
+
+    /// The signal with number `number`, if it is one a service may stop
+    /// with.
+    pub(crate) fn from_number(number: i32) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.number() == number)
+    }
+
+    /// The name `kill -s` takes, such as `INT`.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Term => "TERM",
+            Self::Int => "INT",
+            Self::Hup => "HUP",
+            Self::Quit => "QUIT",
+            Self::Usr1 => "USR1",
+            Self::Usr2 => "USR2",
+        }
+    }
+
     /// The signal number on Linux.
     pub fn number(self) -> i32 {
         match self {

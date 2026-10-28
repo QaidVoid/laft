@@ -4,7 +4,15 @@
 //! Every service gets its spec file. Services outside the early boot graph
 //! get a service directory whose `run`, `finish` and `log/run` scripts only
 //! call the launcher, so their content depends on nothing but the service
-//! name and log policy. The early boot graph runs in stage 1 as a plain list
+//! name, log policy and stop signal.
+//!
+//! runsv stops a service with `SIGTERM`. A service with another stop signal
+//! gets the control hook `control/t`, which sends that signal instead. runsv
+//! runs the hook for every request that would send `SIGTERM`, including
+//! `sv down`, `sv force-stop` and `sv exit`, and skips its own signal when
+//! the hook succeeds. A `control/d` hook is not rendered, because runsv
+//! runs it after `control/t` for the same request, which would signal the
+//! service twice. The early boot graph runs in stage 1 as a plain list
 //! of launcher calls in dependency order, because runit supervises nothing
 //! before stage 2.
 
@@ -19,7 +27,7 @@ use laft_core::Blake3Hash;
 use crate::error::{Error, corrupt, io};
 use crate::spec::{Spec, SpecLog};
 use crate::standard::ACTIVATE;
-use crate::{ServiceKind, ServiceSet, graph};
+use crate::{ServiceKind, ServiceSet, Signal, graph};
 
 /// The launcher, as rendered scripts call it.
 const LAUNCHER: &str = "/usr/bin/laft svc";
@@ -344,6 +352,16 @@ fn service_dir(spec: &Spec) -> Vec<UnitFile> {
             script(format!("{LAUNCHER} exec --backend runit {name}{redirect}")),
         ),
     ];
+    if let Some(signal) = Signal::from_number(spec.stop_signal).filter(|s| *s != Signal::Term) {
+        // runsv runs control hooks in the service directory, where
+        // `supervise/pid` holds the pid of the running service. Only shell
+        // builtins are used, so the hook works whatever is installed.
+        let hook = format!(
+            "#!/bin/sh\nread -r pid < supervise/pid && kill -s {} \"$pid\"\n",
+            signal.name()
+        );
+        files.push(("control/t".to_owned(), SCRIPT, hook.into_bytes()));
+    }
     if let SpecLog::Logged { .. } = spec.log {
         files.push((
             "log/run".to_owned(),

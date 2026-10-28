@@ -5,7 +5,7 @@ use std::path::Path;
 
 use super::{Entry, Rendered, load_units, render};
 use crate::test_support::{config, example, myapp, valid};
-use crate::{Log, Service, ServiceKind};
+use crate::{Log, Service, ServiceKind, Signal};
 
 /// Renders every entry as text: a header with the path and mode or link
 /// target, followed by the content of files.
@@ -64,6 +64,58 @@ fn log_policy_shapes_the_service_directory() {
     let mut out = dump(&rendered, "services/runit/sv/loud/");
     out.push_str(&dump(&rendered, "services/runit/sv/quiet/"));
     insta::assert_snapshot!(out);
+}
+
+#[test]
+fn a_stop_signal_other_than_term_gets_a_control_hook() {
+    let reload = Service {
+        stop_signal: Signal::Int,
+        ..Service::longrun(&["/usr/bin/reload"])
+    };
+    let plain = Service::longrun(&["/usr/bin/plain"]);
+    let rendered =
+        render(&valid(&config(&[("reload", reload), ("plain", plain)])), 1).expect("renders");
+    let mut out = dump(&rendered, "services/runit/sv/plain/");
+    out.push_str(&dump(&rendered, "services/runit/sv/reload/"));
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn the_control_hook_signals_the_supervised_process() {
+    let reload = Service {
+        stop_signal: Signal::Usr1,
+        ..Service::longrun(&["/usr/bin/reload"])
+    };
+    let rendered = render(&valid(&config(&[("reload", reload)])), 1).expect("renders");
+    let Some(Entry::File { bytes, mode }) =
+        rendered.entries().get("services/runit/sv/reload/control/t")
+    else {
+        panic!("reload has a control hook");
+    };
+    assert_eq!(*mode, 0o555);
+    let mut sleeper = std::process::Command::new("/bin/sh")
+        .args(["-c", "trap 'exit 42' USR1; while :; do sleep 0.05; done"])
+        .spawn()
+        .expect("spawns");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let dir = tempfile::tempdir().expect("can create a temporary directory");
+    fs::create_dir_all(dir.path().join("supervise")).expect("mkdir");
+    fs::write(
+        dir.path().join("supervise/pid"),
+        format!("{}\n", sleeper.id()),
+    )
+    .expect("write");
+    fs::write(dir.path().join("t"), bytes).expect("write");
+    let hook = std::process::Command::new("/bin/sh")
+        .arg("t")
+        .current_dir(dir.path())
+        .status()
+        .expect("runs");
+    assert!(
+        hook.success(),
+        "runsv skips its own TERM only when the hook succeeds"
+    );
+    assert_eq!(sleeper.wait().expect("waits").code(), Some(42));
 }
 
 #[test]
