@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use laft_core::{Blake3Hash, Name, StoreId};
+use laft_core::{Blake3Hash, Name, StoreId, Timestamp};
 
 use crate::error::{Error, Result, io};
 use crate::generation::{ConfigRecord, EtcRecord, FORMAT as GEN_FORMAT};
@@ -13,7 +13,7 @@ use crate::root::to_json;
 use crate::store::Prepared;
 use crate::view::{self, SYSTEM};
 use crate::{
-    Generation, GenerationInput, Lock, Mode, Root, State, ViewInput, ViewManifest, fault, fsx, time,
+    Generation, GenerationInput, Lock, Mode, Root, State, ViewInput, ViewManifest, fault, fsx,
 };
 
 /// What a transaction is going to build.
@@ -135,7 +135,7 @@ impl<'l> Transaction<'l> {
             generation,
             plan.previous,
             views,
-            time::format(now),
+            Timestamp::from(now).to_string(),
         );
         journal.save(root)?;
         fault::point("begin.journal")?;
@@ -245,7 +245,7 @@ impl<'l> Transaction<'l> {
             version: view::FORMAT,
             name: input.name.clone(),
             view_gen: version,
-            created: time::format(SystemTime::now()),
+            created: Timestamp::now().to_string(),
             packages: layout.packages,
             alternatives: layout.alternatives,
             users: input.users.keys().cloned().collect(),
@@ -299,7 +299,7 @@ impl<'l> Transaction<'l> {
             format: GEN_FORMAT,
             generation: number,
             parent: self.journal.previous,
-            created: time::format(SystemTime::now()),
+            created: Timestamp::now().to_string(),
             message: input.message.clone(),
             laft_version: input.laft_version.clone(),
             arch: input.arch.clone(),

@@ -4,13 +4,13 @@ use std::fs::{self, File};
 use std::io;
 use std::time::{Duration, SystemTime};
 
-use laft_core::{Blake3Hash, Name, StoreId};
+use laft_core::{Blake3Hash, Name, StoreId, Timestamp};
 use laft_pkg::Manifest;
 use rustix::fs::FlockOperation;
 
 use crate::error::{Result, io};
 use crate::journal::{Journal, view_names};
-use crate::{Generation, Lock, Root, fsx, time};
+use crate::{Generation, Lock, Root, fsx};
 
 /// How many generations garbage collection keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,7 +213,11 @@ pub fn plan_gc(lock: &Lock, policy: &GcPolicy, now: SystemTime) -> Result<GcPlan
         if newest.contains(&number) {
             reasons.push(format!("newest {}", policy.keep_generations));
         }
-        let created = time::parse(&generation.created);
+        let created = generation
+            .created
+            .parse::<Timestamp>()
+            .ok()
+            .map(SystemTime::from);
         if policy.keep_days > 0 && created.zip(horizon).is_none_or(|(c, h)| c > h) {
             reasons.push(format!("younger than {} days", policy.keep_days));
         }

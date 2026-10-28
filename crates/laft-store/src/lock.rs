@@ -1,13 +1,13 @@
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
-use std::time::SystemTime;
 
+use laft_core::Timestamp;
 use rustix::fs::FlockOperation;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result, io};
 use crate::root::{read_json, to_json};
-use crate::{Root, fsx, time};
+use crate::{Root, fsx};
 
 /// The exclusive transaction lock of a root.
 ///
@@ -99,7 +99,7 @@ impl Root {
         let info = LockInfo {
             pid: std::process::id(),
             command: command.to_owned(),
-            started: time::format(SystemTime::now()),
+            started: Timestamp::now().to_string(),
         };
         fsx::write_atomic(&self.lock_info_path(), &to_json(&info)?, 0o644)?;
         Ok(Lock {

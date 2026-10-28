@@ -43,7 +43,6 @@ mod journal;
 mod lock;
 mod root;
 mod store;
-mod time;
 mod transaction;
 mod view;
 

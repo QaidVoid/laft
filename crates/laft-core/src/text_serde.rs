@@ -1,6 +1,6 @@
 //! Serde support for identifiers, which serialize as their text form.
 
-use crate::{Blake3Hash, Dep, Name, Provide, Soname, StoreId, Variant, Version};
+use crate::{Blake3Hash, Dep, Name, Provide, Soname, StoreId, Timestamp, Variant, Version};
 
 macro_rules! serde_as_text {
     ($($ty:ty),* $(,)?) => {$(
@@ -20,7 +20,7 @@ macro_rules! serde_as_text {
 }
 
 serde_as_text!(
-    Blake3Hash, Dep, Name, Provide, Soname, StoreId, Variant, Version
+    Blake3Hash, Dep, Name, Provide, Soname, StoreId, Timestamp, Variant, Version
 );
 
 #[cfg(test)]
