@@ -3,6 +3,7 @@ resolver = "3"
 exclude = ["fuzz"]
 members = [
   "crates/laft-core",
+  "crates/laft-pkg",
 ]
 
 [workspace.package]
