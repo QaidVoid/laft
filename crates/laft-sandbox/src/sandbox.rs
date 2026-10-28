@@ -16,6 +16,7 @@ use rustix::process::{Resource, Rlimit, Signal, WaitOptions};
 use rustix::thread::{CapabilitySet, UnshareFlags};
 
 use crate::error::{Error, Step};
+use crate::fixed::{FixedRoot, FixedSandbox, NOBODY};
 use crate::sys::{self, Fork};
 
 /// The hostname and domain name inside every sandbox.
@@ -52,7 +53,7 @@ const HOST_ETC: [(&CStr, &CStr); 3] = [
 
 const ROOT_DIRS: [&CStr; 6] = [c"usr", c"build", c"out", c"proc", c"dev", c"tmp"];
 
-const ROOT_LINKS: [(&CStr, &CStr); 4] = [
+pub(crate) const ROOT_LINKS: [(&CStr, &CStr); 4] = [
     (c"bin", c"usr/bin"),
     (c"sbin", c"usr/bin"),
     (c"lib", c"usr/lib"),
@@ -157,12 +158,17 @@ impl Sandbox {
     pub fn command(&self, program: impl AsRef<OsStr>) -> Command {
         let mut inner = process::Command::new(program);
         inner.env_clear().env("PATH", "/usr/bin");
-        Command {
-            sandbox: self.clone(),
-            inner,
-            stdin_set: false,
-        }
+        Command::new(Layout::Build(self.clone()), inner)
     }
+}
+
+/// The kind of sandbox a command runs in.
+#[derive(Debug, Clone)]
+pub(crate) enum Layout {
+    /// A build sandbox.
+    Build(Sandbox),
+    /// A sandbox for a fixed program.
+    Fixed(FixedSandbox),
 }
 
 /// A command to run in a [`Sandbox`], configured like
@@ -172,12 +178,20 @@ impl Sandbox {
 /// the arguments, the environment and the standard streams can be set.
 #[derive(Debug)]
 pub struct Command {
-    sandbox: Sandbox,
+    layout: Layout,
     inner: process::Command,
     stdin_set: bool,
 }
 
 impl Command {
+    pub(crate) fn new(layout: Layout, inner: process::Command) -> Self {
+        Self {
+            layout,
+            inner,
+            stdin_set: false,
+        }
+    }
+
     /// Adds an argument.
     pub fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
         self.inner.arg(arg);
@@ -240,9 +254,9 @@ impl Command {
     /// names the step.
     pub fn spawn(self) -> Result<Child, Error> {
         let Self {
-            sandbox, mut inner, ..
+            layout, mut inner, ..
         } = self;
-        let setup = Setup::new(&sandbox)?;
+        let setup = Setup::new(&layout)?;
         let (reader, writer) =
             rustix::pipe::pipe_with(PipeFlags::CLOEXEC).map_err(|e| Error::new(Step::Pipe, e))?;
         let hook = move || setup.run(writer.as_fd());
@@ -298,48 +312,82 @@ impl Command {
 /// Everything the forked child needs, prepared before the fork so that the
 /// child never allocates.
 struct Setup {
+    namespaces: UnshareFlags,
+    /// The id maps of the new user namespace, or `None` when the caller is
+    /// root and needs none.
+    id_maps: Option<(Vec<u8>, Vec<u8>)>,
+    open_files: u64,
+    root: RootSetup,
+}
+
+/// How the child builds its root.
+enum RootSetup {
+    Build(BuildRoot),
+    Fixed(FixedRoot),
+}
+
+/// The root of a build sandbox.
+struct BuildRoot {
     view: CString,
     build: CString,
     out: CString,
-    namespaces: UnshareFlags,
-    uid_map: Vec<u8>,
-    gid_map: Vec<u8>,
-    open_files: u64,
     host_etc: bool,
 }
 
-type Failure = (Step, Errno);
+pub(crate) type Failure = (Step, Errno);
 
-fn fail(step: Step) -> impl Fn(Errno) -> Failure {
+pub(crate) fn fail(step: Step) -> impl Fn(Errno) -> Failure {
     move |errno| (step, errno)
 }
 
+/// `path` with every symlink resolved, as a C string for the child.
+pub(crate) fn resolve(path: &Path) -> Result<CString, Error> {
+    let path = std::fs::canonicalize(path).map_err(|e| Error::at(Step::Resolve, path, e))?;
+    CString::new(path.as_os_str().as_bytes())
+        .map_err(|e| Error::at(Step::Resolve, &path, std::io::Error::other(e)))
+}
+
 impl Setup {
-    fn new(sandbox: &Sandbox) -> Result<Self, Error> {
-        let resolve = |path: &Path| {
-            let path =
-                std::fs::canonicalize(path).map_err(|e| Error::at(Step::Resolve, path, e))?;
-            CString::new(path.as_os_str().as_bytes())
-                .map_err(|e| Error::at(Step::Resolve, &path, std::io::Error::other(e)))
-        };
-        let mut namespaces = UnshareFlags::NEWUSER
-            | UnshareFlags::NEWNS
+    fn new(layout: &Layout) -> Result<Self, Error> {
+        let mut namespaces = UnshareFlags::NEWNS
             | UnshareFlags::NEWPID
             | UnshareFlags::NEWIPC
             | UnshareFlags::NEWUTS;
-        if sandbox.network == Network::Isolated {
-            namespaces |= UnshareFlags::NEWNET;
-        }
+        let uid = rustix::process::getuid().as_raw();
+        let gid = rustix::process::getgid().as_raw();
+        let (root, inside, user_namespace) = match layout {
+            Layout::Build(sandbox) => {
+                if sandbox.network == Network::Isolated {
+                    namespaces |= UnshareFlags::NEWNET;
+                }
+                let root = RootSetup::Build(BuildRoot {
+                    view: resolve(&sandbox.view)?,
+                    build: resolve(&sandbox.build)?,
+                    out: resolve(&sandbox.out)?,
+                    host_etc: sandbox.network == Network::Host,
+                });
+                (root, 0, true)
+            }
+            Layout::Fixed(sandbox) => {
+                namespaces |= UnshareFlags::NEWNET;
+                let privileged = rustix::process::geteuid().is_root();
+                let root = RootSetup::Fixed(FixedRoot::new(sandbox, privileged)?);
+                (root, NOBODY, !privileged)
+            }
+        };
+        let id_maps = user_namespace.then(|| {
+            namespaces |= UnshareFlags::NEWUSER;
+            (
+                format!("{inside} {uid} 1\n").into_bytes(),
+                format!("{inside} {gid} 1\n").into_bytes(),
+            )
+        });
         let hard = rustix::process::getrlimit(Resource::Nofile).maximum;
         Ok(Self {
-            view: resolve(&sandbox.view)?,
-            build: resolve(&sandbox.build)?,
-            out: resolve(&sandbox.out)?,
             namespaces,
-            uid_map: format!("0 {} 1\n", rustix::process::getuid().as_raw()).into_bytes(),
-            gid_map: format!("0 {} 1\n", rustix::process::getgid().as_raw()).into_bytes(),
+            id_maps,
             open_files: hard.map_or(MAX_OPEN_FILES, |hard| hard.min(MAX_OPEN_FILES)),
-            host_etc: sandbox.network == Network::Host,
+            root,
         })
     }
 
@@ -355,9 +403,11 @@ impl Setup {
 
     fn enter(&self) -> Result<(), Failure> {
         sys::unshare(self.namespaces).map_err(fail(Step::Unshare))?;
-        write_proc(c"/proc/self/setgroups", b"deny")?;
-        write_proc(c"/proc/self/uid_map", &self.uid_map)?;
-        write_proc(c"/proc/self/gid_map", &self.gid_map)?;
+        if let Some((uid_map, gid_map)) = &self.id_maps {
+            write_proc(c"/proc/self/setgroups", b"deny")?;
+            write_proc(c"/proc/self/uid_map", uid_map)?;
+            write_proc(c"/proc/self/gid_map", gid_map)?;
+        }
         let open_files = Rlimit {
             current: Some(self.open_files),
             maximum: Some(self.open_files),
@@ -381,21 +431,33 @@ impl Setup {
         // allocate or take locks.
         match unsafe { sys::fork() }.map_err(fail(Step::Fork))? {
             Fork::Parent(init) => wait_for(init),
-            Fork::Child => self.build_root(),
+            Fork::Child => {
+                prepare_init()?;
+                match &self.root {
+                    RootSetup::Build(root) => root.build(),
+                    RootSetup::Fixed(root) => root.build(),
+                }
+            }
         }
     }
+}
 
-    fn build_root(&self) -> Result<(), Failure> {
-        // When the waiting process dies, for example from `Child::kill`, the
-        // kernel kills PID 1 and with it the whole namespace.
-        rustix::process::set_parent_process_death_signal(Some(Signal::KILL))
-            .map_err(fail(Step::DeathSignal))?;
-        rustix::mount::mount_change(
-            c"/",
-            MountPropagationFlags::PRIVATE | MountPropagationFlags::REC,
-        )
-        .map_err(fail(Step::Propagation))?;
+/// Ties PID 1 of the sandbox to the waiting process and makes every mount
+/// private.
+fn prepare_init() -> Result<(), Failure> {
+    // When the waiting process dies, for example from `Child::kill`, the
+    // kernel kills PID 1 and with it the whole namespace.
+    rustix::process::set_parent_process_death_signal(Some(Signal::KILL))
+        .map_err(fail(Step::DeathSignal))?;
+    rustix::mount::mount_change(
+        c"/",
+        MountPropagationFlags::PRIVATE | MountPropagationFlags::REC,
+    )
+    .map_err(fail(Step::Propagation))
+}
 
+impl BuildRoot {
+    fn build(&self) -> Result<(), Failure> {
         let nosuid = MountAttrFlags::MOUNT_ATTR_NOSUID | MountAttrFlags::MOUNT_ATTR_NODEV;
         let view = clone_tree(&self.view, nosuid | MountAttrFlags::MOUNT_ATTR_RDONLY)?;
         let build = clone_tree(&self.build, nosuid)?;
@@ -404,15 +466,7 @@ impl Setup {
         // The new root is stacked on top of the old one. Paths keep resolving
         // in the old root until `pivot_root`, so host device nodes can still
         // be cloned below.
-        let root = fresh_mount(c"tmpfs", Some(c"0755"), nosuid).map_err(fail(Step::RootFs))?;
-        rustix::mount::move_mount(
-            &root,
-            c"",
-            CWD,
-            c"/",
-            MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH,
-        )
-        .map_err(fail(Step::RootFs))?;
+        let root = new_root()?;
         for dir in ROOT_DIRS {
             rustix::fs::mkdirat(&root, dir, Mode::from_raw_mode(0o755))
                 .map_err(fail(Step::Populate))?;
@@ -427,68 +481,92 @@ impl Setup {
         let proc = fresh_mount(c"proc", None, nosuid | MountAttrFlags::MOUNT_ATTR_NOEXEC)
             .map_err(fail(Step::MountProc))?;
         attach(&proc, &root, c"proc")?;
-        self.mount_dev(&root)?;
+        mount_dev(&root)?;
         let tmp = fresh_mount(c"tmpfs", Some(c"1777"), nosuid).map_err(fail(Step::MountTmp))?;
         attach(&tmp, &root, c"tmp")?;
         if self.host_etc {
             mount_host_etc(&root)?;
         }
-        sys::mount_setattr(
-            root.as_fd(),
-            MountAttrFlags::MOUNT_ATTR_RDONLY,
-            MountAttrFlags::empty(),
-        )
-        .map_err(fail(Step::SetAttributes))?;
-
-        // With both arguments ".", the old root ends up stacked on the new
-        // one, and detaching "." removes it.
-        rustix::process::fchdir(&root).map_err(fail(Step::PivotRoot))?;
-        rustix::process::pivot_root(c".", c".").map_err(fail(Step::PivotRoot))?;
-        rustix::mount::unmount(c".", UnmountFlags::DETACH).map_err(fail(Step::PivotRoot))?;
-        rustix::process::chdir(c"/").map_err(fail(Step::PivotRoot))?;
-
-        rustix::system::sethostname(HOSTNAME.as_bytes()).map_err(fail(Step::Hostname))?;
-        rustix::system::setdomainname(HOSTNAME.as_bytes()).map_err(fail(Step::Hostname))?;
+        enter_root(&root)?;
         drop_capabilities()?;
         rustix::thread::set_no_new_privs(true).map_err(fail(Step::NoNewPrivs))?;
         rustix::process::chdir(c"/build").map_err(fail(Step::WorkingDirectory))?;
         sys::cloexec_from(3).map_err(fail(Step::Descriptors))
     }
+}
 
-    fn mount_dev(&self, root: &OwnedFd) -> Result<(), Failure> {
-        let dev = fresh_mount(
-            c"tmpfs",
-            Some(c"0755"),
-            MountAttrFlags::MOUNT_ATTR_NOSUID | MountAttrFlags::MOUNT_ATTR_NOEXEC,
+/// Creates an empty tmpfs and stacks it on `/`, where it becomes the root
+/// once [`enter_root`] runs. Paths keep resolving in the old root until
+/// then.
+pub(crate) fn new_root() -> Result<OwnedFd, Failure> {
+    let nosuid = MountAttrFlags::MOUNT_ATTR_NOSUID | MountAttrFlags::MOUNT_ATTR_NODEV;
+    let root = fresh_mount(c"tmpfs", Some(c"0755"), nosuid).map_err(fail(Step::RootFs))?;
+    rustix::mount::move_mount(
+        &root,
+        c"",
+        CWD,
+        c"/",
+        MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH,
+    )
+    .map_err(fail(Step::RootFs))?;
+    Ok(root)
+}
+
+/// Makes `root` read-only, switches to it, detaches the old root and sets
+/// the hostname.
+pub(crate) fn enter_root(root: &OwnedFd) -> Result<(), Failure> {
+    sys::mount_setattr(
+        root.as_fd(),
+        MountAttrFlags::MOUNT_ATTR_RDONLY,
+        MountAttrFlags::empty(),
+    )
+    .map_err(fail(Step::SetAttributes))?;
+
+    // With both arguments ".", the old root ends up stacked on the new
+    // one, and detaching "." removes it.
+    rustix::process::fchdir(root).map_err(fail(Step::PivotRoot))?;
+    rustix::process::pivot_root(c".", c".").map_err(fail(Step::PivotRoot))?;
+    rustix::mount::unmount(c".", UnmountFlags::DETACH).map_err(fail(Step::PivotRoot))?;
+    rustix::process::chdir(c"/").map_err(fail(Step::PivotRoot))?;
+
+    rustix::system::sethostname(HOSTNAME.as_bytes()).map_err(fail(Step::Hostname))?;
+    rustix::system::setdomainname(HOSTNAME.as_bytes()).map_err(fail(Step::Hostname))
+}
+
+/// Mounts the sandbox's `/dev` in `root`.
+pub(crate) fn mount_dev(root: &OwnedFd) -> Result<(), Failure> {
+    let dev = fresh_mount(
+        c"tmpfs",
+        Some(c"0755"),
+        MountAttrFlags::MOUNT_ATTR_NOSUID | MountAttrFlags::MOUNT_ATTR_NOEXEC,
+    )
+    .map_err(fail(Step::MountDev))?;
+    attach(&dev, root, c"dev")?;
+    for (source, name) in DEVICES {
+        let node = rustix::mount::open_tree(
+            CWD,
+            source,
+            OpenTreeFlags::OPEN_TREE_CLONE | OpenTreeFlags::OPEN_TREE_CLOEXEC,
         )
         .map_err(fail(Step::MountDev))?;
-        attach(&dev, root, c"dev")?;
-        for (source, name) in DEVICES {
-            let node = rustix::mount::open_tree(
-                CWD,
-                source,
-                OpenTreeFlags::OPEN_TREE_CLONE | OpenTreeFlags::OPEN_TREE_CLOEXEC,
-            )
-            .map_err(fail(Step::MountDev))?;
-            rustix::fs::openat(
-                &dev,
-                name,
-                OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
-                Mode::from_raw_mode(0o666),
-            )
-            .map_err(fail(Step::MountDev))?;
-            attach(&node, &dev, name)?;
-        }
-        for (link, target) in DEVICE_LINKS {
-            rustix::fs::symlinkat(target, &dev, link).map_err(fail(Step::MountDev))?;
-        }
-        sys::mount_setattr(
-            dev.as_fd(),
-            MountAttrFlags::MOUNT_ATTR_RDONLY,
-            MountAttrFlags::empty(),
+        rustix::fs::openat(
+            &dev,
+            name,
+            OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o666),
         )
-        .map_err(fail(Step::MountDev))
+        .map_err(fail(Step::MountDev))?;
+        attach(&node, &dev, name)?;
     }
+    for (link, target) in DEVICE_LINKS {
+        rustix::fs::symlinkat(target, &dev, link).map_err(fail(Step::MountDev))?;
+    }
+    sys::mount_setattr(
+        dev.as_fd(),
+        MountAttrFlags::MOUNT_ATTR_RDONLY,
+        MountAttrFlags::empty(),
+    )
+    .map_err(fail(Step::MountDev))
 }
 
 /// Creates `/etc` in `root` and binds each file of [`HOST_ETC`] the host has
@@ -561,7 +639,7 @@ fn wait_for(init: rustix::process::Pid) -> ! {
     }
 }
 
-fn clone_tree(path: &CStr, attributes: MountAttrFlags) -> Result<OwnedFd, Failure> {
+pub(crate) fn clone_tree(path: &CStr, attributes: MountAttrFlags) -> Result<OwnedFd, Failure> {
     let tree = rustix::mount::open_tree(
         CWD,
         path,
@@ -573,7 +651,7 @@ fn clone_tree(path: &CStr, attributes: MountAttrFlags) -> Result<OwnedFd, Failur
     Ok(tree)
 }
 
-fn fresh_mount(
+pub(crate) fn fresh_mount(
     filesystem: &CStr,
     mode: Option<&CStr>,
     attributes: MountAttrFlags,
@@ -586,7 +664,7 @@ fn fresh_mount(
     rustix::mount::fsmount(&context, FsMountFlags::FSMOUNT_CLOEXEC, attributes)
 }
 
-fn attach(mount: &OwnedFd, parent: &OwnedFd, name: &CStr) -> Result<(), Failure> {
+pub(crate) fn attach(mount: &OwnedFd, parent: &OwnedFd, name: &CStr) -> Result<(), Failure> {
     rustix::mount::move_mount(
         mount,
         c"",
@@ -599,7 +677,7 @@ fn attach(mount: &OwnedFd, parent: &OwnedFd, name: &CStr) -> Result<(), Failure>
 
 /// Empties the bounding set, so that executing the command as uid 0 grants
 /// it no capabilities, and clears the ambient set.
-fn drop_capabilities() -> Result<(), Failure> {
+pub(crate) fn drop_capabilities() -> Result<(), Failure> {
     for bit in 0..u64::BITS {
         match rustix::thread::remove_capability_from_bounding_set(CapabilitySet::from_bits_retain(
             1 << bit,

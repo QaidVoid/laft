@@ -1,6 +1,6 @@
 //! Namespaces and mounts for Laft.
 //!
-//! Two programs isolate processes with this crate:
+//! Three kinds of processes are isolated with this crate:
 //!
 //! - The builder runs every build phase unprivileged in a [`Sandbox`]: new
 //!   user, mount, PID, IPC, UTS and network namespaces, a root that holds
@@ -10,6 +10,10 @@
 //!   the host's `/etc/resolv.conf`, `/etc/hosts` and `/etc/nsswitch.conf`
 //!   read-only into an otherwise empty `/etc`, so that names resolve. An
 //!   isolated sandbox has no `/etc` at all.
+//! - Assembly runs every fixed program, such as a trigger that computes a
+//!   cache from the tree being assembled, in a [`FixedSandbox`]: the tree
+//!   as `/usr` with only named directories writable, a given configuration
+//!   as `/etc`, and the program running as [`NOBODY`].
 //! - The setuid helper that enters a non-system view calls [`enter_view`],
 //!   which replaces the system generation's `usr` with the view in a private
 //!   mount namespace and binds the system's privileged files on top.
@@ -25,6 +29,7 @@
 
 mod enter;
 mod error;
+mod fixed;
 mod sandbox;
 mod sys;
 
@@ -33,4 +38,5 @@ mod test_support;
 
 pub use enter::enter_view;
 pub use error::Error;
+pub use fixed::{FixedSandbox, NOBODY};
 pub use sandbox::{Command, HOSTNAME, MAX_OPEN_FILES, Network, Sandbox};

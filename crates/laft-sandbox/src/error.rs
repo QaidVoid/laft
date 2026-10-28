@@ -49,7 +49,7 @@ steps! {
     Hostname => "setting the hostname",
     Capabilities => "dropping capabilities",
     NoNewPrivs => "setting no_new_privs",
-    WorkingDirectory => "changing to /build",
+    WorkingDirectory => "changing to the working directory",
     Descriptors => "closing inherited descriptors",
     Exec => "executing the command",
     Wait => "waiting for the command",
@@ -57,6 +57,11 @@ steps! {
     InvalidPath => "expecting an absolute path below /usr, got",
     OpenTarget => "opening a mount target",
     NotRegularFile => "expecting a regular file at",
+    InvalidWritable => "expecting a directory below usr reached without symlinks, got",
+    Writable => "attaching a writable directory",
+    BindEtc => "binding the configuration over /etc",
+    MountScratch => "mounting a private tmpfs",
+    SwitchIds => "switching to user nobody",
 }
 
 impl Step {
@@ -71,7 +76,7 @@ impl Step {
     }
 }
 
-/// An error from setting up a build sandbox or from entering a view.
+/// An error from setting up a sandbox or from entering a view.
 ///
 /// The message names the step that failed and, where there is one, the path
 /// it was about, for example `mounting /proc: Operation not permitted (os
