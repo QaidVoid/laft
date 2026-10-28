@@ -433,6 +433,48 @@ fn core_dumps_are_off_and_open_files_are_limited() {
 }
 
 #[test]
+fn host_network_sees_only_the_host_name_resolution_files() {
+    let fixture = Fixture::new();
+    let mut expected = String::new();
+    let mut present = Vec::new();
+    for name in ["hosts", "nsswitch.conf", "resolv.conf"] {
+        if let Ok(contents) = std::fs::read_to_string(Path::new("/etc").join(name)) {
+            expected.push_str(&format!("== {name}\n{contents}"));
+            present.push(name);
+        }
+    }
+    for name in &present {
+        expected.push_str(&format!("{name}\n"));
+    }
+    let host = fixture.sandbox.clone().network(Network::Host);
+    let script = "for f in hosts nsswitch.conf resolv.conf; do test -e /etc/$f && { echo \"== $f\"; cat /etc/$f; }; done; ls -A /etc; touch /etc/laft-probe; cat /proc/self/mountinfo >&2";
+    let command = host.command("/usr/bin/sh").arg("-c").arg(script);
+    let Some(output) = supported(command.output()) else {
+        return;
+    };
+    assert_eq!(stdout(&output), expected);
+    let errors = String::from_utf8(output.stderr).unwrap();
+    assert!(errors.contains("Read-only file system"), "{errors}");
+    for name in present {
+        let target = format!("/etc/{name}");
+        let mount = errors
+            .lines()
+            .find(|line| line.split(' ').nth(4) == Some(target.as_str()))
+            .unwrap_or_else(|| panic!("no {target} mount in {errors}"));
+        let options: BTreeSet<&str> = mount.split(' ').nth(5).unwrap().split(',').collect();
+        assert!(
+            options.is_superset(&BTreeSet::from(["ro", "nosuid", "nodev"])),
+            "{mount}"
+        );
+    }
+
+    let Some(output) = fixture.run("test -e /etc && echo present; true") else {
+        return;
+    };
+    assert_eq!(stdout(&output), "");
+}
+
+#[test]
 fn setup_failure_names_the_step() {
     let fixture = Fixture::new();
     std::fs::remove_dir(fixture.out()).unwrap();

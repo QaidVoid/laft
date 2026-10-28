@@ -42,6 +42,14 @@ const DEVICE_LINKS: [(&CStr, &CStr); 4] = [
     (c"stderr", c"/proc/self/fd/2"),
 ];
 
+/// The host files bound into `/etc` with [`Network::Host`], when the host
+/// has them.
+const HOST_ETC: [(&CStr, &CStr); 3] = [
+    (c"/etc/resolv.conf", c"resolv.conf"),
+    (c"/etc/hosts", c"hosts"),
+    (c"/etc/nsswitch.conf", c"nsswitch.conf"),
+];
+
 const ROOT_DIRS: [&CStr; 6] = [c"usr", c"build", c"out", c"proc", c"dev", c"tmp"];
 
 const ROOT_LINKS: [(&CStr, &CStr); 4] = [
@@ -55,10 +63,14 @@ const ROOT_LINKS: [(&CStr, &CStr); 4] = [
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Network {
     /// A new network namespace whose only interface is a loopback interface
-    /// that is down, so nothing is reachable.
+    /// that is down, so nothing is reachable. The sandbox has no `/etc`.
     #[default]
     Isolated,
     /// The caller's network namespace, for the phase that fetches sources.
+    ///
+    /// So that names resolve, the host's `/etc/resolv.conf`, `/etc/hosts`
+    /// and `/etc/nsswitch.conf` are bound read-only into an otherwise empty,
+    /// read-only `/etc`. A file the host lacks is left out.
     Host,
 }
 
@@ -82,6 +94,7 @@ pub enum Network {
 /// | `/proc` | a new procfs that shows only the sandbox's processes |
 /// | `/dev` | a read-only tmpfs with `null`, `zero`, `full`, `random`, `urandom` and `tty` bound from the host, and `fd`, `stdin`, `stdout`, `stderr` links |
 /// | `/tmp` | a private tmpfs |
+/// | `/etc` | only with [`Network::Host`]: the host's name resolution files, read-only |
 ///
 /// Before the command is executed, its capability bounding set is emptied,
 /// `no_new_privs` is set, the core size limit is 0 and the open file limit
@@ -292,6 +305,7 @@ struct Setup {
     uid_map: Vec<u8>,
     gid_map: Vec<u8>,
     open_files: u64,
+    host_etc: bool,
 }
 
 type Failure = (Step, Errno);
@@ -325,6 +339,7 @@ impl Setup {
             uid_map: format!("0 {} 1\n", rustix::process::getuid().as_raw()).into_bytes(),
             gid_map: format!("0 {} 1\n", rustix::process::getgid().as_raw()).into_bytes(),
             open_files: hard.map_or(MAX_OPEN_FILES, |hard| hard.min(MAX_OPEN_FILES)),
+            host_etc: sandbox.network == Network::Host,
         })
     }
 
@@ -415,6 +430,9 @@ impl Setup {
         self.mount_dev(&root)?;
         let tmp = fresh_mount(c"tmpfs", Some(c"1777"), nosuid).map_err(fail(Step::MountTmp))?;
         attach(&tmp, &root, c"tmp")?;
+        if self.host_etc {
+            mount_host_etc(&root)?;
+        }
         sys::mount_setattr(
             root.as_fd(),
             MountAttrFlags::MOUNT_ATTR_RDONLY,
@@ -471,6 +489,48 @@ impl Setup {
         )
         .map_err(fail(Step::MountDev))
     }
+}
+
+/// Creates `/etc` in `root` and binds each file of [`HOST_ETC`] the host has
+/// into it, read-only. The directory becomes read-only with the root.
+fn mount_host_etc(root: &OwnedFd) -> Result<(), Failure> {
+    rustix::fs::mkdirat(root, c"etc", Mode::from_raw_mode(0o755)).map_err(fail(Step::Populate))?;
+    let etc = rustix::fs::openat(
+        root,
+        c"etc",
+        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(fail(Step::Populate))?;
+    for (source, name) in HOST_ETC {
+        let file = match rustix::mount::open_tree(
+            CWD,
+            source,
+            OpenTreeFlags::OPEN_TREE_CLONE | OpenTreeFlags::OPEN_TREE_CLOEXEC,
+        ) {
+            Ok(file) => file,
+            Err(Errno::NOENT) => continue,
+            Err(errno) => return Err((Step::MountEtc, errno)),
+        };
+        sys::mount_setattr(
+            file.as_fd(),
+            MountAttrFlags::MOUNT_ATTR_RDONLY
+                | MountAttrFlags::MOUNT_ATTR_NOSUID
+                | MountAttrFlags::MOUNT_ATTR_NODEV
+                | MountAttrFlags::MOUNT_ATTR_NOEXEC,
+            MountAttrFlags::empty(),
+        )
+        .map_err(fail(Step::MountEtc))?;
+        rustix::fs::openat(
+            &etc,
+            name,
+            OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o644),
+        )
+        .map_err(fail(Step::MountEtc))?;
+        attach(&file, &etc, name)?;
+    }
+    Ok(())
 }
 
 fn write_proc(path: &CStr, data: &[u8]) -> Result<(), Failure> {

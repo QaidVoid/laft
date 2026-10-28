@@ -6,7 +6,10 @@
 //!   user, mount, PID, IPC, UTS and network namespaces, a root that holds
 //!   only the build view as `/usr` plus fixed writable `/build` and `/out`
 //!   directories, no capabilities and `no_new_privs`. The phase that fetches
-//!   sources keeps the host network with [`Network::Host`].
+//!   sources keeps the host network with [`Network::Host`], which also binds
+//!   the host's `/etc/resolv.conf`, `/etc/hosts` and `/etc/nsswitch.conf`
+//!   read-only into an otherwise empty `/etc`, so that names resolve. An
+//!   isolated sandbox has no `/etc` at all.
 //! - The setuid helper that enters a non-system view calls [`enter_view`],
 //!   which replaces the system generation's `usr` with the view in a private
 //!   mount namespace and binds the system's privileged files on top.

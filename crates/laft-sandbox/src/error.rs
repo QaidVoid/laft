@@ -44,6 +44,7 @@ steps! {
     MountProc => "mounting /proc",
     MountDev => "mounting /dev",
     MountTmp => "mounting /tmp",
+    MountEtc => "binding the host's name resolution files into /etc",
     PivotRoot => "switching to the new root",
     Hostname => "setting the hostname",
     Capabilities => "dropping capabilities",
