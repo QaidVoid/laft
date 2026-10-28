@@ -1,0 +1,19 @@
+[package]
+name = "laft-enter"
+description = "The setuid helper that runs a command inside a Laft view"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+laft-core.workspace = true
+laft-sandbox.workspace = true
+mimalloc.workspace = true
+rustix = { workspace = true, features = ["fs", "process", "thread"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

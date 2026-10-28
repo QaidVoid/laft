@@ -6,6 +6,7 @@ members = [
   "crates/laft-boot",
   "crates/laft-core",
   "crates/laft-elf",
+  "crates/laft-enter",
   "crates/laft-fetch",
   "crates/laft-index",
   "crates/laft-pkg",

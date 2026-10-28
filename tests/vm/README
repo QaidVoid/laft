@@ -38,3 +38,55 @@ Each test builds a disk image in a temporary directory, writes the ESP and
 the root from a Laft generation, boots it with QEMU and OVMF, and drives
 the serial console with expect-style scripts. The result is read from the
 console and from the image after shutdown.
+
+laft-enter
+
+The unit tests of crates/laft-enter cover its decisions: the command line
+and the view name rule, the limits on arguments and environment, the
+owner, mode, type and size checks on view.json and privileged.json, their
+format, name and version matching, the links /run/laft/system and
+/laft/views/<name>/current, authorization by uid and gid, the order of the
+privilege drop and its verification, the environment handed to the
+command, the default shell, the path search, the working directory
+fallback and the exit statuses 126 and 127. An integration test checks
+that the binary refuses to run without the setuid bit. The mount sequence
+is tested in crates/laft-sandbox inside a user namespace. What remains
+needs a setuid root binary on a booted generation and will be tested here,
+each as an unprivileged user unless stated otherwise:
+
+- A user listed neither in a view's allowed uids nor through a group in
+  its allowed gids is refused with exit status 1 and the message
+  "laft-enter: uid <uid> may not enter view "<name>"". A user in a listed
+  group is allowed, and so is root, who stays root inside.
+- Inside a view, /usr shows the view, /etc/static shows the system's
+  configuration, /proc/self/mountinfo shows the view ro,nosuid,nodev, and
+  the host's mount table is unchanged afterwards. A USB drive mounted on
+  the host while the session runs appears inside.
+- In a view that inherits the system, doas true works. In a view that pins
+  a different linux-pam, /usr/bin/doas is the view's own unprivileged file
+  and doas fails without raising privileges.
+- With /laft/views/dev/current pointing at a version other than the one
+  privileged.json records for dev (arranged as root), entering prints the
+  note that privileged programs are unavailable, binds none, and works.
+- LD_PRELOAD=/tmp/evil.so laft-enter dev true never creates the marker
+  file evil.so writes as root. MIMALLOC_ variables change nothing but the
+  allocator's own diagnostics.
+- Replacing /laft/views/dev/current with a symlink to a directory outside
+  /laft/views, or view.json or privileged.json with a symlink, a FIFO, a
+  file owned by another user or a group writable file (each done as root)
+  makes laft-enter refuse with exit status 1.
+- laft gc does not remove a view version while a laft-enter session for
+  it runs, and removes it once the session and every process that
+  inherited the lock have ended.
+- A caller that closes descriptors 0 to 2, passes extra descriptors, sets
+  RLIMIT_NOFILE to 3, ignores or blocks every signal, sets umask 0, or
+  starts from a directory it cannot access either enters correctly or
+  exits 1 with nothing mounted on the host. The extra descriptors are not
+  open in the command, but the view.json lock descriptor is.
+- Inside the session, /proc/self/status shows the caller's ids in every
+  slot, no capabilities, and NoNewPrivs 0. Sending signals to laft-enter
+  during setup never leaves a mount behind on the host.
+- laft-enter dev missing-program exits 127, and laft-enter dev /etc/passwd
+  exits 126.
+- Nested use works: laft-enter other inside a session of dev mounts other
+  and binds the system's privileged files.

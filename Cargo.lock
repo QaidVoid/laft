@@ -411,6 +411,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "laft-enter"
+version = "0.1.0"
+dependencies = [
+ "laft-core",
+ "laft-sandbox",
+ "mimalloc",
+ "rustix",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "laft-fetch"
 version = "0.1.0"
 dependencies = [
