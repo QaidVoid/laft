@@ -7,7 +7,7 @@ use crate::test_support::{
 
 /// A client of `core` with its own cache and state directories.
 struct Client {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     fetcher: Fetcher,
     state: IndexState,
     repo: Repo,
@@ -20,7 +20,7 @@ impl Client {
             fetcher: Fetcher::new(config(&dir.path().join("cache"))),
             state: IndexState::new(dir.path().join("state")),
             repo: repo(root),
-            _dir: dir,
+            dir,
         }
     }
 
@@ -277,4 +277,25 @@ fn a_cached_index_that_differs_from_the_accepted_one_is_refused() {
         attempts.last().map(Error::kind),
         Some(ErrorKind::HashMismatch { .. })
     ));
+}
+
+#[test]
+fn a_corrupt_state_record_fails_the_sync_instead_of_using_the_cache() {
+    let root = TestKey::generate();
+    let server = Server::start();
+    server.put_all(&publish(&root, None, &index(T0)));
+    let client = Client::new(&root);
+    client.sync(&[server.url()]).expect("first sync");
+    let record = client.dir.path().join("state/core.json");
+    std::fs::write(record, b"not json").expect("writable");
+    for urls in [vec![server.url()], vec![refusing_url()]] {
+        let error = client.sync(&urls).expect_err("the state is unusable");
+        assert!(
+            matches!(
+                error.kind(),
+                ErrorKind::Trust(e) if matches!(e.kind(), laft_index::ErrorKind::CorruptState { .. })
+            ),
+            "{error}"
+        );
+    }
 }

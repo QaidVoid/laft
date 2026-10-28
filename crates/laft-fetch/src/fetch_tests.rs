@@ -470,3 +470,21 @@ fn a_stale_partial_file_that_does_not_match_is_downloaded_again() {
         .collect();
     assert_eq!(ranges, [Some("bytes=4000-".to_owned()), None]);
 }
+
+#[test]
+fn a_transfer_cut_off_mid_body_is_retried() {
+    let server = Server::start();
+    let keys = bytes(5000, 12);
+    server.put("keys.json", &keys);
+    server.fault("keys.json", Fault::Truncate(1000));
+    let cache = tempfile::tempdir().expect("temporary directory");
+    let fetcher = Fetcher::new(config(cache.path()));
+    let fetched = fetcher.fetch(
+        &http(&server.url()),
+        "keys.json",
+        ObjectKind::Keys,
+        &mut quiet(),
+    );
+    assert_eq!(fetched.expect("the second attempt succeeds"), keys);
+    assert_eq!(server.requests("keys.json").len(), 2);
+}
