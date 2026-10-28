@@ -141,6 +141,20 @@ fn invalid_provider_defaults_are_rejected() {
 }
 
 #[test]
+fn versioned_pkg_config_provider_default_is_rejected() {
+    let mut bad = index(T0);
+    bad.defaults
+        .providers
+        .insert("pc:zlib=1.3".into(), "zlib".parse().expect("valid name"));
+    assert!(bad.validate().is_err());
+    let mut good = index(T0);
+    good.defaults
+        .providers
+        .insert("pc:zlib".into(), "zlib".parse().expect("valid name"));
+    assert!(good.validate().is_ok());
+}
+
+#[test]
 fn decompression_stops_at_the_limit() {
     let bytes = zstd::encode_all(&[b'a'; 1001][..], 1).expect("compressible");
     assert_eq!(decompress(&bytes, 1001).expect("at the limit").len(), 1001);

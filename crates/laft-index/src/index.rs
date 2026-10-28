@@ -95,7 +95,9 @@ pub struct Defaults {
     /// The default member of each alternatives group, by group.
     pub alternatives: BTreeMap<Name, Name>,
     /// The preferred package when several provide the same capability, by
-    /// the capability's text form, for example `so:libjpeg.so.8`.
+    /// the capability's kind and name without a version, for example
+    /// `so:libjpeg.so.8` or `pc:zlib`. A `pc:` key applies to every
+    /// dependency on that module, whatever its version constraints.
     pub providers: BTreeMap<String, Name>,
 }
 
@@ -176,8 +178,13 @@ impl Index {
                 "`expires` is later than `timestamp` and at most 30 days after it".into(),
             ));
         }
-        for provide in self.defaults.providers.keys() {
-            provide.parse::<Provide>().map_err(|e| err(e.to_string()))?;
+        for key in self.defaults.providers.keys() {
+            let provide = key.parse::<Provide>().map_err(|e| err(e.to_string()))?;
+            if let Provide::Pc(_, Some(_)) = provide {
+                return Err(err(format!(
+                    "provider default {key:?} names a pkg-config module with a version"
+                )));
+            }
         }
         let mut ids = BTreeSet::new();
         let mut identities = BTreeSet::new();
