@@ -90,7 +90,7 @@ fn payload_changes_after_scanning_name_the_package_and_path() {
     let (meta, manifest) = package(crate::scan(root.path()).expect("payload scans"));
     put(root.path(), "usr/a", b"modified", 0o444);
     let err = write_package(
-        Vec::new(),
+        &mut Vec::new(),
         root.path(),
         &meta,
         &manifest,
@@ -103,7 +103,7 @@ fn payload_changes_after_scanning_name_the_package_and_path() {
 
     put(root.path(), "usr/a", b"longer content", 0o444);
     let err = write_package(
-        Vec::new(),
+        &mut Vec::new(),
         root.path(),
         &meta,
         &manifest,
@@ -115,7 +115,7 @@ fn payload_changes_after_scanning_name_the_package_and_path() {
     fs::remove_file(root.path().join("usr/a")).expect("can remove");
     std::os::unix::fs::symlink("elsewhere", root.path().join("usr/a")).expect("can symlink");
     let err = write_package(
-        Vec::new(),
+        &mut Vec::new(),
         root.path(),
         &meta,
         &manifest,
@@ -132,7 +132,7 @@ fn metadata_must_be_the_one_the_manifest_names() {
     let (mut meta, manifest, _) = build(root.path());
     meta.abi_epoch = 1;
     let err = write_package(
-        Vec::new(),
+        &mut Vec::new(),
         root.path(),
         &meta,
         &manifest,
@@ -147,8 +147,9 @@ fn compression_sets_the_checksum_flag_and_level() {
     let root = tempfile::tempdir().expect("temporary directory");
     sample_payload(root.path());
     let (meta, manifest, development) = build(root.path());
-    let publish = write_package(
-        Vec::new(),
+    let mut publish = Vec::new();
+    write_package(
+        &mut publish,
         root.path(),
         &meta,
         &manifest,

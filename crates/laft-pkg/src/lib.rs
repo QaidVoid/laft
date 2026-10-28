@@ -54,7 +54,8 @@
 //!     installed_size: 21,
 //! };
 //! let manifest = Manifest::new(meta.identity(), Blake3Hash::of(&meta.to_json()?), entries)?;
-//! let file = write_package(Vec::new(), payload.path(), &meta, &manifest, Compression::DEVELOPMENT)?;
+//! let mut file = Vec::new();
+//! write_package(&mut file, payload.path(), &meta, &manifest, Compression::DEVELOPMENT)?;
 //!
 //! let reader = Reader::new(file.as_slice())?;
 //! assert_eq!(reader.manifest().store_id(), manifest.store_id());

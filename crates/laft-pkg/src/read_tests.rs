@@ -306,8 +306,9 @@ fn system_account_owners_are_applied() {
         }
     }
     let (meta, manifest) = crate::test_support::package(entries);
-    let bytes = crate::write_package(
-        Vec::new(),
+    let mut bytes = Vec::new();
+    crate::write_package(
+        &mut bytes,
         root.path(),
         &meta,
         &manifest,

@@ -45,7 +45,7 @@ impl Compression {
 }
 
 /// Writes the package file for `manifest` and `meta` to `out`, reading file
-/// content from the payload directory `payload`, and returns `out`.
+/// content from the payload directory `payload`.
 ///
 /// The archive is byte-reproducible: it depends only on the metadata, the
 /// manifest, the file contents and `compression`. Header fields come from the
@@ -58,14 +58,15 @@ impl Compression {
 /// Fails when the metadata is invalid or is not the one the manifest names,
 /// when a payload file is missing, is not a regular file or differs from its
 /// manifest entry in size or content, or when writing fails. The error names
-/// the package and the path.
+/// the package and the path. On error `out` holds an incomplete package file,
+/// so write to a temporary file and rename it into place only on success.
 pub fn write_package<W: Write>(
-    out: W,
+    out: &mut W,
     payload: &Path,
     meta: &Meta,
     manifest: &Manifest,
     compression: Compression,
-) -> Result<W, Error> {
+) -> Result<(), Error> {
     let meta_bytes = meta.to_json()?;
     manifest.check_meta(meta, &meta_bytes)?;
     let package = manifest.package();
@@ -74,12 +75,12 @@ pub fn write_package<W: Write>(
 }
 
 fn write_archive<W: Write>(
-    out: W,
+    out: &mut W,
     payload: &Path,
     meta_bytes: &[u8],
     manifest: &Manifest,
     compression: Compression,
-) -> Result<W, Error> {
+) -> Result<(), Error> {
     let mut encoder = zstd::stream::write::Encoder::new(out, compression.level)?;
     encoder.include_checksum(true)?;
     if compression.long_distance {
@@ -99,7 +100,8 @@ fn write_archive<W: Write>(
             .map_err(|e| e.at(entry.path()))?;
     }
     archive.out.write_all(&[0; 2 * tar::BLOCK])?;
-    Ok(archive.out.finish()?)
+    archive.out.finish()?;
+    Ok(())
 }
 
 struct Archive<W: Write> {

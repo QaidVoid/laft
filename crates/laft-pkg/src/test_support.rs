@@ -111,7 +111,8 @@ pub(crate) fn sample_payload(root: &Path) {
 /// Scans `root` and writes its package file.
 pub(crate) fn build(root: &Path) -> (Meta, Manifest, Vec<u8>) {
     let (meta, manifest) = package(scan(root).expect("payload scans"));
-    let bytes = write_package(Vec::new(), root, &meta, &manifest, Compression::DEVELOPMENT)
+    let mut bytes = Vec::new();
+    write_package(&mut bytes, root, &meta, &manifest, Compression::DEVELOPMENT)
         .expect("package writes");
     (meta, manifest, bytes)
 }

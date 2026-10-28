@@ -183,9 +183,15 @@ impl Pkg {
         let manifest =
             Manifest::new(meta.identity(), meta_hash, entries).expect("test manifest is valid");
         let path = env.pkgs().join(manifest.package().file_name());
-        let file = fs::File::create(&path).expect("can create the package file");
-        write_package(file, &payload, &meta, &manifest, Compression::DEVELOPMENT)
-            .expect("the package writes");
+        let mut file = fs::File::create(&path).expect("can create the package file");
+        write_package(
+            &mut file,
+            &payload,
+            &meta,
+            &manifest,
+            Compression::DEVELOPMENT,
+        )
+        .expect("the package writes");
         let id = manifest.store_id();
         let package = manifest.package();
         let dir = id.dir_name(&package.name, &package.version, package.variant);
