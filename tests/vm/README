@@ -8,11 +8,12 @@ laft-boot
 
 The unit tests of crates/laft-boot cover its decisions: the kernel command
 line, laft-boot.json, mount options, superblock probing, device lookup in a
-fake sysfs, generation selection, boot counting and fallback, the boot menu
-rewrite, the order and flags of the mount plans, and the root layout check.
-One test runs the generation mount, the read-only /laft and the move of the
-kernel filesystems in a user and mount namespace. What remains needs PID 1
-on a real kernel and will be tested here:
+fake sysfs, generation selection, boot counting, the fallback with a power
+loss after each of its steps, the boot menu rewrite, the order and flags of
+the mount plans, and the root layout check. One test runs the generation
+mount, the read-only /laft and the move of the kernel filesystems in a user
+and mount namespace. What remains needs PID 1 on a real kernel and will be
+tested here:
 
 - Plain boot from an ext4 root without LUKS reaches a getty.
   /run/laft/system and /run/laft/booted point at mounts/<N>, and
@@ -28,7 +29,12 @@ on a real kernel and will be tested here:
 - A generation whose init fails is booted the configured number of times,
   then the machine falls back to the last good generation, in place when
   the kernel and initramfs are the same and through a rewritten
-  default_entry and a reboot otherwise.
+  default_entry and a reboot otherwise. In both cases default_entry names
+  the last good generation afterwards, and a second reboot boots it
+  again.
+- Cutting the power while laft-boot falls back, before the boot menu is
+  rewritten and again before boot.json is saved, still ends in the last
+  good generation, with the failed one marked bad and one fallback event.
 - laft.break=premount and laft.break=preswitch reach the shell, and
   leaving it continues the boot.
 - fsck exit code 2 reboots, and 4 drops to the shell with the repair hint.

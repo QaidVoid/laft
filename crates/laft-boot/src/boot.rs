@@ -20,7 +20,7 @@ use rustix::mount::{MountFlags, UnmountFlags};
 
 use crate::cmdline::Cmdline;
 use crate::config::{Config, Filesystem};
-use crate::counting::{self, Decision};
+use crate::counting::{self, Step, Then};
 use crate::device::{DeviceSpec, Devices};
 use crate::generation::{self, Generation};
 use crate::log::{Log, console};
@@ -289,9 +289,9 @@ impl Boot {
         Ok(selection.generation)
     }
 
-    /// Counts this boot against the trial of `generation` and falls back to
-    /// the last good generation when the trial is used up. Falling back to
-    /// another kernel reboots through the boot loader.
+    /// Counts this boot against the trial of `generation` and carries out
+    /// the plan of [`counting::decide`], which may fall back to the last
+    /// good generation in place or through a reboot.
     fn count(&mut self, generation: Generation, config: &Config) -> Generation {
         let path = state_path();
         let state = match fs::read(&path).map(|bytes| BootState::parse(&bytes)) {
@@ -308,67 +308,42 @@ impl Boot {
             }
         };
         let gens = gens_dir();
-        let number = generation.number;
-        let tries = config.tries;
-        let decision = counting::decide(
+        let plan = counting::decide(
             state,
-            number,
-            tries,
+            &generation,
+            config.tries,
             self.cmdline.notries,
-            |n| generation::read(&gens, n).is_ok(),
+            |n| generation::read(&gens, n),
             Timestamp::now(),
         );
-        match decision {
-            Decision::Unchanged => generation,
-            Decision::Counted(state) => {
-                self.save(state);
-                generation
-            }
-            Decision::Exhausted(state) => {
-                self.log.error(&format!(
-                    "generation {number} failed {tries} boots and there is no known good \
-                     generation; booting it anyway"
-                ));
-                self.save(state);
-                generation
-            }
-            Decision::Fallback { state, to } => {
-                let Ok(target) = generation::read(&gens, to) else {
-                    self.save(state);
-                    return generation;
-                };
-                let link = gens.join("default");
-                let tmp = Path::new(NEWROOT).join("laft/tmp/default.laft-boot");
-                if let Err(e) = files::replace_symlink(&link, &to.to_string(), &tmp) {
-                    self.log
-                        .error(&format!("cannot point {} at {to}: {e}", link.display()));
-                }
-                self.save(state);
-                if target.kernel_id == generation.kernel_id
-                    && target.initramfs == generation.initramfs
-                {
-                    self.log.warn(&format!(
-                        "generation {number} failed {tries} boots; continuing with generation {to}"
-                    ));
-                    return target;
-                }
-                match self.select_boot_entry(to, config) {
-                    Ok(()) => {
-                        self.log.warn(&format!(
-                            "generation {number} failed {tries} boots; rebooting into \
-                             generation {to}"
-                        ));
-                        shell::reboot()
+        for step in plan.steps {
+            match step {
+                Step::SetDefault(to) => {
+                    let link = gens.join("default");
+                    let tmp = Path::new(NEWROOT).join("laft/tmp/default.laft-boot");
+                    if let Err(e) = files::replace_symlink(&link, &to.to_string(), &tmp) {
+                        self.log
+                            .error(&format!("cannot point {} at {to}: {e}", link.display()));
                     }
-                    Err(e) => {
+                }
+                Step::SetBootEntry { to, otherwise } => {
+                    if let Err(e) = self.select_boot_entry(to, config) {
                         self.log.error(&format!(
                             "cannot make the boot loader start generation {to}: {e}; \
-                             continuing with generation {number}"
+                             continuing with generation {}, and the next boot falls back again",
+                            otherwise.number
                         ));
-                        generation
+                        return otherwise;
                     }
                 }
+                Step::Save(state) => self.save(state),
+                Step::Warn(message) => self.log.warn(&message),
+                Step::Error(message) => self.log.error(&message),
             }
+        }
+        match plan.then {
+            Then::Boot(generation) => generation,
+            Then::Reboot => shell::reboot(),
         }
     }
 
