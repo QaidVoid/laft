@@ -48,3 +48,30 @@ fn walk_lists_parents_first_without_following_links() {
     );
     assert!(walk(tree, "usr/missing").unwrap().is_empty());
 }
+
+#[test]
+fn walk_and_subdirs_never_enter_a_symlinked_directory() {
+    let dir = laft_test::tempdir();
+    let outside = dir.path().join("outside");
+    fs::create_dir_all(outside.join("info/sub")).unwrap();
+    fs::write(outside.join("info/host"), b"").unwrap();
+    let tree = dir.path().join("tree");
+    fs::create_dir_all(tree.join("usr")).unwrap();
+    symlink(&outside, tree.join("usr/share")).unwrap();
+    symlink(outside.join("info"), tree.join("usr/info")).unwrap();
+
+    assert!(walk(&tree, "usr/share/info").unwrap().is_empty());
+    assert!(walk(&tree, "usr/info").unwrap().is_empty());
+    assert!(subdirs(&tree, "usr/share/info").unwrap().is_empty());
+    assert!(subdirs(&tree, "usr/info").unwrap().is_empty());
+}
+
+#[test]
+fn walk_refuses_paths_that_are_not_relative_and_normalized() {
+    let dir = laft_test::tempdir();
+    fs::create_dir_all(dir.path().join("usr")).unwrap();
+    for rel in ["", "/usr", "usr/../usr", "./usr", "usr//x"] {
+        assert!(walk(dir.path(), rel).is_err(), "{rel:?}");
+        assert!(subdirs(dir.path(), rel).is_err(), "{rel:?}");
+    }
+}

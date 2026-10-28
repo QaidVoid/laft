@@ -15,7 +15,7 @@ use std::time::Duration;
 use laft_core::{Instances, StoreId, TRIGGER_TABLE_VERSION, TRIGGERS, Trigger, glob_matches};
 use laft_sandbox::{FixedSandbox, NOBODY};
 use laft_store::{TriggerRecord, TriggerStatus};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result, Warning, corrupt, io};
 use crate::{fsx, tree};
@@ -28,6 +28,9 @@ const STDERR_LIMIT: usize = 4096;
 
 /// The name of the trigger records in a generation.
 pub(crate) const RECORDS_FILE: &str = "triggers.json";
+
+/// The format version of `triggers.json`.
+const RECORDS_VERSION: u32 = 1;
 
 /// A store entry whose files are in the tree, with the triggers its
 /// payload activates.
@@ -54,6 +57,7 @@ pub(crate) fn run(
         Some(dir) => read_records(dir)?,
         None => BTreeMap::new(),
     };
+    let etc = etc_digest(tree)?;
     let mut records = BTreeMap::new();
     for trigger in TRIGGERS {
         let mut inputs: Vec<String> = contributors
@@ -71,12 +75,15 @@ pub(crate) fn run(
                 Some(key) => format!("{}:{key}", trigger.name),
                 None => trigger.name.to_owned(),
             };
-            let tool = trigger
-                .tools
-                .iter()
-                .find(|tool| matches!(tree::lstat(tree, &tool[1..]), Ok(Some(_))));
+            let mut tool = None;
+            for candidate in trigger.tools {
+                if tree::lstat(tree, &candidate[1..])?.is_some() {
+                    tool = Some(candidate);
+                    break;
+                }
+            }
             let Some(tool) = tool else {
-                let fingerprint = fingerprint(trigger, &instance, &inputs, None)?;
+                let fingerprint = fingerprint(trigger, &instance, &inputs, None, &etc)?;
                 records.insert(
                     instance,
                     record(fingerprint, TriggerStatus::Skipped, vec![]),
@@ -84,7 +91,7 @@ pub(crate) fn run(
                 continue;
             };
             let tool_id = owner(&tool[1..]);
-            let fingerprint = fingerprint(trigger, &instance, &inputs, tool_id)?;
+            let fingerprint = fingerprint(trigger, &instance, &inputs, tool_id, &etc)?;
             let outputs: Vec<String> = trigger
                 .outputs
                 .iter()
@@ -136,24 +143,56 @@ fn record(
     }
 }
 
+/// The trigger records of a tree, stored as `triggers.json`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Records {
+    /// The format version, [`RECORDS_VERSION`].
+    version: u32,
+    /// The record of every trigger instance.
+    records: BTreeMap<String, TriggerRecord>,
+}
+
+/// Only the version of `triggers.json`, which is read first.
+#[derive(Deserialize)]
+struct RecordsVersion {
+    version: u32,
+}
+
 /// Writes `records` as `triggers.json` into the tree directory `dir`, with
 /// mode `0o444`.
 pub(crate) fn write_records(dir: &Path, records: &BTreeMap<String, TriggerRecord>) -> Result<()> {
     let path = dir.join(RECORDS_FILE);
-    let bytes = laft_core::to_canonical_json(records)
+    let value = Records {
+        version: RECORDS_VERSION,
+        records: records.clone(),
+    };
+    let bytes = laft_core::to_canonical_json(&value)
         .map_err(|e| corrupt(&path, format!("not canonical JSON: {e}")))?;
     fsx::write_new(&path, &bytes, 0o444)
 }
 
-/// The trigger records of the tree directory `dir`, or none when it has
-/// no `triggers.json`.
+/// The trigger records of the tree directory `dir`. They only serve to
+/// reuse outputs, so a tree without `triggers.json`, or with one of
+/// another format version, has none.
+///
+/// # Errors
+///
+/// Fails when the file cannot be read, or claims the current version but
+/// does not match it.
 pub(crate) fn read_records(dir: &Path) -> Result<BTreeMap<String, TriggerRecord>> {
     let path = dir.join(RECORDS_FILE);
-    match fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| corrupt(&path, e)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
-        Err(e) => Err(io(&path)(e)),
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(e) => return Err(io(&path)(e)),
+    };
+    match serde_json::from_slice::<RecordsVersion>(&bytes) {
+        Ok(found) if found.version == RECORDS_VERSION => {}
+        _ => return Ok(BTreeMap::new()),
     }
+    let records: Records = serde_json::from_slice(&bytes).map_err(|e| corrupt(&path, e))?;
+    Ok(records.records)
 }
 
 /// The instance keys of `trigger` in `tree`: `None` for a trigger with one
@@ -189,6 +228,8 @@ fn has_activating_file(tree: &Path, dir: &str, trigger: &Trigger) -> Result<bool
 }
 
 /// What a fingerprint covers: everything a trigger's output depends on.
+/// The tools run with the tree's `etc` as `/etc` and may read it, so its
+/// whole digest is included.
 #[derive(Serialize)]
 struct Fingerprint<'a> {
     trigger: &'a str,
@@ -196,6 +237,7 @@ struct Fingerprint<'a> {
     table: u32,
     inputs: &'a [String],
     tool: Option<String>,
+    etc: String,
 }
 
 fn fingerprint(
@@ -203,6 +245,7 @@ fn fingerprint(
     instance: &str,
     inputs: &[String],
     tool: Option<StoreId>,
+    etc: &laft_core::Blake3Hash,
 ) -> Result<laft_core::Blake3Hash> {
     let value = Fingerprint {
         trigger: trigger.name,
@@ -210,9 +253,34 @@ fn fingerprint(
         table: TRIGGER_TABLE_VERSION,
         inputs,
         tool: tool.map(|id| id.to_string()),
+        etc: etc.to_string(),
     };
     let bytes = laft_core::to_canonical_json(&value)
         .map_err(|e| Error::Invalid(format!("trigger {instance}: {e}")))?;
+    Ok(laft_core::Blake3Hash::of(&bytes))
+}
+
+/// The digest of the tree's `etc`: the type, permission bits and content or
+/// link target of every entry.
+fn etc_digest(tree: &Path) -> Result<laft_core::Blake3Hash> {
+    let mut entries = BTreeMap::new();
+    for path in tree::walk(tree, "etc")? {
+        let full = tree.join(&path);
+        let metadata = fs::symlink_metadata(&full).map_err(io(&full))?;
+        let mode = metadata.permissions().mode() & 0o7777;
+        let entry = if metadata.is_dir() {
+            format!("dir {mode:o}")
+        } else if metadata.file_type().is_symlink() {
+            let target = fs::read_link(&full).map_err(io(&full))?;
+            format!("link {}", target.to_string_lossy())
+        } else {
+            let bytes = fs::read(&full).map_err(io(&full))?;
+            format!("file {mode:o} {}", laft_core::Blake3Hash::of(&bytes))
+        };
+        entries.insert(path, entry);
+    }
+    let bytes = laft_core::to_canonical_json(&entries)
+        .map_err(|e| Error::Invalid(format!("the digest of etc: {e}")))?;
     Ok(laft_core::Blake3Hash::of(&bytes))
 }
 
@@ -296,41 +364,52 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
-    /// Runs the instance and returns its outputs, sorted. On failure the
-    /// tree is left as it was.
+    /// Runs the instance and returns its outputs, sorted. On failure,
+    /// everything the run added to the tree is removed again.
     fn execute(&self) -> Result<Vec<String>, Failure> {
-        let root = fsx::is_root();
         let mut created = Vec::new();
         let mut before = BTreeMap::new();
+        let result = self.execute_into(&mut created, &mut before);
+        if result.is_err() {
+            let mut added: BTreeSet<String> = created.into_iter().collect();
+            for output in self.outputs {
+                let found = tree::walk(self.tree, output).unwrap_or_default();
+                added.extend(found.into_iter().filter(|p| !before.contains_key(p)));
+            }
+            for path in added.iter().rev() {
+                remove(&self.tree.join(path));
+            }
+        }
+        result
+    }
+
+    /// The steps of [`Self::execute`]. Fills `created` with the directories
+    /// it creates and `before` with the identity of every entry the output
+    /// directories held before the tool ran.
+    fn execute_into(
+        &self,
+        created: &mut Vec<String>,
+        before: &mut BTreeMap<String, Identity>,
+    ) -> Result<Vec<String>, Failure> {
+        let root = fsx::is_root();
         for output in self.outputs {
-            if let Err(reason) = self.create_output(output, &mut created)? {
-                for path in created.iter().rev() {
-                    remove(&self.tree.join(path));
-                }
+            if let Err(reason) = self.create_output(output, created)? {
                 return Err(Failure::Tool(reason));
             }
             for path in std::iter::once(output.clone()).chain(tree::walk(self.tree, output)?) {
                 if let Some(metadata) = tree::lstat(self.tree, &path)? {
-                    before.insert(path, (metadata.dev(), metadata.ino()));
+                    before.insert(path, Identity::of(&metadata));
                 }
             }
             if root {
                 chown(&self.tree.join(output), NOBODY)?;
             }
         }
-        let ran = self.run_tool();
-        let after = self.settle(&before, root)?;
-        let mut outputs: BTreeSet<String> = created.into_iter().collect();
+        self.run_tool()?;
+        let after = self.settle(before, root)?;
+        let mut outputs: BTreeSet<String> = created.iter().cloned().collect();
         outputs.extend(after);
-        match ran {
-            Ok(()) => Ok(outputs.into_iter().collect()),
-            Err(failure) => {
-                for path in outputs.iter().rev() {
-                    remove(&self.tree.join(path));
-                }
-                Err(failure)
-            }
-        }
+        Ok(outputs.into_iter().collect())
     }
 
     /// Creates the output directory `output` and its missing parents,
@@ -451,10 +530,11 @@ impl Run<'_> {
 
     /// After a run: gives every new entry of the output directories back to
     /// root and makes new files read-only, checks that every entry that was
-    /// there before is still the same file, and returns the new entries.
+    /// there before is still the same, unchanged file, and returns the new
+    /// entries.
     fn settle(
         &self,
-        before: &BTreeMap<String, (u64, u64)>,
+        before: &BTreeMap<String, Identity>,
         root: bool,
     ) -> Result<Vec<String>, Failure> {
         let mut new = Vec::new();
@@ -487,19 +567,39 @@ impl Run<'_> {
             }
         }
         for (path, identity) in before {
-            let same =
-                tree::lstat(self.tree, path)?.is_some_and(|m| (m.dev(), m.ino()) == *identity);
+            let same = tree::lstat(self.tree, path)?.is_some_and(|m| Identity::of(&m) == *identity);
             if !same {
                 return Err(Failure::Fatal(Error::Trigger {
                     instance: self.trigger.name.to_owned(),
                     reason: format!(
-                        "{} replaced or removed /{path}, which it may not change",
+                        "{} replaced, changed or removed /{path}, which it may not change",
                         self.tool
                     ),
                 }));
             }
         }
         Ok(new)
+    }
+}
+
+/// What identifies an entry that existed before a tool ran. A directory is
+/// its inode, because adding entries to it is allowed. Anything else also
+/// carries its change time, which every write, permission change and link
+/// updates, so that a file rewritten in place is noticed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Identity {
+    dev: u64,
+    ino: u64,
+    ctime: Option<(i64, i64)>,
+}
+
+impl Identity {
+    fn of(metadata: &fs::Metadata) -> Self {
+        Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            ctime: (!metadata.is_dir()).then(|| (metadata.ctime(), metadata.ctime_nsec())),
+        }
     }
 }
 

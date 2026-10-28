@@ -5,15 +5,49 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use crate::error::{Result, io};
+use crate::error::{Error, Result, io};
 
 /// Every entry below `tree/rel`, as paths relative to `tree`, parents
 /// before children and siblings in byte order. Symlinks are listed and not
-/// followed. A missing `tree/rel` has no entries.
+/// followed. A `tree/rel` that is missing, is not a directory or has a
+/// symlink among its components has no entries.
+///
+/// # Errors
+///
+/// Fails when `rel` is not a relative path of normal components, or when a
+/// directory cannot be read.
 pub(crate) fn walk(tree: &Path, rel: &str) -> Result<Vec<String>> {
     let mut out = Vec::new();
-    walk_into(tree, rel, &mut out)?;
+    if real_dir(tree, rel)? {
+        walk_into(tree, rel, &mut out)?;
+    }
     Ok(out)
+}
+
+/// Whether `tree/rel` is a directory reached without a symlink.
+///
+/// # Errors
+///
+/// Fails when `rel` is not a relative path of normal components.
+fn real_dir(tree: &Path, rel: &str) -> Result<bool> {
+    if rel
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(Error::Invalid(format!(
+            "{rel:?} is not a relative path inside a tree"
+        )));
+    }
+    let mut end = 0;
+    for part in rel.split('/') {
+        end += part.len();
+        match lstat(tree, &rel[..end])? {
+            Some(metadata) if metadata.is_dir() => {}
+            _ => return Ok(false),
+        }
+        end += 1;
+    }
+    Ok(true)
 }
 
 fn walk_into(tree: &Path, rel: &str, out: &mut Vec<String>) -> Result<()> {
@@ -48,8 +82,17 @@ fn walk_into(tree: &Path, rel: &str, out: &mut Vec<String>) -> Result<()> {
 }
 
 /// The names of the directories directly in `tree/rel`, sorted. Symlinks
-/// to directories are left out.
+/// to directories are left out, and a `tree/rel` reached through a symlink
+/// has none.
+///
+/// # Errors
+///
+/// Fails when `rel` is not a relative path of normal components, or when
+/// the directory cannot be read.
 pub(crate) fn subdirs(tree: &Path, rel: &str) -> Result<Vec<String>> {
+    if !real_dir(tree, rel)? {
+        return Ok(Vec::new());
+    }
     let dir = tree.join(rel);
     let items = match fs::read_dir(&dir) {
         Ok(items) => items,

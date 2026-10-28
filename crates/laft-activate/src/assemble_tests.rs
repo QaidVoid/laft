@@ -692,3 +692,62 @@ fn recovery_renders_the_boot_menu_again() {
     );
     assert!(recover(&lock, &esp).unwrap().is_empty());
 }
+
+#[test]
+fn a_changed_etc_runs_the_triggers_again() {
+    let Some(mut fixture) = Fixture::new() else {
+        return;
+    };
+    fixture.apply(&fixture.system(), &Host::default()).unwrap();
+    fixture.etc.files.insert(
+        "/etc/fonts/local.conf".into(),
+        File {
+            text: Some("<fontconfig/>\n".into()),
+            ..File::default()
+        },
+    );
+    let second = fixture.apply(&fixture.system(), &Host::default()).unwrap();
+    let cache = "usr/lib/fontconfig/cache/fonts.cache";
+    assert_ne!(
+        inode(&fixture.generation_dir(1).join(cache)),
+        inode(&fixture.generation_dir(2).join(cache))
+    );
+    assert_eq!(
+        second.triggers["fontconfig"].status,
+        laft_store::TriggerStatus::Ok
+    );
+}
+
+#[test]
+fn a_trigger_that_rewrites_an_existing_file_in_place_fails_the_assembly() {
+    let Some(fixture) = Fixture::new() else {
+        return;
+    };
+    let shipped = "usr/lib/fontconfig/cache/shipped.cache";
+    let fonts = Pkg::new("fonts", "2")
+        .file("usr/share/fonts/a.ttf", b"font")
+        .file(shipped, b"shipped\n")
+        .trigger("fontconfig")
+        .build(&fixture.pkgs);
+    let script = format!(
+        "#!/bin/sh\nchmod u+w /{shipped} 2>/dev/null\necho rewritten > /{shipped} 2>/dev/null\nexit 0\n"
+    );
+    let fontconfig = Pkg::new("fontconfig", "3")
+        .file("usr/bin/fc-cache", script.as_bytes())
+        .build(&fixture.pkgs);
+    let mut packages = fixture.system();
+    packages.retain(|p| p.name != "fonts" && p.name != "fontconfig");
+    packages.extend([&fonts, &fontconfig]);
+    match fixture.apply(&packages, &Host::default()) {
+        Ok(_) => {
+            assert_eq!(
+                fs::read(fixture.store_file(&fonts, shipped)).unwrap(),
+                b"shipped\n"
+            );
+        }
+        Err(Error::Trigger { reason, .. }) => {
+            assert!(reason.contains(shipped), "{reason}");
+        }
+        Err(other) => panic!("{other}"),
+    }
+}
