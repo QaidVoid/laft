@@ -1,0 +1,23 @@
+[package]
+name = "laft-fuzz"
+description = "Fuzz targets for Laft parsers of untrusted input"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[[bin]]
+name = "reader"
+path = "fuzz_targets/reader.rs"
+test = false
+doc = false
+bench = false
+
+[dependencies]
+laft-pkg = { version = "0.1.0", path = "../crates/laft-pkg" }
+libfuzzer-sys = "0.4.13"
+tempfile = "3.27.0"
+zstd = { version = "0.14.3", default-features = false }
