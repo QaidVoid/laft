@@ -536,6 +536,46 @@ fn a_background_start_that_crashes_leaves_no_pid_file() {
 }
 
 #[test]
+fn an_immediate_background_start_is_ready_once_the_service_runs() {
+    let fixture = Fixture::new();
+    let mut spec = resolve("udevd", &Service::longrun(&["/bin/true"]));
+    spec.early = true;
+    fixture.install(&spec);
+    let mut daemon = Command::new("/bin/sh");
+    daemon.args(["-c", "exec sleep 100 0</dev/null"]);
+    let started = std::time::Instant::now();
+    fixture
+        .launcher
+        .start_detached(&spec, daemon)
+        .expect("never fails");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(fixture.failures(), "");
+    assert!(fixture.ready("udevd"));
+    early_udevd(&fixture);
+    fixture.launcher.stop_early().expect("stops");
+}
+
+#[test]
+fn an_immediate_background_start_whose_exec_fails_is_not_ready() {
+    let fixture = Fixture::new();
+    let mut spec = resolve("udevd", &Service::longrun(&["/bin/true"]));
+    spec.early = true;
+    fixture.install(&spec);
+    let mut failing = Command::new("/bin/sh");
+    failing.args(["-c", "printf '!' >&0; exec sleep 100 0</dev/null"]);
+    let started = std::time::Instant::now();
+    fixture
+        .launcher
+        .start_detached(&spec, failing)
+        .expect("never fails");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(fixture.failures(), "udevd failed\n");
+    assert!(!fixture.ready("udevd"));
+    early_udevd(&fixture);
+    fixture.launcher.stop_early().expect("stops");
+}
+
+#[test]
 fn a_ready_background_start_records_its_pid_and_start_time() {
     let fixture = Fixture::new();
     let mut spec = resolve("udevd", &Service::longrun(&["/bin/true"]));

@@ -18,7 +18,7 @@
 mod accounts;
 mod process;
 
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::fs::OpenOptionsExt;
@@ -54,6 +54,10 @@ pub const SETUP_FAILED: i32 = 111;
 
 /// How long to wait between two looks at a ready marker or a process.
 const POLL: Duration = Duration::from_millis(50);
+
+/// What a detached start writes to its status pipe when it will not
+/// execute the service.
+const FAILED: &[u8] = b"!";
 
 /// How `laft svc exec` was invoked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +117,33 @@ impl Launcher {
     /// ready, or any setup step fails. The service did not start, and the
     /// caller exits with [`SETUP_FAILED`].
     pub fn exec(&self, name: &str, mode: ExecMode) -> Result<i32, Error> {
+        if mode != ExecMode::Detached {
+            return self.exec_spec(name, mode);
+        }
+        // Standard input of the detached process is the status pipe of
+        // `start_detached`. It moves to a close-on-exec descriptor, so it
+        // closes exactly when the service is executed, and a byte on it
+        // reports that this never happened.
+        let status = match rustix::io::fcntl_dupfd_cloexec(rustix::stdio::stdin(), 3) {
+            Ok(status) => File::from(status),
+            Err(e) => {
+                let _ = rustix::io::write(rustix::stdio::stdin(), FAILED);
+                return Err(setup_error(name, "keep the status pipe", e));
+            }
+        };
+        let result = File::open("/dev/null")
+            .and_then(|null| Ok(rustix::stdio::dup2_stdin(&null)?))
+            .map_err(|e| Error::Setup {
+                name: name.to_owned(),
+                step: "replace standard input",
+                source: e,
+            })
+            .and_then(|()| self.exec_spec(name, mode));
+        let _ = (&status).write_all(FAILED);
+        result
+    }
+
+    fn exec_spec(&self, name: &str, mode: ExecMode) -> Result<i32, Error> {
         let spec = self.load(name)?;
         if mode == ExecMode::Background {
             return self.exec_background(&spec);
@@ -136,7 +167,7 @@ impl Launcher {
         self.prepare_dirs(&spec, &accounts, &credentials)?;
         apply_limits(&spec)?;
         rustix::process::umask(rustix::fs::Mode::from_raw_mode(spec.umask));
-        let _notify = self.readiness(&spec)?;
+        let _notify = self.readiness(&spec, mode)?;
         drop_privileges(&spec.name, &credentials)?;
         let source = command(&spec, &credentials, argv).exec();
         Err(Error::Exec {
@@ -414,9 +445,18 @@ impl Launcher {
     /// is recorded and announced as a failure, and a pid file whose
     /// process exited is removed. A process still running after the
     /// timeout keeps its pid file, so that it is stopped at shutdown.
+    ///
+    /// Standard input of `detached` is the write end of a status pipe. The
+    /// pipe closes without data when the service is executed, and receives
+    /// a byte when that fails. An immediately ready service is marked
+    /// ready here once the pipe closed and the process still runs.
     fn start_detached(&self, spec: &Spec, mut detached: Command) -> Result<i32, Error> {
         let name = &spec.name;
-        let mut child = match detached.spawn() {
+        let (reader, writer) = rustix::pipe::pipe_with(PipeFlags::CLOEXEC)
+            .map_err(|e| setup_error(name, "create the status pipe", e))?;
+        let spawned = detached.stdin(Stdio::from(writer)).spawn();
+        drop(detached);
+        let mut child = match spawned {
             Ok(child) => child,
             Err(source) => {
                 eprintln!("laft svc: service {name}: cannot start: {source}");
@@ -439,16 +479,33 @@ impl Launcher {
         })?;
         fs::write(&pid_file, format!("{} {started}\n", child.id())).map_err(io(&pid_file))?;
         let deadline = Instant::now() + Duration::from_millis(spec.ready_timeout_ms());
+        let mut status = Some(reader);
         let mut exited = false;
         while Instant::now() < deadline {
-            if self.ready_marker(name).exists() {
-                return Ok(0);
-            }
+            let executed = match &status {
+                Some(reader) => match exec_status(reader) {
+                    ExecStatus::Pending => false,
+                    ExecStatus::Executed => {
+                        status = None;
+                        true
+                    }
+                    ExecStatus::Failed => break,
+                },
+                None => {
+                    std::thread::sleep(POLL);
+                    true
+                }
+            };
             if child.try_wait().map_err(wait_error)?.is_some() {
                 exited = true;
                 break;
             }
-            std::thread::sleep(POLL);
+            if executed && spec.ready == SpecReady::Immediate {
+                self.mark_ready(name)?;
+            }
+            if self.ready_marker(name).exists() {
+                return Ok(0);
+            }
         }
         if exited {
             let _ = fs::remove_file(&pid_file);
@@ -532,7 +589,11 @@ impl Launcher {
 
     /// Sets up readiness before the privilege drop, and returns the write
     /// end of a notification pipe, which must stay open until `execve`.
-    fn readiness(&self, spec: &Spec) -> Result<Option<OwnedFd>, Error> {
+    ///
+    /// An immediately ready service is marked ready here, right before
+    /// `execve`, unless it runs detached. Then the process that started it
+    /// marks it once the `execve` succeeded.
+    fn readiness(&self, spec: &Spec, mode: ExecMode) -> Result<Option<OwnedFd>, Error> {
         let name = &spec.name;
         let helper = |stdin: Stdio| {
             Command::new(SELF_EXE)
@@ -551,7 +612,9 @@ impl Launcher {
         };
         match spec.ready {
             SpecReady::Immediate => {
-                self.mark_ready(name)?;
+                if mode != ExecMode::Detached {
+                    self.mark_ready(name)?;
+                }
                 Ok(None)
             }
             SpecReady::Notify { fd } => {
@@ -781,6 +844,44 @@ fn create_parent(path: &Path) -> Result<(), Error> {
     match path.parent() {
         Some(dir) => fs::create_dir_all(dir).map_err(io(dir)),
         None => Ok(()),
+    }
+}
+
+/// What the status pipe of a detached start says.
+enum ExecStatus {
+    /// Nothing yet.
+    Pending,
+    /// The pipe closed without data: the service was executed.
+    Executed,
+    /// A byte arrived: the service will not be executed.
+    Failed,
+}
+
+/// Waits up to [`POLL`] for news on the status pipe `reader`.
+fn exec_status(reader: &OwnedFd) -> ExecStatus {
+    let timeout = Timespec {
+        tv_sec: 0,
+        tv_nsec: POLL.as_nanos().try_into().unwrap_or(0),
+    };
+    let mut fds = [PollFd::new(reader, PollFlags::IN)];
+    match rustix::event::poll(&mut fds, Some(&timeout)) {
+        Ok(n) if n > 0 => {}
+        _ => return ExecStatus::Pending,
+    }
+    let mut byte = [0];
+    match rustix::io::read(reader, &mut byte) {
+        Ok(0) => ExecStatus::Executed,
+        Ok(_) => ExecStatus::Failed,
+        Err(Errno::INTR | Errno::AGAIN) => ExecStatus::Pending,
+        Err(_) => ExecStatus::Failed,
+    }
+}
+
+fn setup_error(name: &str, step: &'static str, errno: Errno) -> Error {
+    Error::Setup {
+        name: name.to_owned(),
+        step,
+        source: errno.into(),
     }
 }
 
