@@ -192,7 +192,12 @@ fn parse<T>(
     Ok(entries)
 }
 
+/// A decimal id. Only ASCII digits are accepted, so a sign is malformed
+/// rather than dropped when the database is written back.
 fn id(text: &str) -> Result<u32, &'static str> {
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("invalid id");
+    }
     text.parse().map_err(|_| "invalid id")
 }
 

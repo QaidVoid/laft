@@ -27,7 +27,9 @@ pub(crate) struct Merged {
 /// Laft manages are exactly the declared ones, and memberships of other
 /// users are kept. `hashes` holds the password hash of every user that
 /// declares one. Other users keep their current hash, and new ones are
-/// locked.
+/// locked. When the accounts are mutable, a declared group keeps the
+/// password and administrators of its `gshadow` entry. Otherwise both are
+/// reset.
 ///
 /// Fails with [`Error::IdCollision`] when a kept, undeclared entry has the
 /// id of a declared one.
@@ -165,9 +167,14 @@ pub(crate) fn merge(
                     entry.hash.clone_from(hash);
                     entry
                 }
-                (Some(hash), None) => locked_shadow(&p.name, hash),
+                (Some(hash), None) => new_shadow(&p.name, hash),
                 (None, Some(entry)) => entry,
-                (None, None) => locked_shadow(&p.name, "!"),
+                // A hash kept in `passwd` itself stays valid. A new shadow
+                // entry must carry it, because the shadow hash wins.
+                (None, None) if !matches!(p.password.as_str(), "x" | "") => {
+                    new_shadow(&p.name, &p.password)
+                }
+                (None, None) => new_shadow(&p.name, "!"),
             }
         })
         .collect();
@@ -187,6 +194,12 @@ pub(crate) fn merge(
                 members: g.members.clone(),
             };
             match old_gshadow.remove(&g.name) {
+                Some(entry) if declared.groups.contains_key(&g.name) && declared.mutable => {
+                    Gshadow {
+                        members: g.members.clone(),
+                        ..entry
+                    }
+                }
                 Some(_) if declared.groups.contains_key(&g.name) => fresh(),
                 Some(mut entry) => {
                     entry.members.retain(|m| !gone.contains(m.as_str()));
@@ -211,7 +224,7 @@ pub(crate) fn merge(
 }
 
 /// A new shadow entry with `hash` and empty aging fields.
-fn locked_shadow(name: &str, hash: &str) -> Shadow {
+fn new_shadow(name: &str, hash: &str) -> Shadow {
     Shadow {
         name: name.to_owned(),
         hash: hash.to_owned(),

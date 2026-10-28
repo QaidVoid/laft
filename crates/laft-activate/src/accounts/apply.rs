@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 
 use laft_core::{Blake3Hash, system_gid};
 use laft_store::{Lock, Root};
-use rustix::fs::FlockOperation;
+use rustix::fs::{FlockOperation, Mode, OFlags};
+use rustix::io::Errno;
 
 use super::db::Databases;
 use super::merge::merge;
@@ -22,6 +23,10 @@ use crate::state::{self, CopiesRecord, Record};
 /// How long to wait for another program to release the account database
 /// lock.
 const LOCK_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The largest password file that is read. Every supported hash is far
+/// shorter.
+const MAX_SECRET: u64 = 4096;
 
 /// What writing the account databases changed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -83,6 +88,21 @@ fn write_accounts(root: &Root, declared: &Declared) -> Result<AccountsReport> {
             .insert((*name).to_owned(), Blake3Hash::of(text.as_bytes()));
     }
     copies.save(root)?;
+    for (name, user) in &declared.users {
+        allocations.users.entry(name.clone()).or_insert(user.uid);
+    }
+    for (name, group) in &declared.groups {
+        allocations.groups.entry(name.clone()).or_insert(group.gid);
+    }
+    // Until the databases are in place, either the old or the new accounts
+    // can be in them, so both count as managed.
+    allocations
+        .managed_users
+        .extend(declared.users.keys().cloned());
+    allocations
+        .managed_groups
+        .extend(declared.groups.keys().cloned());
+    allocations.save(root)?;
     let shadow_gid = system_gid("shadow")
         .ok_or_else(|| Error::Invalid("the static accounts have no shadow group".into()))?;
     for (name, text) in &rendered {
@@ -92,12 +112,7 @@ fn write_accounts(root: &Root, declared: &Declared) -> Result<AccountsReport> {
         };
         write_database(&etc.join(name), text.as_bytes(), mode, owner)?;
     }
-    for (name, user) in &declared.users {
-        allocations.users.entry(name.clone()).or_insert(user.uid);
-    }
-    for (name, group) in &declared.groups {
-        allocations.groups.entry(name.clone()).or_insert(group.gid);
-    }
+    crate::fault::point("accounts.databases")?;
     allocations.managed_users = declared.users.keys().cloned().collect();
     allocations.managed_groups = declared.groups.keys().cloned().collect();
     allocations.save(root)?;
@@ -164,22 +179,30 @@ fn read_hashes(root: &Root, declared: &Declared) -> Result<BTreeMap<String, Stri
     Ok(hashes)
 }
 
-/// Reads a password hash from the secret file `path`, which must belong to
-/// the user running Laft, root on a real system, and be inaccessible to
-/// its group and others. One trailing line feed is removed.
+/// Reads a password hash from the secret file `path`, which must be a
+/// regular file of at most [`MAX_SECRET`] bytes that belongs to the user
+/// running Laft, root on a real system, and is inaccessible to its group
+/// and others. One trailing line feed is removed.
 fn read_secret(path: &Path) -> Result<String> {
     let secret = |reason| Error::Secret {
         path: path.to_path_buf(),
         reason,
     };
-    let mut file = match File::open(path) {
-        Ok(file) => file,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            return Err(secret("the password file does not exist"));
-        }
-        Err(e) => return Err(io(path)(e)),
+    // `O_NONBLOCK` keeps a FIFO from blocking the open. The type check below
+    // then refuses it.
+    let flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK;
+    let mut file = match rustix::fs::open(path, flags, Mode::empty()) {
+        Ok(fd) => File::from(fd),
+        Err(Errno::NOENT) => return Err(secret("the password file does not exist")),
+        Err(e) => return Err(io(path)(e.into())),
     };
     let metadata = file.metadata().map_err(io(path))?;
+    if !metadata.is_file() {
+        return Err(secret("the password file is not a regular file"));
+    }
+    if metadata.len() > MAX_SECRET {
+        return Err(secret("the password file is too large for a hash"));
+    }
     if metadata.uid() != rustix::process::geteuid().as_raw() {
         return Err(secret("the password file is not owned by root"));
     }
@@ -189,7 +212,9 @@ fn read_secret(path: &Path) -> Result<String> {
         ));
     }
     let mut text = String::new();
-    file.read_to_string(&mut text)
+    file.by_ref()
+        .take(MAX_SECRET)
+        .read_to_string(&mut text)
         .map_err(|_| Error::InvalidHash(path.to_path_buf()))?;
     let hash = text.strip_suffix('\n').unwrap_or(&text);
     if !valid_hash(hash) {

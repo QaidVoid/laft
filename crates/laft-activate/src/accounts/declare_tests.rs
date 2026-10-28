@@ -217,3 +217,68 @@ fn invalid_names_fields_and_references_are_all_reported() {
         "{errors:?}"
     );
 }
+
+#[test]
+fn root_and_registry_ids_are_reserved_for_the_registry_accounts() {
+    for (field, id) in [("uid", 0), ("uid", 100), ("gid", 0), ("gid", 100)] {
+        let mut users = base_users();
+        if field == "uid" {
+            users.accounts.insert(
+                "admin".into(),
+                User {
+                    uid: Some(id),
+                    ..User::default()
+                },
+            );
+        } else {
+            users.groups.insert(
+                "staff".into(),
+                Group {
+                    gid: Some(id),
+                    ..Group::default()
+                },
+            );
+        }
+        let errors = resolve_fresh(&users).expect_err("rejected");
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::ReservedId { id: got, .. } if *got == id)),
+            "{field} {id}: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn account_paths_must_be_normalized_absolute_paths() {
+    for path in [
+        "/../../tmp/x",
+        "/home/../etc",
+        "/home/./bob",
+        "/home//bob",
+        "/home/bob/",
+        "home/bob",
+    ] {
+        for field in ["home", "shell", "password_file"] {
+            let mut user = User::default();
+            match field {
+                "home" => user.home = Some(path.into()),
+                "shell" => user.shell = Some(path.into()),
+                _ => user.password_file = Some(path.into()),
+            }
+            let errors = resolve_fresh(&users_with(&[("bob", user)])).expect_err("rejected");
+            assert!(
+                errors.iter().any(
+                    |e| matches!(e, ConfigError::InvalidValue { context, .. } if context.ends_with(field))
+                ),
+                "{field} {path:?}: {errors:?}"
+            );
+        }
+    }
+    let user = User {
+        home: Some("/".into()),
+        shell: Some("/usr/bin/zsh".into()),
+        ..User::default()
+    };
+    assert!(resolve_fresh(&users_with(&[("bob", user)])).is_ok());
+}

@@ -289,10 +289,15 @@ fn malformed_databases_stop_before_anything_is_written() {
     let env = Env::new();
     let lock = env.lock();
     declare_generation(&lock, 1, &users_with(&[]));
-    env.write("etc/passwd", "root:x:zero:0::/root:/bin/sh\n");
-    let err = apply_accounts(&lock, 1).expect_err("malformed");
-    assert_eq!(err.code(), Some("C0410"));
-    assert!(err.to_string().ends_with("passwd:1: invalid id"), "{err}");
+    for passwd in [
+        "root:x:zero:0::/root:/bin/sh\n",
+        "root:x:+0:0::/root:/bin/sh\n",
+    ] {
+        env.write("etc/passwd", passwd);
+        let err = apply_accounts(&lock, 1).expect_err("malformed");
+        assert_eq!(err.code(), Some("C0410"));
+        assert!(err.to_string().ends_with("passwd:1: invalid id"), "{err}");
+    }
     assert!(!env.path("etc/shadow").exists());
 }
 
@@ -342,4 +347,105 @@ fn new_entries_are_appended_in_id_order() {
         .map(|l| l.split(':').next().unwrap_or_default().to_owned())
         .collect();
     assert_eq!(lines, ["bob", "root", "sshd", "zed", "amy", "nobody"]);
+}
+
+#[test]
+fn a_crash_after_the_databases_are_written_still_marks_their_accounts_managed() {
+    let env = Env::new();
+    with_bob(&env);
+    let older = users_with(&[("alice", alice())]);
+    let newer = users_with(&[("alice", alice()), ("carol", User::default())]);
+    let lock = env.lock();
+    declare_generation(&lock, 1, &older);
+    declare_generation(&lock, 2, &newer);
+    apply_accounts(&lock, 1).expect("applies");
+
+    crate::fault::fail_at(Some("accounts.databases"));
+    let interrupted = apply_accounts(&lock, 2);
+    crate::fault::fail_at(None);
+    assert!(matches!(interrupted, Err(Error::Injected(_))));
+    assert!(has_entry(&env.read("etc/passwd"), "carol"));
+
+    let report = apply_accounts(&lock, 1).expect("rollback applies");
+    assert_eq!(report.removed_users, ["carol"]);
+    assert!(!has_entry(&env.read("etc/passwd"), "carol"));
+}
+
+#[test]
+fn a_password_file_that_is_not_a_regular_file_is_refused() {
+    let env = Env::new();
+    with_bob(&env);
+    let secrets = env.path("etc/laft/secrets");
+    fs::create_dir_all(secrets.join("dir")).expect("can create");
+    fs::set_permissions(secrets.join("dir"), fs::Permissions::from_mode(0o700)).expect("can chmod");
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        secrets.join("fifo"),
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::from_raw_mode(0o600),
+        0,
+    )
+    .expect("can create a FIFO");
+    for name in ["dir", "fifo"] {
+        let lock = env.lock();
+        let user = User {
+            password_file: Some(format!("/etc/laft/secrets/{name}")),
+            ..User::default()
+        };
+        declare_generation(&lock, 1, &users_with(&[("alice", user)]));
+        let err = apply_accounts(&lock, 1).expect_err("rejected");
+        assert_eq!(err.code(), Some("C0412"), "{name}: {err}");
+        fs::remove_dir_all(crate::state::gen_dir(lock.root(), 1)).expect("can remove");
+    }
+}
+
+#[test]
+fn a_declared_group_keeps_its_administrators_and_password_when_mutable() {
+    let env = Env::new();
+    env.write("etc/group", "wheel:x:10:alice\n");
+    env.write("etc/gshadow", "wheel:$6$salt$grouphash:alice:alice\n");
+    apply(&env, 1, &users_with(&[("alice", alice())]));
+    let wheel = env
+        .read("etc/gshadow")
+        .lines()
+        .find(|l| l.starts_with("wheel:"))
+        .map(str::to_owned);
+    assert_eq!(wheel.as_deref(), Some("wheel:$6$salt$grouphash:alice:"));
+}
+
+#[test]
+fn a_kept_user_with_its_hash_in_passwd_is_not_locked() {
+    let env = Env::new();
+    env.write(
+        "etc/passwd",
+        "dave:$6$salt$davehash:1600:1600::/home/dave:/bin/sh\n",
+    );
+    env.write("etc/group", "dave:x:1600:\n");
+    apply(&env, 1, &users_with(&[]));
+    let dave = env
+        .read("etc/shadow")
+        .lines()
+        .find(|l| l.starts_with("dave:"))
+        .map(str::to_owned);
+    assert_eq!(dave.as_deref(), Some("dave:$6$salt$davehash:::::::"));
+}
+
+#[test]
+fn a_tampered_accounts_record_is_refused() {
+    let env = Env::new();
+    let lock = env.lock();
+    declare_generation(&lock, 1, &users_with(&[("alice", alice())]));
+    let path = crate::state::gen_dir(lock.root(), 1).join("accounts.json");
+    for (from, to) in [
+        ("\"/home/alice\"", "\"/home/../etc\""),
+        ("$6$salt$alicehash", "$6$salt:alicehash"),
+    ] {
+        let text = fs::read_to_string(&path).expect("readable");
+        assert!(text.contains(from), "{text}");
+        fs::write(&path, text.replace(from, to)).expect("writable");
+        let err = apply_accounts(&lock, 1).expect_err("rejected");
+        assert!(err.to_string().contains("accounts.json"), "{err}");
+        fs::write(&path, text).expect("writable");
+    }
+    assert!(!env.path("etc/passwd").exists());
 }

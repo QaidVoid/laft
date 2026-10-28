@@ -137,7 +137,39 @@ impl Declared {
         if declared.version != state::FORMAT {
             return Err(corrupt(&path, "unsupported format version"));
         }
+        declared.check().map_err(|reason| corrupt(&path, reason))?;
         Ok(declared)
+    }
+
+    /// Checks every value that reaches the account databases or the file
+    /// system against the rules [`declare`] enforces, so that a damaged
+    /// record cannot produce malformed databases or paths outside the root.
+    fn check(&self) -> std::result::Result<(), String> {
+        for (name, user) in &self.users {
+            if !valid_name(name) {
+                return Err(format!("invalid user name {name:?}"));
+            }
+            if user.description.contains([':', '\n']) {
+                return Err(format!("user {name:?}: invalid description"));
+            }
+            let file = match &user.password {
+                Password::Unset => None,
+                Password::Hash { hash } if valid_hash(hash) => None,
+                Password::Hash { .. } => return Err(format!("user {name:?}: invalid hash")),
+                Password::File { path } => Some(path),
+            };
+            for path in [&user.home, &user.shell].into_iter().chain(file) {
+                if !valid_path(path) {
+                    return Err(format!("user {name:?}: invalid path {path:?}"));
+                }
+            }
+        }
+        for (name, group) in &self.groups {
+            if !valid_name(name) || !group.members.iter().all(|m| valid_name(m)) {
+                return Err(format!("invalid group {name:?}"));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -202,6 +234,22 @@ pub(crate) fn valid_name(name: &str) -> bool {
         .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
         && name.len() <= 32
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
+/// Whether `path` is a normalized absolute path that an account database
+/// can store: `/`, or `/` followed by components that are neither empty,
+/// `.` nor `..`, without a colon or a line break.
+pub(crate) fn valid_path(path: &str) -> bool {
+    if path.contains([':', '\n', '\r']) {
+        return false;
+    }
+    match path.strip_prefix('/') {
+        Some("") => true,
+        Some(rest) => rest
+            .split('/')
+            .all(|c| !c.is_empty() && c != "." && c != ".."),
+        None => false,
+    }
 }
 
 /// Whether `hash` is a valid password field for `/etc/shadow`: `!`, `*`, or

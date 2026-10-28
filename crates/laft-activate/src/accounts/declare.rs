@@ -8,7 +8,10 @@ use laft_core::{system_gid, system_uid};
 use laft_store::Lock;
 
 use super::db::Databases;
-use super::{Allocations, Declared, DeclaredGroup, DeclaredUser, Password, valid_hash, valid_name};
+use super::{
+    Allocations, Declared, DeclaredGroup, DeclaredUser, Password, valid_hash, valid_name,
+    valid_path,
+};
 use crate::config::Users;
 use crate::error::{ConfigError, Error, Result};
 use crate::state::{self, Record};
@@ -292,13 +295,10 @@ fn check_users(
             ("shell", &user.shell),
             ("password_file", &user.password_file),
         ] {
-            if value
-                .as_deref()
-                .is_some_and(|v| !v.starts_with('/') || v.contains([':', '\n']))
-            {
+            if value.as_deref().is_some_and(|v| !valid_path(v)) {
                 errors.push(invalid(
                     field,
-                    "expected an absolute path without a colon or a line break",
+                    "expected a normalized absolute path without a colon or a line break",
                 ));
             }
         }
@@ -366,7 +366,8 @@ fn assign<'a>(
                 });
             }
             (Some(id), _) => taken.claim(want.name, id, errors),
-            (None, Some(id)) if (1..=99).contains(&id) || id == 65534 => {
+            // Ids up to 100 and 65534 belong to the static accounts.
+            (None, Some(id)) if id <= 100 || id == 65534 => {
                 errors.push(ConfigError::ReservedId { kind, name, id });
             }
             (None, Some(id)) => taken.claim(want.name, id, errors),

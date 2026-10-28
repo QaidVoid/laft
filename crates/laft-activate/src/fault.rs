@@ -1,12 +1,13 @@
-//! A hook that lets tests interrupt assembly and boot installation at a
-//! named point. Outside tests it does nothing.
+//! A hook that lets tests interrupt assembly, account activation and boot
+//! installation at a named point. Outside tests it does nothing.
 
 use crate::error::Result;
 
-/// Every point at which a test can interrupt assembly or boot
-/// installation, in the order they are passed.
+/// Every point at which a test can interrupt assembly, account activation
+/// or boot installation, in the order they are passed.
 #[cfg(test)]
 pub(crate) const POINTS: &[&str] = &[
+    "accounts.databases",
     "assemble.staged",
     "assemble.etc",
     "assemble.triggers",
