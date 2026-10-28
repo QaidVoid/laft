@@ -123,6 +123,12 @@ pub(crate) fn command(spec: &Spec, credentials: &Credentials, argv: &[String]) -
 /// counterparts. A process started from this thread inherits the thread's
 /// credentials, and a successful `execve` from it gives them to the whole
 /// new program.
+///
+/// The launcher calls this on its only thread before it executes a service
+/// or its logger. It starts helpers as separate processes, and the one
+/// thread it does start, in [`spawn_as`], is joined before that function
+/// returns. Even with other threads alive, `execve` ends them and runs the
+/// new program with the calling thread's credentials only.
 pub(crate) fn drop_privileges(name: &str, credentials: &Credentials) -> Result<(), Error> {
     if credentials.uid == 0 {
         return Ok(());
