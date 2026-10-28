@@ -1,0 +1,40 @@
+Virtual machine tests
+
+The tests in this directory boot a real machine. They are not part of the
+validation gates, because they need QEMU with UEFI firmware, a kernel and
+disk images.
+
+laft-boot
+
+The unit tests of crates/laft-boot cover its decisions: the kernel command
+line, laft-boot.json, mount options, superblock probing, device lookup in a
+fake sysfs, generation selection, boot counting and fallback, the boot menu
+rewrite, the order and flags of the mount plans, and the root layout check.
+One test runs the generation mount, the read-only /laft and the move of the
+kernel filesystems in a user and mount namespace. What remains needs PID 1
+on a real kernel and will be tested here:
+
+- Plain boot from an ext4 root without LUKS reaches a getty.
+  /run/laft/system and /run/laft/booted point at mounts/<N>, and
+  /proc/self/mountinfo shows /laft as ro,nosuid,nodev and
+  /run/laft/mounts/<N> as ro,nodev without nosuid.
+- Roots on xfs, btrfs and f2fs boot, and so does a separate /laft.
+- A LUKS2 root boots after the passphrase is typed on the console. Two
+  wrong passphrases followed by the right one boot, and three wrong ones
+  drop to the emergency shell.
+- UUID probing matches blkid for images made by each mkfs tool.
+- With the root disk detached, the shell appears after root_wait seconds
+  and lists the block devices seen.
+- A generation whose init fails is booted the configured number of times,
+  then the machine falls back to the last good generation, in place when
+  the kernel and initramfs are the same and through a rewritten
+  default_entry and a reboot otherwise.
+- laft.break=premount and laft.break=preswitch reach the shell, and
+  leaving it continues the boot.
+- fsck exit code 2 reboots, and 4 drops to the shell with the repair hint.
+- A panic in laft-boot reaches the shell and then reboots.
+
+Each test builds a disk image in a temporary directory, writes the ESP and
+the root from a Laft generation, boots it with QEMU and OVMF, and drives
+the serial console with expect-style scripts. The result is read from the
+console and from the image after shutdown.
