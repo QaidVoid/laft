@@ -79,3 +79,47 @@ fn every_output_lies_in_the_view_tree() {
         }
     }
 }
+
+#[test]
+fn generated_files_are_recognized_and_inputs_are_not() {
+    let generated = |path: &str| TRIGGERS.iter().any(|t| t.generates(path));
+    for path in [
+        "usr/lib/modules/6.17.5-laft1/modules.dep",
+        "usr/lib/modules/6.17.5-laft1/modules.alias.bin",
+        "usr/lib/fontconfig/cache/abc-le64.cache-9",
+        "usr/share/glib-2.0/schemas/gschemas.compiled",
+        "usr/share/mime/mime.cache",
+        "usr/share/mime/text/plain.xml",
+        "usr/share/icons/hicolor/icon-theme.cache",
+        "usr/lib/udev/hwdb.bin",
+        "usr/share/info/dir",
+    ] {
+        assert!(generated(path), "{path}");
+    }
+    for path in [
+        "usr/lib/modules/6.17.5-laft1/kernel/fs/ext4/ext4.ko.zst",
+        "usr/lib/modules/6.17.5-laft1/modules.order",
+        "usr/share/glib-2.0/schemas/org.gtk.Settings.xml",
+        "usr/share/mime/packages/freedesktop.org.xml",
+        "usr/share/icons/hicolor/index.theme",
+        "usr/share/info/gcc.info",
+    ] {
+        assert!(!generated(path), "{path}");
+    }
+}
+
+#[test]
+fn generated_files_lie_in_the_output_directories() {
+    for trigger in TRIGGERS {
+        for pattern in trigger.generated {
+            let pattern = pattern.strip_prefix('!').unwrap_or(pattern);
+            let within = trigger.outputs.iter().any(|output| {
+                let output = output.replace("{}", "*");
+                pattern
+                    .strip_prefix(output.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+            });
+            assert!(within, "{}: {pattern}", trigger.name);
+        }
+    }
+}

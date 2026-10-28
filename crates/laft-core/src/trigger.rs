@@ -49,6 +49,11 @@ pub struct Trigger {
     /// The directories the tool may write, relative to the view tree.
     /// Missing ones are created before it runs.
     pub outputs: &'static [&'static str],
+    /// Globs over payload paths of the files the tool generates, which a
+    /// package never ships because every view generates its own. A pattern
+    /// that starts with `!` exempts the paths it matches. See
+    /// [`Trigger::generates`].
+    pub generated: &'static [&'static str],
     /// How many instances a view has.
     pub instances: Instances,
     /// Whether a failure fails the assembly. A failed optional trigger is
@@ -68,6 +73,27 @@ impl Trigger {
     pub fn activated_by(&self, path: &str) -> bool {
         self.paths.iter().any(|pattern| glob_matches(pattern, path))
     }
+
+    /// Whether the payload path `path` is a file this trigger generates: it
+    /// matches a pattern of [`Trigger::generated`] and no exempting `!`
+    /// pattern.
+    ///
+    /// ```
+    /// let schemas = laft_core::trigger("glib-schemas").expect("glib-schemas is a trigger");
+    /// assert!(schemas.generates("usr/share/glib-2.0/schemas/gschemas.compiled"));
+    /// assert!(!schemas.generates("usr/share/glib-2.0/schemas/org.gtk.Settings.xml"));
+    /// ```
+    pub fn generates(&self, path: &str) -> bool {
+        let mut generated = false;
+        for pattern in self.generated {
+            match pattern.strip_prefix('!') {
+                Some(exempt) if glob_matches(exempt, path) => return false,
+                Some(_) => {}
+                None => generated |= glob_matches(pattern, path),
+            }
+        }
+        generated
+    }
 }
 
 /// The trigger table, in the order assembly runs the triggers.
@@ -83,6 +109,19 @@ pub const TRIGGERS: &[Trigger] = &[
         args: &["-a", "{}"],
         each_file: None,
         outputs: &["usr/lib/modules/{}"],
+        generated: &[
+            "usr/lib/modules/*/modules.alias",
+            "usr/lib/modules/*/modules.alias.bin",
+            "usr/lib/modules/*/modules.builtin.alias.bin",
+            "usr/lib/modules/*/modules.builtin.bin",
+            "usr/lib/modules/*/modules.dep",
+            "usr/lib/modules/*/modules.dep.bin",
+            "usr/lib/modules/*/modules.devname",
+            "usr/lib/modules/*/modules.softdep",
+            "usr/lib/modules/*/modules.symbols",
+            "usr/lib/modules/*/modules.symbols.bin",
+            "usr/lib/modules/*/modules.weakdep",
+        ],
         instances: Instances::Kernel,
         required: true,
     },
@@ -93,6 +132,7 @@ pub const TRIGGERS: &[Trigger] = &[
         args: &["-s", "-f"],
         each_file: None,
         outputs: &["usr/lib/fontconfig/cache"],
+        generated: &["usr/lib/fontconfig/cache/**"],
         instances: Instances::One,
         required: false,
     },
@@ -106,6 +146,7 @@ pub const TRIGGERS: &[Trigger] = &[
         args: &["/usr/share/glib-2.0/schemas"],
         each_file: None,
         outputs: &["usr/share/glib-2.0/schemas"],
+        generated: &["usr/share/glib-2.0/schemas/gschemas.compiled"],
         instances: Instances::One,
         required: false,
     },
@@ -116,6 +157,7 @@ pub const TRIGGERS: &[Trigger] = &[
         args: &["/usr/lib/gio/modules"],
         each_file: None,
         outputs: &["usr/lib/gio/modules"],
+        generated: &["usr/lib/gio/modules/giomodule.cache"],
         instances: Instances::One,
         required: false,
     },
@@ -126,6 +168,7 @@ pub const TRIGGERS: &[Trigger] = &[
         args: &["--update-cache"],
         each_file: None,
         outputs: &["usr/lib/gdk-pixbuf-2.0/2.10.0"],
+        generated: &["usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"],
         instances: Instances::One,
         required: false,
     },
@@ -136,6 +179,7 @@ pub const TRIGGERS: &[Trigger] = &[
         args: &["--update-cache"],
         each_file: None,
         outputs: &["usr/lib/gtk-3.0/3.0.0"],
+        generated: &["usr/lib/gtk-3.0/3.0.0/immodules.cache"],
         instances: Instances::One,
         required: false,
     },
@@ -146,6 +190,7 @@ pub const TRIGGERS: &[Trigger] = &[
         args: &["-n", "/usr/share/mime"],
         each_file: None,
         outputs: &["usr/share/mime"],
+        generated: &["usr/share/mime/**", "!usr/share/mime/packages/**"],
         instances: Instances::One,
         required: false,
     },
@@ -156,6 +201,7 @@ pub const TRIGGERS: &[Trigger] = &[
         args: &["-q", "/usr/share/applications"],
         each_file: None,
         outputs: &["usr/share/applications"],
+        generated: &["usr/share/applications/mimeinfo.cache"],
         instances: Instances::One,
         required: false,
     },
@@ -169,6 +215,7 @@ pub const TRIGGERS: &[Trigger] = &[
         args: &["-q", "-t", "-f", "/usr/share/icons/{}"],
         each_file: None,
         outputs: &["usr/share/icons/{}"],
+        generated: &["usr/share/icons/*/icon-theme.cache"],
         instances: Instances::IconTheme,
         required: false,
     },
@@ -179,6 +226,7 @@ pub const TRIGGERS: &[Trigger] = &[
         args: &["update", "--usr"],
         each_file: None,
         outputs: &["usr/lib/udev"],
+        generated: &["usr/lib/udev/hwdb.bin"],
         instances: Instances::One,
         required: false,
     },
@@ -189,6 +237,7 @@ pub const TRIGGERS: &[Trigger] = &[
         args: &["{}", "/usr/share/info/dir"],
         each_file: Some("usr/share/info/*.info*"),
         outputs: &["usr/share/info"],
+        generated: &["usr/share/info/dir"],
         instances: Instances::One,
         required: false,
     },
