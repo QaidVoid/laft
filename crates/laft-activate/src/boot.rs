@@ -63,7 +63,7 @@ pub fn activate_boot(lock: &Lock) -> Result<BootActivation> {
 }
 
 /// The generation that `run/laft/booted` points at, such as `mounts/41`.
-fn booted(root: &Root) -> Result<u64> {
+pub(crate) fn booted(root: &Root) -> Result<u64> {
     let link = root.path().join("run/laft/booted");
     let target = fs::read_link(&link).map_err(io(&link))?;
     target

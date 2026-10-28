@@ -95,7 +95,9 @@ impl MenuEntry {
 ///
 /// The menu settings come from the configuration of the default
 /// generation, or of the newest one when none is the default. Generations
-/// that failed to boot are marked in the menu.
+/// that failed to boot are marked in the menu. Before the menu changes, the
+/// default generation is put on trial with [`crate::start_trial`] and the
+/// `tries` of its configuration.
 ///
 /// The partition is not checked here. Call [`check_esp`] first on a real
 /// system.
@@ -114,8 +116,9 @@ impl MenuEntry {
 ///
 /// # Errors
 ///
-/// Fails when a generation's boot files cannot be read or a file on the
-/// partition cannot be written.
+/// Fails when a generation's boot files cannot be read, when a file on the
+/// partition cannot be written, and when the boot state cannot be read or
+/// written.
 pub fn install_boot(root: &Root, esp: &Path) -> Result<BootInstall> {
     let mut entries = Vec::new();
     let failed = failed_generations(root)?;
@@ -198,6 +201,9 @@ pub fn install_boot(root: &Root, esp: &Path) -> Result<BootInstall> {
     };
     let json =
         laft_core::to_canonical_json(&index).map_err(|e| corrupt(&laft.join("entries.json"), e))?;
+    if let Some(default) = install.default {
+        crate::start_trial(root, default, settings.tries)?;
+    }
     // The index lands first: until the menu is replaced, the old menu
     // still lists only files that exist.
     write_in(&laft, "entries.json", &json)?;

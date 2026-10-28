@@ -7,7 +7,9 @@
 //! system view with the outputs of its triggers and its privileged copies,
 //! `/etc`, the services, the accounts and the initramfs with its boot
 //! record. [`install_boot`] copies the kernels and initramfs files of every
-//! generation to the EFI system partition and renders the boot menu.
+//! generation to the EFI system partition, renders the boot menu and puts
+//! a new boot default on trial with [`start_trial`]. Once a boot completes,
+//! [`mark_booted_good`] ends the trial.
 //!
 //! The configuration reaches this crate as plain values ([`EtcConfig`]).
 //! [`declare`] resolves the configured accounts into [`Declared`] accounts
@@ -45,6 +47,7 @@ mod privileged;
 mod render;
 mod state;
 mod tree;
+mod trial;
 mod trigger;
 
 #[cfg(test)]
@@ -66,3 +69,4 @@ pub use etc::{EtcReport, OnConflict, check_etc, reconcile_etc, reset_etc};
 pub use initramfs::{BootRecord, Host};
 pub use privileged::{PRIVILEGED_FILE, PrivilegedFile, PrivilegedRecord, ViewPrivileges};
 pub use render::{EtcTree, Node, render};
+pub use trial::{mark_booted_good, mark_good, record_event, start_trial};

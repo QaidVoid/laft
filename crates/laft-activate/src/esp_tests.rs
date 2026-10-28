@@ -311,3 +311,44 @@ fn removed_files_are_reported_in_name_order() {
         ["laft/a.initramfs", "laft/b.vmlinuz", "laft/c.vmlinuz"]
     );
 }
+
+#[test]
+fn installing_a_new_default_starts_its_trial_until_it_is_marked_good() {
+    let env = Env::new();
+    generation(&env, 1, "6.17.4-laft1", b"one", "{}");
+    generation(&env, 2, "6.17.5-laft1", b"two", r#"{"boot": {"tries": 2}}"#);
+    let esp = esp(&env);
+    let state =
+        |env: &Env| BootState::parse(&fs::read(env.path("laft/state/boot.json")).unwrap()).unwrap();
+    set_default(&env, 1);
+    install_boot(&env.root, &esp).unwrap();
+    crate::mark_good(&env.lock(), 1).unwrap();
+
+    set_default(&env, 2);
+    install_boot(&env.root, &esp).unwrap();
+    let on_trial = state(&env);
+    assert_eq!(
+        on_trial.trial,
+        Some(laft_core::BootTrial {
+            generation: 2,
+            tries_left: 2
+        })
+    );
+
+    // laft-boot consumes a try on each boot of the generation on trial.
+    let mut booted = on_trial;
+    booted.trial = booted.trial.map(|t| laft_core::BootTrial {
+        tries_left: t.tries_left - 1,
+        ..t
+    });
+    fs::write(env.path("laft/state/boot.json"), booted.to_json().unwrap()).unwrap();
+    install_boot(&env.root, &esp).unwrap();
+    assert_eq!(state(&env).trial.map(|t| t.tries_left), Some(1));
+
+    crate::mark_good(&env.lock(), 2).unwrap();
+    let good = state(&env);
+    assert_eq!(good.trial, None);
+    assert_eq!(good.last_good, Some(2));
+    install_boot(&env.root, &esp).unwrap();
+    assert_eq!(state(&env).trial, None, "a good default needs no trial");
+}
