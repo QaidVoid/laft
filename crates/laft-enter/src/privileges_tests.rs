@@ -119,3 +119,23 @@ fn root_stays_root_with_its_capabilities() {
     observed.uids = [0, 0, 1000];
     assert!(!verify(&root, &observed));
 }
+
+#[test]
+fn a_refused_change_names_the_step_and_keeps_the_errno() {
+    if rustix::process::geteuid().is_root() {
+        println!("skipping: running as root, so the drop would succeed");
+        return;
+    }
+    let caller = Caller {
+        uid: rustix::process::getuid().as_raw(),
+        gid: rustix::process::getgid().as_raw(),
+        groups: vec![rustix::process::getgid().as_raw()],
+    };
+    let failure = super::drop_to(&caller).unwrap_err();
+    assert_eq!(failure.errno, Some(Errno::PERM));
+    assert!(
+        failure.message.contains("supplementary groups"),
+        "{}",
+        failure.message
+    );
+}

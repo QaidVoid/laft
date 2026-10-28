@@ -89,31 +89,40 @@ pub(crate) fn verify(caller: &Caller, observed: &Observed) -> bool {
 /// Fails when a change is refused or the verification does not pass. The
 /// caller must then exit without running anything.
 pub(crate) fn drop_to(caller: &Caller) -> Result<(), Failure> {
-    let failed = || Failure::error("privilege drop failed");
     for change in plan(caller) {
-        let result = match change {
+        let (what, result) = match change {
             Change::Groups(groups) => {
                 let groups: Vec<Gid> = groups.into_iter().map(Gid::from_raw).collect();
-                rustix::thread::set_thread_groups(&groups)
+                (
+                    "setting the supplementary groups",
+                    rustix::thread::set_thread_groups(&groups),
+                )
             }
             Change::Gid(gid) => {
                 let gid = Gid::from_raw(gid);
-                rustix::thread::set_thread_res_gid(gid, gid, gid)
+                (
+                    "setting the gid",
+                    rustix::thread::set_thread_res_gid(gid, gid, gid),
+                )
             }
             Change::Uid(uid) => {
                 let uid = Uid::from_raw(uid);
-                rustix::thread::set_thread_res_uid(uid, uid, uid)
+                (
+                    "setting the uid",
+                    rustix::thread::set_thread_res_uid(uid, uid, uid),
+                )
             }
         };
-        result.map_err(|_| failed())?;
+        result.map_err(failed(what))?;
     }
 
-    let capabilities = rustix::thread::capabilities(None).map_err(|_| failed())?;
+    let capabilities =
+        rustix::thread::capabilities(None).map_err(failed("reading the capabilities"))?;
     let observed = Observed {
-        uids: laft_sandbox::user_ids().map_err(|_| failed())?,
-        gids: laft_sandbox::group_ids().map_err(|_| failed())?,
+        uids: laft_sandbox::user_ids().map_err(sandbox_failed("reading the uids"))?,
+        gids: laft_sandbox::group_ids().map_err(sandbox_failed("reading the gids"))?,
         groups: rustix::process::getgroups()
-            .map_err(|_| failed())?
+            .map_err(failed("reading the supplementary groups"))?
             .into_iter()
             .map(Gid::as_raw)
             .collect(),
@@ -124,7 +133,26 @@ pub(crate) fn drop_to(caller: &Caller) -> Result<(), Failure> {
     if verify(caller, &observed) {
         Ok(())
     } else {
-        Err(failed())
+        Err(Failure::error(
+            "privilege drop failed: the result is not exactly the caller",
+        ))
+    }
+}
+
+/// Maps the system call error of the drop step `what` to a failure.
+fn failed(what: &'static str) -> impl FnOnce(Errno) -> Failure {
+    move |errno| {
+        let error = std::io::Error::from(errno);
+        Failure::os(format!("privilege drop failed: {what}: {error}"), errno)
+    }
+}
+
+/// Maps the error of the drop step `what` reported by the sandbox to a
+/// failure.
+fn sandbox_failed(what: &'static str) -> impl FnOnce(laft_sandbox::Error) -> Failure {
+    move |e| match e.io_error().and_then(Errno::from_io_error) {
+        Some(errno) => failed(what)(errno),
+        None => Failure::error(format!("privilege drop failed: {what}: {e}")),
     }
 }
 
