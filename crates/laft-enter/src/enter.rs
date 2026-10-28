@@ -1,5 +1,5 @@
 //! The privileged phase: find the active generation and the view version,
-//! authorize the caller, lock the view version and mount it.
+//! lock the view version, authorize the caller and mount the view.
 //!
 //! Every lookup refuses symlinks, and every lookup below a directory that
 //! was already opened stays beneath it. Record files are trusted only after
@@ -66,7 +66,7 @@ pub(crate) fn enter(view: &str, caller: &Caller) -> Result<OwnedFd, Failure> {
     let version_fd = open_dir(&views, &version.to_string(), BENEATH)?;
 
     let view_path = format!("{views_dir}/{version}/view.json");
-    let (lock, bytes) = read_record(&version_fd, "view.json", &view_path)?;
+    let (lock, bytes) = read_record(&version_fd, "view.json", &view_path, true)?;
     let record = records::parse_view(&bytes, view, version)
         .map_err(|e| Failure::error(format!("{view_path}: {e}")))?;
     if !access::may_enter(caller, &record) {
@@ -77,7 +77,7 @@ pub(crate) fn enter(view: &str, caller: &Caller) -> Result<OwnedFd, Failure> {
     }
 
     let privileged_path = format!("{generation_dir}/privileged.json");
-    let (_, bytes) = read_record(&generation_fd, "privileged.json", &privileged_path)?;
+    let (_, bytes) = read_record(&generation_fd, "privileged.json", &privileged_path, false)?;
     let privileged = records::parse_privileged(&bytes)
         .map_err(|e| Failure::error(format!("{privileged_path}: {e}")))?;
     let paths: Vec<&Path> = match records::privileged_paths(&privileged, view, version) {
@@ -90,8 +90,6 @@ pub(crate) fn enter(view: &str, caller: &Caller) -> Result<OwnedFd, Failure> {
         }
     };
 
-    rustix::fs::flock(&lock, FlockOperation::LockShared)
-        .map_err(failed(format!("locking {view_path}")))?;
     rustix::io::fcntl_setfd(&lock, FdFlags::empty())
         .map_err(failed(format!("keeping {view_path} open")))?;
     drop((run, generation_fd, views, version_fd));
@@ -147,7 +145,17 @@ fn check_mount_root(dir: &OwnedFd, shown: &str) -> Result<(), Failure> {
 
 /// Opens the record file `name` beneath `dir`, shown as `shown`, checks it
 /// and reads it. Returns its descriptor and its contents.
-fn read_record(dir: &OwnedFd, name: &str, shown: &str) -> Result<(OwnedFd, Vec<u8>), Failure> {
+///
+/// With `lock`, a shared lock is taken right after opening, before anything
+/// is read or trusted, so that garbage collection cannot remove the record
+/// while it decides. A record that was removed before the lock was granted
+/// is refused.
+fn read_record(
+    dir: &OwnedFd,
+    name: &str,
+    shown: &str,
+    lock: bool,
+) -> Result<(OwnedFd, Vec<u8>), Failure> {
     // `O_NONBLOCK` keeps a FIFO in place of the record from blocking the
     // open. The type check below then refuses it.
     let fd = rustix::fs::openat2(
@@ -158,7 +166,14 @@ fn read_record(dir: &OwnedFd, name: &str, shown: &str) -> Result<(OwnedFd, Vec<u
         BENEATH,
     )
     .map_err(failed(format!("opening {shown}")))?;
+    if lock {
+        rustix::fs::flock(&fd, FlockOperation::LockShared)
+            .map_err(failed(format!("locking {shown}")))?;
+    }
     let stat = rustix::fs::fstat(&fd).map_err(failed(format!("inspecting {shown}")))?;
+    if stat.st_nlink == 0 {
+        return Err(Failure::error(format!("{shown}: removed while opening it")));
+    }
     let facts = FileFacts {
         regular: FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile,
         uid: stat.st_uid,
