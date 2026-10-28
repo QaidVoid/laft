@@ -15,16 +15,20 @@
 //! Every change happens inside a [`Transaction`] under the root's exclusive
 //! [`Lock`], and is recorded in a journal first, so that [`Lock::recover`]
 //! can finish or roll back a transaction interrupted at any point, including
-//! by a power loss.
+//! by a power loss. [`plan_gc`] decides what nothing references any more,
+//! explains why, and deletes it.
 //!
 //! ```no_run
-//! use laft_store::Root;
+//! use std::time::SystemTime;
+//!
+//! use laft_store::{GcPolicy, Root, plan_gc};
 //!
 //! let root = Root::default();
-//! let lock = root.lock("apply")?;
-//! for recovery in lock.recover()? {
-//!     eprintln!("{recovery}");
-//! }
+//! let lock = root.lock("gc")?;
+//! lock.recover()?;
+//! let plan = plan_gc(&lock, &GcPolicy::default(), SystemTime::now())?;
+//! print!("{plan}");
+//! plan.execute(&lock)?;
 //! # Ok::<(), laft_store::Error>(())
 //! ```
 
@@ -33,6 +37,7 @@
 mod error;
 mod fault;
 mod fsx;
+mod gc;
 mod generation;
 mod journal;
 mod lock;
@@ -46,6 +51,7 @@ mod view;
 mod test_support;
 
 pub use error::{Conflict, Error, Result};
+pub use gc::{Decision, GcPlan, GcPolicy, Subject, plan_gc};
 pub use generation::{
     CarriedModule, ConfigFile, ConfigRecord, EtcRecord, Generation, GenerationInput, IndexRecord,
     Init,

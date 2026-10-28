@@ -146,6 +146,10 @@ impl Root {
         self.laft().join("tmp")
     }
 
+    pub(crate) fn run_dir(&self) -> PathBuf {
+        self.path.join("run").join("laft")
+    }
+
     /// Creates the directories of `laft/` that are missing.
     pub(crate) fn init(&self) -> Result<()> {
         let laft = self.laft();
