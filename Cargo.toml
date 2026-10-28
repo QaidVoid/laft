@@ -2,6 +2,7 @@
 resolver = "3"
 exclude = ["fuzz"]
 members = [
+  "crates/laft-boot",
   "crates/laft-core",
   "crates/laft-elf",
   "crates/laft-fetch",
@@ -27,6 +28,7 @@ laft-core = { version = "0.1.0", path = "crates/laft-core" }
 laft-index = { version = "0.1.0", path = "crates/laft-index" }
 laft-pkg = { version = "0.1.0", path = "crates/laft-pkg" }
 libc = { version = "0.2.191", default-features = false }
+mimalloc = { version = "0.1.52", default-features = false }
 minisign = { version = "0.10.0", default-features = false }
 minisign-verify = { version = "0.3.0", default-features = false }
 object = { version = "0.40.0", default-features = false, features = ["elf", "read_core", "std", "unaligned"] }
