@@ -38,7 +38,7 @@ use self::process::{
 };
 use crate::error::{Error, corrupt, io};
 use crate::spec::{Spec, SpecLog, SpecReady};
-use crate::standard::ACTIVATE;
+use crate::standard::{ACTIVATE, EARLY};
 use crate::{Restart, ServiceKind};
 
 /// The program that executes the launcher again for its helper processes.
@@ -155,6 +155,11 @@ impl Launcher {
     /// it always returns 0. Only a failed activation does not make its
     /// dependents skip. Either kind marks itself ready when `up` succeeds.
     ///
+    /// The oneshot [`EARLY`], which ends the early boot graph and which
+    /// every normal service depends on, is the exception: it never skips
+    /// and always becomes ready, so that a failure in the early boot graph
+    /// is recorded but never keeps the normal services from starting.
+    ///
     /// # Errors
     ///
     /// Fails when the spec is missing or invalid, a dependency of a normal
@@ -170,7 +175,8 @@ impl Launcher {
             }
             return Ok(code);
         }
-        if self.failed_dependency(&spec)?.is_some() {
+        let sync_point = name == EARLY;
+        if !sync_point && self.failed_dependency(&spec)?.is_some() {
             self.record_failure(name, "skipped")?;
             return Ok(0);
         }
@@ -182,6 +188,9 @@ impl Launcher {
                 }
                 self.record_failure(name, "failed")?;
                 self.announce_failure(name);
+                if sync_point {
+                    self.mark_ready(name)?;
+                }
             }
         }
         Ok(0)

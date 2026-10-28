@@ -194,6 +194,37 @@ fn early_failure_is_recorded_and_dependents_skip() {
 }
 
 #[test]
+fn a_failed_early_oneshot_never_holds_back_normal_services() {
+    let fixture = Fixture::new();
+    fixture.oneshot("swap", "exit 1", &[], true);
+    fixture.oneshot("clock", "exit 0", &[], true);
+    fixture.oneshot("early", "exit 0", &["clock", "swap"], true);
+    let flag = fixture.path("sshd-ran");
+    fixture.oneshot(
+        "sshd-keys",
+        &format!("touch {}", flag.display()),
+        &["early"],
+        false,
+    );
+    for name in ["swap", "clock", "early"] {
+        assert_eq!(fixture.launcher.up(name).expect("never fails"), 0);
+    }
+    assert!(fixture.ready("early"));
+    assert_eq!(fixture.failures(), "swap failed\n");
+    assert_eq!(fixture.launcher.up("sshd-keys").expect("runs"), 0);
+    assert!(flag.exists());
+}
+
+#[test]
+fn early_becomes_ready_even_when_its_own_command_fails() {
+    let fixture = Fixture::new();
+    fixture.oneshot("early", "exit 1", &[], true);
+    assert_eq!(fixture.launcher.up("early").expect("never fails"), 0);
+    assert!(fixture.ready("early"));
+    assert_eq!(fixture.failures(), "early failed\n");
+}
+
+#[test]
 fn early_setup_failure_counts_as_a_failure() {
     let fixture = Fixture::new();
     let mut spec = fixture.oneshot("hostname", "exit 0", &[], true);
