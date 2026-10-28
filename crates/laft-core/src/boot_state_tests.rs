@@ -66,3 +66,19 @@ fn only_the_most_recent_events_are_kept() {
         MAX_BOOT_EVENTS as u64
     );
 }
+
+#[test]
+fn deserializing_directly_still_requires_a_version() {
+    assert!(serde_json::from_str::<BootState>(r#"{"bad":[1]}"#).is_err());
+    let state: BootState = serde_json::from_str(r#"{"version":1}"#).expect("valid");
+    assert_eq!(state, BootState::default());
+}
+
+#[test]
+fn an_invalid_document_keeps_its_cause() {
+    use std::error::Error;
+
+    let err = BootState::parse(b"{").unwrap_err();
+    assert!(err.source().is_some());
+    assert!(BootStateError::UnsupportedVersion(2).source().is_none());
+}

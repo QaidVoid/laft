@@ -1,4 +1,5 @@
-//! Serde support for identifiers, which serialize as their text form.
+//! Serde support for types with a canonical text form, such as
+//! identifiers and option names, which serialize as that text.
 
 use crate::{
     Blake3Hash, Dep, LuksOption, Name, Provide, Soname, StoreId, Timestamp, Variant, Version,

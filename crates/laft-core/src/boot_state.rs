@@ -26,17 +26,22 @@ pub const MAX_BOOT_EVENTS: usize = 20;
 /// # Ok::<(), laft_core::BootStateError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct BootState {
     /// Generations that used up their trial without completing a boot.
+    #[serde(default)]
     pub bad: BTreeSet<u64>,
     /// Fallbacks that happened, oldest first.
+    #[serde(default)]
     pub events: Vec<BootEvent>,
     /// Generations that completed a boot.
+    #[serde(default)]
     pub good: BTreeSet<u64>,
     /// The generation that completed a boot most recently.
+    #[serde(default)]
     pub last_good: Option<u64>,
     /// The boot default that is on trial, if any.
+    #[serde(default)]
     pub trial: Option<BootTrial>,
     /// The format version, [`BOOT_STATE_VERSION`].
     pub version: u32,
@@ -106,7 +111,14 @@ impl fmt::Display for BootStateError {
     }
 }
 
-impl std::error::Error for BootStateError {}
+impl std::error::Error for BootStateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Invalid(e) => Some(e),
+            Self::UnsupportedVersion(_) => None,
+        }
+    }
+}
 
 #[derive(Deserialize)]
 struct Versioned {
