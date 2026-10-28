@@ -1,7 +1,8 @@
 use std::fmt;
 
 /// A file that starts with the ELF magic but is malformed, or that names a
-/// library in a form Laft cannot express as a dependency.
+/// library in a form Laft cannot represent, such as a `DT_SONAME` that is not
+/// a soname.
 ///
 /// The message says what is wrong, for example `invalid ELF file: more than
 /// one DT_SONAME entry`.

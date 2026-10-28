@@ -8,6 +8,10 @@
 set -eu
 cd "$(dirname "$0")"
 
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+fixtures=$(pwd)
+
 flags="-O2 -nostdlib -fno-asynchronous-unwind-tables -s -Wl,--build-id=sha1 -Wl,-z,noseparate-code"
 
 # shellcheck disable=SC2086
@@ -23,8 +27,15 @@ cc $flags -static -o static static.c
 # shellcheck disable=SC2086
 cc $flags -fPIE -static-pie -o static-pie static.c
 
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# A library without a soname, linked by a relative path, is recorded in
+# DT_NEEDED and in the version requirements as that path.
+# shellcheck disable=SC2086
+cc $flags -shared -fPIC -o "$tmp/libversioned.so" libversioned.c \
+  -Wl,--version-script=libversioned.map
+# shellcheck disable=SC2086
+(cd "$tmp" && cc $flags -fPIE -pie -o "$fixtures/needs-path" \
+  "$fixtures/program.c" ./libversioned.so)
+
 readelf --version-info --wide libversioned.so > "$tmp/versions"
 # readelf names GNU_IFUNC only for objects marked with the GNU OS ABI.
 readelf --dyn-syms --wide libversioned.so \

@@ -1,5 +1,6 @@
-use laft_core::Soname;
 use object::elf::{self, SymbolBind, SymbolType, SymbolVisibility};
+
+use crate::Library;
 
 /// A symbol that a dynamic object defines in `.dynsym` for other objects to
 /// bind to.
@@ -73,7 +74,7 @@ pub struct VersionNeed {
     /// The version name, for example `GLIBC_2.34`.
     pub name: String,
     /// The `DT_NEEDED` library the version must come from.
-    pub library: Soname,
+    pub library: Library,
 }
 
 impl Export {

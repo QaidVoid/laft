@@ -33,11 +33,30 @@ fn search_paths_keep_every_entry_in_order() {
 }
 
 #[test]
-fn needed_entry_must_be_a_soname() {
-    assert!(soname("libz.so.1", "DT_NEEDED").is_ok());
-    let error = soname("/usr/lib/libz.so.1", "DT_NEEDED").expect_err("a path is not a soname");
+fn needed_entries_are_sonames_or_paths() {
+    assert_eq!(
+        library("libz.so.1", "DT_NEEDED"),
+        Ok(Library::Soname("libz.so.1".parse().expect("valid soname")))
+    );
+    for path in ["/usr/lib/libz.so.1", "./libz.so", "lib/libz.so"] {
+        assert_eq!(
+            library(path, "DT_NEEDED"),
+            Ok(Library::Path(path.into())),
+            "{path}"
+        );
+    }
+    let error = library("libz so", "DT_NEEDED").expect_err("neither a soname nor a path");
     assert!(
         error.reason().starts_with("DT_NEEDED is not a soname: "),
+        "{error}"
+    );
+}
+
+#[test]
+fn soname_entry_cannot_be_a_path() {
+    let error = soname("/usr/lib/libz.so.1", "DT_SONAME").expect_err("a path is not a soname");
+    assert!(
+        error.reason().starts_with("DT_SONAME is not a soname: "),
         "{error}"
     );
 }

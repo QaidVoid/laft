@@ -34,6 +34,30 @@ pub enum Kind {
     Other(u16),
 }
 
+/// A library that a dynamic object loads, as written in a `DT_NEEDED` entry
+/// or in the GNU version requirement that refers to it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Library {
+    /// A soname, which the dynamic loader looks up in the search paths and
+    /// which becomes a `so:` dependency.
+    Soname(Soname),
+    /// An entry that contains a `/`, which the dynamic loader opens as a path
+    /// relative to its working directory or to the root. It cannot be
+    /// expressed as a `so:` dependency, so the builder decides what to do
+    /// with it.
+    Path(String),
+}
+
+impl Library {
+    /// The entry as written in the file.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Soname(soname) => soname.as_str(),
+            Self::Path(path) => path,
+        }
+    }
+}
+
 /// What Laft needs to know about one ELF file.
 ///
 /// The dynamic fields come from the `SHT_DYNAMIC` section and the symbol
@@ -54,7 +78,7 @@ pub struct Elf {
     /// The `DT_SONAME` of a shared object.
     pub soname: Option<Soname>,
     /// The `DT_NEEDED` entries, in file order.
-    pub needed: Vec<Soname>,
+    pub needed: Vec<Library>,
     /// The `DT_RUNPATH` entries, split at colons, in file order. Entries are
     /// returned as written, so they may contain `$ORIGIN`.
     pub runpath: Vec<String>,
@@ -109,9 +133,9 @@ impl Elf {
 /// unknown class or byte order, a `PT_DYNAMIC` segment without a dynamic
 /// section, a repeated `PT_INTERP`, `DT_SONAME`, `DT_RUNPATH` or `DT_RPATH`, a
 /// symbol version table that does not match `.dynsym`, and names or paths that
-/// are not UTF-8. Also fails when a `DT_NEEDED`, `DT_SONAME` or version
-/// requirement names a library by something other than a soname, such as a
-/// path, because such a library cannot be expressed as a `so:` dependency.
+/// are not UTF-8. Also fails when `DT_SONAME` is not a soname, or when a
+/// `DT_NEEDED` entry or version requirement names a library by something that
+/// is neither a soname nor a path.
 ///
 /// # Examples
 ///
@@ -194,7 +218,7 @@ fn parse<H: FileHeader<Endian = Endianness>>(data: &[u8], class: Class) -> Resul
 #[derive(Default)]
 struct Dynamic {
     soname: Option<Soname>,
-    needed: Vec<Soname>,
+    needed: Vec<Library>,
     runpath: Option<Vec<String>>,
     rpath: Option<Vec<String>>,
     pie: bool,
@@ -221,7 +245,7 @@ fn read_dynamic<H: FileHeader<Endian = Endianness>>(
         match entry.tag(endian) {
             elf::DT_NULL => break,
             elf::DT_NEEDED => {
-                let needed = soname(string(entry, "DT_NEEDED")?, "DT_NEEDED")?;
+                let needed = library(string(entry, "DT_NEEDED")?, "DT_NEEDED")?;
                 dynamic.needed.push(needed);
             }
             elf::DT_SONAME => {
@@ -290,7 +314,7 @@ fn read_symbols<H: FileHeader<Endian = Endianness>>(
                     name: name.to_owned(),
                     version: Some(VersionNeed {
                         name: utf8(version.name(), "symbol version")?.to_owned(),
-                        library: soname(utf8(file, "version library")?, "version library")?,
+                        library: library(utf8(file, "version library")?, "version library")?,
                     }),
                     weak,
                 });
@@ -364,6 +388,14 @@ fn utf8<'a>(bytes: &'a [u8], what: &str) -> Result<&'a str, Error> {
 fn soname(name: &str, what: &str) -> Result<Soname, Error> {
     name.parse()
         .map_err(|error| Error::new(format!("{what} is not a soname: {error}")))
+}
+
+fn library(name: &str, what: &str) -> Result<Library, Error> {
+    if name.contains('/') {
+        Ok(Library::Path(name.to_owned()))
+    } else {
+        soname(name, what).map(Library::Soname)
+    }
 }
 
 fn search_path(path: &str) -> Vec<String> {

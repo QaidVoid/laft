@@ -5,7 +5,9 @@
 //! from `DT_SONAME`, checks search paths, the interpreter and the target
 //! machine, and records each shared library's ABI digest. The exports and
 //! imports, with their GNU symbol versions, let it decide whether a rebuilt
-//! library still satisfies the objects linked against it.
+//! library still satisfies the objects linked against it. A `DT_NEEDED`
+//! entry that is a path rather than a soname is reported as a
+//! [`Library::Path`], and the builder decides whether to accept it.
 //!
 //! ```
 //! let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/libversioned.so");
@@ -22,5 +24,5 @@ mod inspect;
 mod symbol;
 
 pub use error::Error;
-pub use inspect::{Class, EM_X86_64, Elf, Kind, inspect};
+pub use inspect::{Class, EM_X86_64, Elf, Kind, Library, inspect};
 pub use symbol::{Export, ExportKind, Import, SymbolVersion, VersionNeed};

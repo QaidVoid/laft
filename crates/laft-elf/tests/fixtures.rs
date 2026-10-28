@@ -5,7 +5,7 @@ use std::path::Path;
 
 use laft_core::Blake3Hash;
 use laft_elf::{
-    Class, EM_X86_64, Elf, Export, ExportKind, Import, Kind, SymbolVersion, VersionNeed,
+    Class, EM_X86_64, Elf, Export, ExportKind, Import, Kind, Library, SymbolVersion, VersionNeed,
 };
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -120,7 +120,7 @@ fn executable_reports_interpreter_needed_runpath_and_imports() {
 
     let need = |version: &str| VersionNeed {
         name: version.to_owned(),
-        library: "libversioned.so.1".parse().expect("valid soname"),
+        library: Library::Soname("libversioned.so.1".parse().expect("valid soname")),
     };
     assert_eq!(
         program.imports,
@@ -141,6 +141,26 @@ fn executable_reports_interpreter_needed_runpath_and_imports() {
                 weak: true,
             },
         ]
+    );
+}
+
+#[test]
+fn needed_paths_are_reported_rather_than_rejected() {
+    let program = inspect("needs-path");
+    let path = Library::Path("./libversioned.so".into());
+    assert_eq!(program.needed, std::slice::from_ref(&path));
+    assert!(!program.is_static());
+    let add = program
+        .imports
+        .iter()
+        .find(|import| import.name == "add")
+        .expect("add is imported");
+    assert_eq!(
+        add.version,
+        Some(VersionNeed {
+            name: "VERS_2".into(),
+            library: path,
+        })
     );
 }
 
