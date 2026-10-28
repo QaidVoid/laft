@@ -14,8 +14,9 @@ pub(crate) const FORMAT: u32 = 1;
 pub struct GenerationInput {
     /// The resolved packages of the system view.
     pub packages: Vec<PackageInput>,
-    /// The chosen member of alternatives groups in the system view, by
-    /// group.
+    /// The member the resolution chose for every alternatives group present
+    /// in the system view, by group. Only the chosen member contributes the
+    /// group's paths.
     pub alternatives: BTreeMap<Name, Name>,
     /// The declared views and the version of each that belongs to this
     /// generation. Every version must exist.

@@ -45,27 +45,6 @@ pub enum Error {
         /// Every conflicting path, sorted.
         conflicts: Vec<Conflict>,
     },
-    /// The chosen member of an alternatives group is not in the view.
-    AlternativeAbsent {
-        /// The view being assembled.
-        view: String,
-        /// The alternatives group.
-        group: Name,
-        /// The package the caller chose.
-        chosen: Name,
-        /// The members of the group that are in the view, sorted.
-        present: Vec<Name>,
-    },
-    /// Several members of an alternatives group are in the view and none was
-    /// chosen.
-    AlternativeAmbiguous {
-        /// The view being assembled.
-        view: String,
-        /// The alternatives group.
-        group: Name,
-        /// The members of the group that are in the view, sorted.
-        members: Vec<Name>,
-    },
     /// Two store entries of the same package name were given for one view.
     DuplicatePackage {
         /// The view being assembled.
@@ -136,14 +115,6 @@ impl From<laft_pkg::Error> for Error {
     }
 }
 
-fn list(names: &[Name]) -> String {
-    names
-        .iter()
-        .map(Name::as_str)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -171,26 +142,6 @@ impl fmt::Display for Error {
                     "\n  hint: these packages do not declare a common alternatives group, so remove one of them"
                 )
             }
-            Self::AlternativeAbsent {
-                view,
-                group,
-                chosen,
-                present,
-            } => write!(
-                f,
-                "alternatives.{group} = {chosen}, but {chosen} is not in view {view:?}\n  members present: {}",
-                list(present)
-            ),
-            Self::AlternativeAmbiguous {
-                view,
-                group,
-                members,
-            } => write!(
-                f,
-                "alternatives group \"{group}\" has several members in view {view:?}: {}\n  hint: choose one with `alternatives.{group} = {}`",
-                list(members),
-                members.first().map_or("<package>", Name::as_str)
-            ),
             Self::DuplicatePackage { view, name } => {
                 write!(f, "view {view:?} contains package {name} more than once")
             }

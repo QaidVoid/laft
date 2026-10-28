@@ -148,28 +148,37 @@ fn chosen_alternative_provides_the_shared_path() {
 }
 
 #[test]
-fn absent_alternative_choice_is_rejected() {
+fn choice_of_an_absent_member_is_rejected() {
     let env = Env::new();
     let gcc = Pkg::new("gcc", "15")
         .file("usr/bin/cc", b"gcc")
         .alternative("cc", &["usr/bin/cc"])
         .build(&env);
     let error = assemble(&env, &[&gcc], &[("cc", "clang")]).expect_err("clang is absent");
+    assert!(matches!(error, Error::Invalid(_)), "{error}");
     assert_eq!(
         error.to_string(),
-        "alternatives.cc = clang, but clang is not in view \"system\"\n  members present: gcc"
+        "view \"system\": the resolution chooses clang for alternatives group cc, \
+         but its members in the view are gcc"
     );
 }
 
 #[test]
-fn several_alternatives_without_a_choice_are_rejected() {
+fn every_group_in_the_view_needs_a_choice() {
     let env = Env::new();
     let (neovim, vim) = vi_pair(&env, true);
     let error = assemble(&env, &[&neovim, &vim], &[]).expect_err("no choice");
+    assert!(matches!(error, Error::Invalid(_)), "{error}");
+    let env = Env::new();
+    let gcc = Pkg::new("gcc", "15")
+        .file("usr/bin/cc", b"gcc")
+        .alternative("cc", &["usr/bin/cc"])
+        .build(&env);
+    let error = assemble(&env, &[&gcc], &[]).expect_err("the only member is not chosen either");
     assert_eq!(
         error.to_string(),
-        "alternatives group \"vi\" has several members in view \"system\": neovim, vim\n  \
-         hint: choose one with `alternatives.vi = neovim`"
+        "view \"system\": the resolution chooses no member of alternatives group cc, \
+         whose members in the view are gcc"
     );
 }
 

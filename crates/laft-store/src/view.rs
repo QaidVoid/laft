@@ -79,7 +79,9 @@ pub struct ViewInput {
     pub name: Name,
     /// The resolved packages.
     pub packages: Vec<PackageInput>,
-    /// The chosen member of alternatives groups, by group.
+    /// The member the resolution chose for every alternatives group present
+    /// in the view, by group. Only the chosen member contributes the
+    /// group's paths.
     pub alternatives: BTreeMap<Name, Name>,
     /// Users allowed to enter the view, with their uids, resolved by the
     /// caller.
@@ -166,8 +168,8 @@ struct Loaded {
     groups: Vec<laft_pkg::Alternative>,
 }
 
-/// Computes the tree of view `view` from `packages`, resolving alternatives
-/// with `choices`, and checks that no path has two owners and that no store
+/// Computes the tree of view `view` from `packages`, applying the
+/// alternatives `choices` of the resolution, and checks that no path has two owners and that no store
 /// file is near the hard link limit. Nothing is written.
 pub(crate) fn layout(
     store: &Store,
@@ -205,7 +207,7 @@ pub(crate) fn layout(
         });
     }
 
-    let (alternatives, skipped) = resolve_alternatives(view, &loaded, choices)?;
+    let (alternatives, skipped) = apply_alternatives(view, &loaded, choices)?;
 
     let mut nodes: BTreeMap<String, (Node, usize)> = BTreeMap::new();
     let mut conflicts: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -264,10 +266,10 @@ pub(crate) fn layout(
 /// contribute to the view.
 type Skipped = Vec<BTreeSet<String>>;
 
-/// Chooses one member of every alternatives group present in the view and
-/// returns the effective choices and, per package, the paths it does not
-/// contribute.
-fn resolve_alternatives(
+/// Applies `choices`, the member the resolution chose for every
+/// alternatives group present in the view, and returns them with, per
+/// package, the paths it does not contribute.
+fn apply_alternatives(
     view: &str,
     loaded: &[Loaded],
     choices: &BTreeMap<Name, Name>,
@@ -284,35 +286,40 @@ fn resolve_alternatives(
     let mut effective = BTreeMap::new();
     let mut skipped = vec![BTreeSet::new(); loaded.len()];
     for (group, members) in groups {
-        let present: Vec<Name> = members
-            .iter()
-            .map(|(i, _)| loaded[*i].identity.name.clone())
-            .collect();
+        let present = || {
+            members
+                .iter()
+                .map(|(i, _)| loaded[*i].identity.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         let chosen = match choices.get(group) {
-            Some(choice) if present.contains(choice) => choice.clone(),
-            Some(choice) => {
-                return Err(Error::AlternativeAbsent {
-                    view: view.to_owned(),
-                    group: group.clone(),
-                    chosen: choice.clone(),
-                    present,
-                });
+            Some(chosen)
+                if members
+                    .iter()
+                    .any(|(i, _)| loaded[*i].identity.name == *chosen) =>
+            {
+                chosen
             }
-            None if present.len() == 1 => present[0].clone(),
+            Some(chosen) => {
+                return Err(Error::Invalid(format!(
+                    "view {view:?}: the resolution chooses {chosen} for alternatives group {group}, but its members in the view are {}",
+                    present()
+                )));
+            }
             None => {
-                return Err(Error::AlternativeAmbiguous {
-                    view: view.to_owned(),
-                    group: group.clone(),
-                    members: present,
-                });
+                return Err(Error::Invalid(format!(
+                    "view {view:?}: the resolution chooses no member of alternatives group {group}, whose members in the view are {}",
+                    present()
+                )));
             }
         };
         for (index, paths) in members {
-            if loaded[index].identity.name != chosen {
+            if loaded[index].identity.name != *chosen {
                 skipped[index].extend(paths.iter().cloned());
             }
         }
-        effective.insert(group.clone(), chosen);
+        effective.insert(group.clone(), chosen.clone());
     }
     Ok((effective, skipped))
 }

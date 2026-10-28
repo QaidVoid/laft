@@ -207,7 +207,8 @@ impl<'l> Transaction<'l> {
     ///
     /// Fails when the view was not planned or is assembled already, when a
     /// package is missing from the store, when two packages own a path
-    /// (naming both and the path), when alternatives cannot be resolved,
+    /// (naming both and the path), when `input.alternatives` does not choose
+    /// a member present in the view for every alternatives group in it,
     /// when a store file is near the hard link limit, or when writing
     /// fails. Nothing is created in the views directory then.
     pub fn assemble_view(&mut self, input: &ViewInput) -> Result<u64> {
