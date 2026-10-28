@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File};
 use std::io;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use laft_core::{Blake3Hash, Name, StoreId, Timestamp};
 use laft_pkg::Manifest;
@@ -192,7 +192,10 @@ pub fn plan_gc(lock: &Lock, policy: &GcPolicy, now: SystemTime) -> Result<GcPlan
         .take(usize::try_from(policy.keep_generations).unwrap_or(usize::MAX))
         .copied()
         .collect();
-    let horizon = now.checked_sub(Duration::from_secs(policy.keep_days.saturating_mul(86_400)));
+    let horizon = Timestamp::from(now)
+        .as_secs()
+        .checked_sub(policy.keep_days.saturating_mul(86_400))
+        .map(Timestamp::from_secs);
     let run = root.run_dir();
     let pointers = [
         (fsx::link_number(&run.join("system"))?, "active system"),
@@ -211,11 +214,7 @@ pub fn plan_gc(lock: &Lock, policy: &GcPolicy, now: SystemTime) -> Result<GcPlan
         if newest.contains(&number) {
             reasons.push(format!("newest {}", policy.keep_generations));
         }
-        let created = generation
-            .created
-            .parse::<Timestamp>()
-            .ok()
-            .map(SystemTime::from);
+        let created = generation.created.parse::<Timestamp>().ok();
         if policy.keep_days > 0 && created.zip(horizon).is_none_or(|(c, h)| c > h) {
             reasons.push(format!("younger than {} days", policy.keep_days));
         }

@@ -1,6 +1,6 @@
 use std::fmt;
 use std::str::FromStr;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ParseError;
 
@@ -11,7 +11,8 @@ const DAY: u64 = 86_400;
 ///
 /// The text form is RFC 3339 in UTC, `YYYY-MM-DDTHH:MM:SSZ`. Parsing accepts
 /// exactly that form for years 1970 to 9999, so every instant has one
-/// spelling.
+/// spelling. Every timestamp lies in that range, from the epoch to
+/// [`Self::MAX`], so every timestamp has a text form.
 ///
 /// ```
 /// use laft_core::Timestamp;
@@ -25,9 +26,17 @@ const DAY: u64 = 86_400;
 pub struct Timestamp(u64);
 
 impl Timestamp {
-    /// The instant `secs` seconds after the Unix epoch.
+    /// The latest timestamp, `9999-12-31T23:59:59Z`.
+    pub const MAX: Self = Self(253_402_300_799);
+
+    /// The instant `secs` seconds after the Unix epoch, or [`Self::MAX`]
+    /// when that is later.
     pub const fn from_secs(secs: u64) -> Self {
-        Self(secs)
+        if secs > Self::MAX.0 {
+            Self::MAX
+        } else {
+            Self(secs)
+        }
     }
 
     /// The number of seconds since the Unix epoch.
@@ -42,15 +51,10 @@ impl Timestamp {
 }
 
 impl From<SystemTime> for Timestamp {
-    /// Truncates to whole seconds. Times before the epoch become the epoch.
+    /// Truncates to whole seconds. Times before the epoch become the epoch,
+    /// and times after [`Timestamp::MAX`] become [`Timestamp::MAX`].
     fn from(time: SystemTime) -> Self {
-        Self(time.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()))
-    }
-}
-
-impl From<Timestamp> for SystemTime {
-    fn from(t: Timestamp) -> Self {
-        UNIX_EPOCH + Duration::from_secs(t.0)
+        Self::from_secs(time.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()))
     }
 }
 

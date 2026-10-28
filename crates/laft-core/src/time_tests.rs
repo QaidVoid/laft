@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 use proptest::prelude::*;
 
@@ -35,18 +35,27 @@ fn system_times_truncate_to_whole_seconds() {
     let time = UNIX_EPOCH + Duration::from_millis(1_500);
     assert_eq!(Timestamp::from(time).as_secs(), 1);
     assert_eq!(
-        SystemTime::from(Timestamp::from_secs(1)),
-        UNIX_EPOCH + Duration::from_secs(1)
-    );
-    assert_eq!(
         Timestamp::from(UNIX_EPOCH - Duration::from_secs(5)).as_secs(),
         0
     );
 }
 
+#[test]
+fn instants_after_the_year_9999_become_the_latest_timestamp() {
+    assert_eq!(Timestamp::MAX.to_string(), "9999-12-31T23:59:59Z");
+    assert_eq!(Timestamp::from_secs(u64::MAX), Timestamp::MAX);
+    assert_eq!(
+        Timestamp::from_secs(Timestamp::MAX.as_secs() + 1),
+        Timestamp::MAX
+    );
+    let far = UNIX_EPOCH + Duration::from_secs(Timestamp::MAX.as_secs() * 2);
+    assert_eq!(Timestamp::from(far), Timestamp::MAX);
+    assert_eq!("10000-01-01T00:00:00Z".parse::<Timestamp>().ok(), None);
+}
+
 proptest! {
     #[test]
-    fn formatted_timestamps_parse_back(secs in 0u64..253_402_300_800) {
+    fn formatted_timestamps_parse_back(secs in any::<u64>()) {
         let t = Timestamp::from_secs(secs);
         prop_assert_eq!(t.to_string().parse::<Timestamp>(), Ok(t));
     }
