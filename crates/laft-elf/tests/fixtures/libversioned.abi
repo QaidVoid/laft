@@ -1,0 +1,11 @@
+F add@@VERS_2
+F add@VERS_1
+F indirect@@VERS_2
+F protected_fn@@VERS_2
+F unversioned_fn
+F weak_hook@@VERS_2
+N marker@@VERS_2
+O VERS_1@@VERS_1 0
+O VERS_2@@VERS_2 0
+O counter@@VERS_1 4
+T tls_slot@@VERS_2 8

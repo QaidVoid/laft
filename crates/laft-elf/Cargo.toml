@@ -1,0 +1,18 @@
+[package]
+name = "laft-elf"
+description = "ELF inspection for deriving Laft package dependencies and ABI digests"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+laft-core.workspace = true
+object.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -1,0 +1,8 @@
+VERS_1 {
+  global: counter;
+  local: add_v1; add_v2;
+};
+
+VERS_2 {
+  global: indirect; marker; protected_fn; tls_slot; weak_hook;
+} VERS_1;
