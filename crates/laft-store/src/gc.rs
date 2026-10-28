@@ -214,8 +214,7 @@ pub fn plan_gc(lock: &Lock, policy: &GcPolicy, now: SystemTime) -> Result<GcPlan
         if newest.contains(&number) {
             reasons.push(format!("newest {}", policy.keep_generations));
         }
-        let created = generation.created.parse::<Timestamp>().ok();
-        if policy.keep_days > 0 && created.zip(horizon).is_none_or(|(c, h)| c > h) {
+        if policy.keep_days > 0 && horizon.is_none_or(|h| generation.created > h) {
             reasons.push(format!("younger than {} days", policy.keep_days));
         }
         if reasons.is_empty() {

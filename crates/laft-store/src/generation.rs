@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use laft_core::{Blake3Hash, Name, StoreId};
+use laft_core::{Blake3Hash, Name, StoreId, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::{PackageInput, PackageRecord};
@@ -50,8 +50,8 @@ pub struct Generation {
     pub generation: u64,
     /// The active system generation when this one was built.
     pub parent: Option<u64>,
-    /// When the generation was assembled, in RFC 3339 UTC.
-    pub created: String,
+    /// When the generation was assembled.
+    pub created: Timestamp,
     /// The message given with the command, if any.
     pub message: Option<String>,
     /// The version of Laft that built it.

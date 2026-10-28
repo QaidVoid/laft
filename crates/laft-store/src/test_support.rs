@@ -11,8 +11,7 @@ use laft_pkg::{Alternative, Arch, Compression, Manifest, Meta, scan, write_packa
 use tempfile::TempDir;
 
 use crate::{
-    GenerationInput, Init, Lock, Mode, PackageInput, PackageRecord, Plan, Root, Transaction,
-    ViewInput,
+    GenerationInput, Init, Lock, PackageInput, PackageRecord, Plan, Root, Transaction, ViewInput,
 };
 
 /// A temporary root, plus a directory for package files outside it.
@@ -252,7 +251,6 @@ pub(crate) fn view_input(view: &str, packages: &[&Built]) -> ViewInput {
 pub(crate) fn plan(root: &Root, views: &[&str]) -> Plan {
     Plan {
         command: "apply".into(),
-        mode: Mode::Boot,
         previous: root.default_generation().expect("default is readable"),
         views: views.iter().map(|v| name(v)).collect(),
     }

@@ -47,8 +47,8 @@ pub struct LockInfo {
     pub pid: u32,
     /// The command it runs, for example `apply`.
     pub command: String,
-    /// When it took the lock, in RFC 3339 UTC.
-    pub started: String,
+    /// When it took the lock.
+    pub started: Timestamp,
 }
 
 impl Root {
@@ -99,7 +99,7 @@ impl Root {
         let info = LockInfo {
             pid: std::process::id(),
             command: command.to_owned(),
-            started: Timestamp::now().to_string(),
+            started: Timestamp::now(),
         };
         fsx::write_atomic(&self.lock_info_path(), &to_json(&info)?, 0o644)?;
         Ok(Lock {

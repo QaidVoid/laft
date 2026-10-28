@@ -12,17 +12,13 @@ use crate::journal::{Counters, Journal};
 use crate::root::to_json;
 use crate::store::Prepared;
 use crate::view::{self, SYSTEM};
-use crate::{
-    Generation, GenerationInput, Lock, Mode, Root, State, ViewInput, ViewManifest, fault, fsx,
-};
+use crate::{Generation, GenerationInput, Lock, Root, State, ViewInput, ViewManifest, fault, fsx};
 
 /// What a transaction is going to build.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     /// The command that runs the transaction, for example `apply`.
     pub command: String,
-    /// What happens once the generation is assembled.
-    pub mode: Mode,
     /// The active system generation, which becomes the parent of the new
     /// one.
     pub previous: Option<u64>,
@@ -54,7 +50,7 @@ pub struct Plan {
 /// use std::path::Path;
 ///
 /// use laft_store::{
-///     GenerationInput, Init, Mode, PackageInput, Plan, Root, Transaction,
+///     GenerationInput, Init, PackageInput, Plan, Root, Transaction,
 /// };
 ///
 /// let root = Root::default();
@@ -62,7 +58,6 @@ pub struct Plan {
 /// lock.recover()?;
 /// let plan = Plan {
 ///     command: "apply".into(),
-///     mode: Mode::Boot,
 ///     previous: root.default_generation()?,
 ///     views: BTreeSet::new(),
 /// };
@@ -126,16 +121,15 @@ impl<'l> Transaction<'l> {
         }
         counters.save(root)?;
         fault::point("begin.counters")?;
-        let now = SystemTime::now();
-        let millis = now.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
         let journal = Journal::new(
             format!("{millis}-{}", std::process::id()),
             plan.command.clone(),
-            plan.mode,
             generation,
             plan.previous,
             views,
-            Timestamp::from(now).to_string(),
         );
         journal.save(root)?;
         fault::point("begin.journal")?;
@@ -245,7 +239,7 @@ impl<'l> Transaction<'l> {
             version: view::FORMAT,
             name: input.name.clone(),
             view_gen: version,
-            created: Timestamp::now().to_string(),
+            created: Timestamp::now(),
             packages: layout.packages,
             alternatives: layout.alternatives,
             users: input.users.keys().cloned().collect(),
@@ -299,7 +293,7 @@ impl<'l> Transaction<'l> {
             format: GEN_FORMAT,
             generation: number,
             parent: self.journal.previous,
-            created: Timestamp::now().to_string(),
+            created: Timestamp::now(),
             message: input.message.clone(),
             laft_version: input.laft_version.clone(),
             arch: input.arch.clone(),

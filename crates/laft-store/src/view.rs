@@ -3,7 +3,7 @@ use std::fs::{self, DirBuilder, File};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, symlink};
 use std::path::{Path, PathBuf};
 
-use laft_core::{Blake3Hash, Name, StoreId, Variant, Version};
+use laft_core::{Blake3Hash, Name, StoreId, Timestamp, Variant, Version};
 use laft_pkg::{Entry, Identity};
 use serde::{Deserialize, Serialize};
 
@@ -100,8 +100,8 @@ pub struct ViewManifest {
     pub name: Name,
     /// The view version.
     pub view_gen: u64,
-    /// When the version was assembled, in RFC 3339 UTC.
-    pub created: String,
+    /// When the version was assembled.
+    pub created: Timestamp,
     /// The packages, sorted by name.
     pub packages: Vec<PackageRecord>,
     /// The effective alternatives choices, by group.

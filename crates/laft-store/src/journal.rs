@@ -60,18 +60,6 @@ impl fmt::Display for State {
     }
 }
 
-/// What a transaction does once its generation is assembled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Mode {
-    /// Activate the generation now and make it the default.
-    Switch,
-    /// Make the generation the default for the next boot.
-    Boot,
-    /// Only build the generation.
-    BuildOnly,
-}
-
 /// The record of a transaction in progress, rewritten atomically at every
 /// state change so that recovery knows what to undo or finish.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,7 +68,6 @@ pub(crate) struct Journal {
     pub(crate) format: u32,
     pub(crate) txid: String,
     pub(crate) command: String,
-    pub(crate) mode: Mode,
     pub(crate) boot_id: String,
     pub(crate) generation: Option<u64>,
     pub(crate) previous: Option<u64>,
@@ -88,24 +75,20 @@ pub(crate) struct Journal {
     pub(crate) state: State,
     pub(crate) activation: Vec<String>,
     pub(crate) added: Vec<String>,
-    pub(crate) started: String,
 }
 
 impl Journal {
     pub(crate) fn new(
         txid: String,
         command: String,
-        mode: Mode,
         generation: u64,
         previous: Option<u64>,
         views: BTreeMap<Name, u64>,
-        started: String,
     ) -> Self {
         Self {
             format: FORMAT,
             txid,
             command,
-            mode,
             boot_id: boot_id(),
             generation: Some(generation),
             previous,
@@ -113,7 +96,6 @@ impl Journal {
             state: State::Planned,
             activation: Vec::new(),
             added: Vec::new(),
-            started,
         }
     }
 

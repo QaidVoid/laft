@@ -55,7 +55,7 @@ pub use generation::{
     CarriedModule, ConfigFile, ConfigRecord, EtcRecord, Generation, GenerationInput, IndexRecord,
     Init,
 };
-pub use journal::{Mode, State};
+pub use journal::State;
 pub use lock::{Lock, LockInfo};
 pub use root::Root;
 pub use store::{Difference, Store};
