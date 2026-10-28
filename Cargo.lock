@@ -367,6 +367,7 @@ version = "0.1.0"
 dependencies = [
  "insta",
  "laft-core",
+ "laft-pkg",
  "laft-store",
  "rustix",
  "serde",

@@ -1,0 +1,29 @@
+---
+source: crates/laft-activate/src/format/toml_tests.rs
+assertion_line: 24
+expression: "render(&value).expect(\"renders\")"
+---
+count = 3
+ratio = 0.5
+title = "a \"quoted\" title"
+unqualified-search-registries = ["docker.io"]
+
+[[mirror]]
+url = "https://a.example"
+weight = 1
+
+[[mirror]]
+url = "https://b.example"
+
+[[mirror.tags]]
+name = "x"
+
+["odd key"]
+"nested list" = [[1, 2], []]
+
+[server]
+host = "example.org"
+ports = [80, 443]
+
+[server.tls]
+enabled = true

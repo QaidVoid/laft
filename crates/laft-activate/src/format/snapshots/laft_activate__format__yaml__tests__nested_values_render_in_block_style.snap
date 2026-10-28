@@ -1,0 +1,25 @@
+---
+source: crates/laft-activate/src/format/yaml_tests.rs
+assertion_line: 22
+expression: render(&value)
+---
+count: 3
+empty_list: []
+empty_map: {}
+enabled: false
+matrix:
+  - - 1
+    - 2
+  - - 3
+name: laft
+nested:
+  deeper:
+    key: value
+nothing: null
+path: /usr/bin/x
+servers:
+  - host: a.example
+    ports:
+      - 80
+      - 443
+  - host: b.example

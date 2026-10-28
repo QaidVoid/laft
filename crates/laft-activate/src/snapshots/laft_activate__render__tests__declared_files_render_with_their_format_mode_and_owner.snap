@@ -1,0 +1,31 @@
+---
+source: crates/laft-activate/src/render_tests.rs
+assertion_line: 154
+expression: declared_only
+---
+=== app/
+=== app/config.json (644 31:10)
+{
+  "debug": false
+}
+=== app/config.yaml (644 0:0)
+listen:
+  - "127.0.0.1"
+  - "::1"
+=== containers/
+=== containers/registries.conf (644 0:0)
+unqualified-search-registries = ["docker.io"]
+=== default/
+=== default/app (644 0:0)
+A="x y"
+B=plain
+=== doas.conf (400 0:0)
+permit persist :wheel
+=== iwd/
+=== iwd/main.conf (644 0:0)
+[General]
+EnableNetworkConfiguration=true
+
+[Network]
+NameResolvingService=resolvconf
+=== resolv.conf -> /run/resolvconf/resolv.conf

@@ -120,3 +120,93 @@ pub(crate) fn declare_generation(lock: &Lock, number: u64, users: &Users) -> cra
     declared.write(&dir).expect("can write the accounts");
     declared
 }
+
+/// Creates a store entry for package `name` whose payload holds `files`,
+/// and returns its directory name. Only what rendering reads is written:
+/// the manifest and the files.
+pub(crate) fn fake_package(root: &Root, name: &str, files: &[(&str, &str)]) -> String {
+    use laft_core::Blake3Hash;
+    use laft_pkg::{Arch, Entry, Identity, Manifest};
+
+    let mut dirs = std::collections::BTreeSet::new();
+    let mut entries = Vec::new();
+    for (path, content) in files {
+        let mut parent = Path::new(path).parent();
+        while let Some(dir) = parent.filter(|d| !d.as_os_str().is_empty()) {
+            dirs.insert(dir.to_string_lossy().into_owned());
+            parent = dir.parent();
+        }
+        entries.push(Entry::File {
+            path: (*path).to_owned(),
+            mode: 0o444,
+            size: content.len() as u64,
+            hash: Blake3Hash::of(content.as_bytes()),
+            owner: None,
+            group: None,
+        });
+    }
+    for dir in dirs {
+        entries.push(Entry::Dir {
+            path: dir,
+            mode: 0o755,
+            owner: None,
+            group: None,
+        });
+    }
+    let identity = Identity {
+        name: name.parse().expect("valid name"),
+        version: "1.0".parse().expect("valid version"),
+        rev: 1,
+        variant: laft_core::Variant::Dynamic,
+        arch: Arch::Any,
+    };
+    let manifest =
+        Manifest::new(identity.clone(), Blake3Hash::of(b"meta"), entries).expect("valid manifest");
+    let dir = manifest
+        .store_id()
+        .dir_name(&identity.name, &identity.version, identity.variant);
+    let entry = root.store().path(&dir);
+    fs::create_dir_all(entry.join(".laft")).expect("can create the entry");
+    fs::write(entry.join(".laft/manifest.json"), manifest.to_json()).expect("can write");
+    for (path, content) in files {
+        let file = entry.join(path);
+        fs::create_dir_all(file.parent().expect("has a parent")).expect("can create dirs");
+        fs::write(file, content).expect("can write");
+    }
+    dir
+}
+
+/// Renders every entry of `tree` as text: a header with the path and mode,
+/// owner or link target, followed by the content of files.
+pub(crate) fn dump(tree: &crate::EtcTree) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    for (path, node) in tree.entries() {
+        match node {
+            crate::Node::Dir => {
+                let _ = writeln!(out, "=== {path}/");
+            }
+            crate::Node::File {
+                bytes,
+                mode,
+                uid,
+                gid,
+            } => {
+                let text = String::from_utf8_lossy(bytes);
+                let _ = write!(out, "=== {path} ({mode:o} {uid}:{gid})\n{text}");
+                if !text.ends_with('\n') {
+                    out.push_str("<no newline>\n");
+                }
+            }
+            crate::Node::Linked(source) => {
+                let name = source.file_name().unwrap_or_default().to_string_lossy();
+                let _ = writeln!(out, "=== {path} (from the store: {name})");
+            }
+            crate::Node::Symlink(target) => {
+                let _ = writeln!(out, "=== {path} -> {target}");
+            }
+        }
+    }
+    out
+}

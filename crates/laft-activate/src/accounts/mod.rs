@@ -22,9 +22,15 @@ mod merge;
 
 pub use apply::{AccountsReport, apply_accounts};
 pub use declare::declare;
+#[cfg(test)]
+pub(crate) use declare::resolve;
 
 /// The name of the declared accounts file in a generation directory.
 pub(crate) const DECLARED_FILE: &str = "accounts.json";
+
+/// The account databases, relative to `/etc`, which only the accounts step
+/// writes.
+pub(crate) const DATABASES: [&str; 4] = ["group", "gshadow", "passwd", "shadow"];
 
 /// The accounts a generation declares, with every id resolved.
 ///

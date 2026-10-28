@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 laft-core.workspace = true
+laft-pkg.workspace = true
 laft-store.workspace = true
 rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }

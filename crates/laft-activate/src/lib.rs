@@ -3,7 +3,9 @@
 //!
 //! The configuration reaches this crate as plain values ([`EtcConfig`]).
 //! [`declare`] resolves the configured accounts into [`Declared`] accounts
-//! with ids that stay stable across generations. At activation,
+//! with ids that stay stable across generations, and [`render`] builds the
+//! static `/etc` tree of a generation from packages, derived files and
+//! declared files. At activation,
 //! [`apply_accounts`] merges a generation's accounts into `/etc/passwd`,
 //! `/etc/group`, `/etc/shadow` and `/etc/gshadow`.
 
@@ -12,7 +14,9 @@
 mod accounts;
 mod config;
 mod error;
+mod format;
 mod fsx;
+mod render;
 mod state;
 
 #[cfg(test)]
@@ -24,3 +28,4 @@ pub use accounts::{
 };
 pub use config::{EtcConfig, File, Group, Kernel, User, Users};
 pub use error::{ConfigError, Conflict, ConflictKind, Error, Result, Warning};
+pub use render::{EtcTree, Node, render};
