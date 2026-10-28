@@ -1,6 +1,7 @@
 //! Roots, accounts and generations shared by the unit tests. Everything
 //! happens in a temporary directory.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -209,4 +210,71 @@ pub(crate) fn dump(tree: &crate::EtcTree) -> String {
         }
     }
     out
+}
+
+/// Builds generation `number` from `config` as assembly does: declares the
+/// accounts, renders and writes the static tree, stores the declared
+/// accounts and writes `gen.json` with the tree's record.
+pub(crate) fn build_generation(lock: &Lock, number: u64, config: &crate::EtcConfig) {
+    use laft_core::{Blake3Hash, Timestamp};
+    use laft_store::{ConfigRecord, Generation, Init};
+
+    let root = lock.root();
+    let declared = crate::declare(lock, &config.users).expect("the accounts are valid");
+    let tree = crate::render(config, &declared, &root.store(), &[]).expect("renders");
+    let dir = crate::state::gen_dir(root, number);
+    tree.write(&dir).expect("writes the tree");
+    declared.write(&dir).expect("writes the accounts");
+    let generation = Generation {
+        format: 1,
+        generation: number,
+        parent: None,
+        created: Timestamp::now(),
+        message: None,
+        laft_version: "0.1.0".into(),
+        arch: "x86_64-v3".into(),
+        init: Init {
+            backend: "runit".into(),
+            exec: vec!["/usr/bin/runit".into()],
+        },
+        config: ConfigRecord {
+            hash: Blake3Hash::of(b"{}"),
+            files: Vec::new(),
+        },
+        indexes: Vec::new(),
+        packages: Vec::new(),
+        initrd_packages: Vec::new(),
+        alternatives: BTreeMap::new(),
+        views: BTreeMap::new(),
+        carried_modules: Vec::new(),
+        etc: tree.record(),
+    };
+    let bytes = serde_json::to_vec(&generation).expect("serializes");
+    fs::write(dir.join("gen.json"), bytes).expect("writes gen.json");
+}
+
+/// A configuration with the base accounts and `files`, each given as an
+/// absolute path and its text.
+pub(crate) fn config_with(files: &[(&str, &str)]) -> crate::EtcConfig {
+    let mut config = crate::EtcConfig {
+        users: base_users(),
+        ..crate::EtcConfig::default()
+    };
+    for (path, text) in files {
+        config.files.insert(
+            (*path).to_owned(),
+            crate::File {
+                text: Some((*text).to_owned()),
+                ..crate::File::default()
+            },
+        );
+    }
+    config
+}
+
+/// The target of the symlink `relative` below the root, if it is one.
+pub(crate) fn link(env: &Env, relative: &str) -> Option<String> {
+    fs::read_link(env.path(relative))
+        .ok()
+        .map(|t| t.to_string_lossy().into_owned())
 }

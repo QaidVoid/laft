@@ -1,7 +1,7 @@
 //! Paths below a root and the records Laft keeps about `/etc` in
 //! `laft/state`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -72,6 +72,39 @@ pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T, mode: u32) -> Res
     fsx::write_atomic(path, &bytes, mode, (0, 0))
 }
 
+/// What Laft last put into `/etc` as managed symlinks, stored as
+/// `etc-managed.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ManagedRecord {
+    pub(crate) version: u32,
+    /// The generation `/etc` was last reconciled with.
+    pub(crate) generation: Option<u64>,
+    /// The managed paths, relative to `/etc`.
+    pub(crate) managed: BTreeSet<String>,
+    /// Directories Laft created and may remove once they are empty.
+    pub(crate) dirs: BTreeSet<String>,
+}
+
+impl Default for ManagedRecord {
+    fn default() -> Self {
+        Self {
+            version: FORMAT,
+            generation: None,
+            managed: BTreeSet::new(),
+            dirs: BTreeSet::new(),
+        }
+    }
+}
+
+impl Record for ManagedRecord {
+    const NAME: &'static str = "etc-managed.json";
+
+    fn version(&self) -> u32 {
+        self.version
+    }
+}
+
 /// The hashes of the copy-mode files Laft wrote, stored as
 /// `etc-copies.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +139,11 @@ impl Record for CopiesRecord {
 }
 
 impl CopiesRecord {
+    /// Whether Laft wrote content with `hash` at `path`.
+    pub(crate) fn wrote(&self, path: &str, hash: &Blake3Hash) -> bool {
+        self.files.get(path) == Some(hash) || self.pending.get(path) == Some(hash)
+    }
+
     /// Records that `hash` was written at `path`.
     pub(crate) fn finish(&mut self, path: &str, hash: Blake3Hash) {
         self.pending.remove(path);
