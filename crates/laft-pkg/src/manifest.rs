@@ -6,7 +6,7 @@ use laft_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, path};
+use crate::{Error, Meta, path};
 
 /// The version of the manifest and metadata formats that this crate reads and
 /// writes.
@@ -377,6 +377,33 @@ impl Manifest {
     /// [`Self::to_json`].
     pub fn store_id(&self) -> StoreId {
         StoreId::from_manifest_hash(&Blake3Hash::of(&self.to_json()))
+    }
+
+    /// Checks that `meta`, stored as `meta_bytes`, is the metadata this
+    /// manifest names.
+    pub(crate) fn check_meta(&self, meta: &Meta, meta_bytes: &[u8]) -> Result<(), Error> {
+        let in_package = |e: Error| e.in_package(&self.package);
+        let actual = Blake3Hash::of(meta_bytes);
+        if actual != self.meta {
+            return Err(in_package(
+                Error::mismatch("metadata hash", self.meta, actual).at(".laft/meta.json"),
+            ));
+        }
+        if meta.identity() != self.package {
+            return Err(in_package(Error::mismatch(
+                "package identity",
+                &self.package,
+                meta.identity(),
+            )));
+        }
+        if meta.installed_size != self.installed_size() {
+            return Err(in_package(Error::mismatch(
+                "installed size",
+                self.installed_size(),
+                meta.installed_size,
+            )));
+        }
+        Ok(())
     }
 
     fn validate(&self) -> Result<(), Error> {

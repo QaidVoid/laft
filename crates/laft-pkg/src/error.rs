@@ -43,6 +43,18 @@ impl Error {
         Self::new(ErrorKind::Invalid(message.into()))
     }
 
+    pub(crate) fn mismatch(
+        what: &'static str,
+        expected: impl fmt::Display,
+        actual: impl fmt::Display,
+    ) -> Self {
+        Self::new(ErrorKind::Mismatch {
+            what,
+            expected: expected.to_string(),
+            actual: actual.to_string(),
+        })
+    }
+
     fn new(kind: ErrorKind) -> Self {
         Self {
             package: None,

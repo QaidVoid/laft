@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::test_support::{dir, file, meta, symlink};
+use crate::test_support::{dir, file, meta, package, symlink};
 
 fn identity() -> Identity {
     meta(0).identity()
@@ -181,6 +181,34 @@ fn file_names_follow_the_package_naming_scheme() {
     identity.version = "47.0".parse().expect("valid version");
     identity.arch = Arch::Any;
     assert_eq!(identity.file_name(), "adwaita-icon-theme-47.0-r1.any.lpkg");
+}
+
+#[test]
+fn metadata_must_match_the_manifest() {
+    let (meta, m) = package(vec![dir("usr"), file("usr/rg", b"rg")]);
+    let bytes = meta.to_json().expect("valid metadata");
+    assert!(m.check_meta(&meta, &bytes).is_ok());
+
+    let mut other = meta.clone();
+    other.summary = "Something else".into();
+    let other_bytes = other.to_json().expect("valid metadata");
+    let err = m
+        .check_meta(&other, &other_bytes)
+        .expect_err("hash differs");
+    assert!(err.to_string().contains("metadata hash"), "{err}");
+
+    let mut sized = meta;
+    sized.installed_size = 3;
+    let m = Manifest::new(
+        sized.identity(),
+        Blake3Hash::of(&sized.to_json().expect("valid metadata")),
+        vec![dir("usr"), file("usr/rg", b"rg")],
+    )
+    .expect("valid manifest");
+    let err = m
+        .check_meta(&sized, &sized.to_json().expect("valid metadata"))
+        .expect_err("installed size differs");
+    assert!(err.to_string().contains("installed size"), "{err}");
 }
 
 fn arb_entries() -> impl Strategy<Value = Vec<Entry>> {
