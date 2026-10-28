@@ -63,6 +63,13 @@ These properties define Laft. A change that breaks one is a bug, even when every
   - fits the MSRV,
   - adds no duplicate major versions (`cargo tree -d`) unless there is no alternative.
 
+### Accepted exceptions
+
+These dependencies do not meet one of the checks above and were accepted on purpose. Add to this list only with the owner's approval.
+
+- `webpki-roots`: licensed CDLA-Permissive-2.0, a permissive data license. It bundles the CA root list, so a static binary can reach a repository during installation or rescue, before any CA bundle exists on the system.
+- `ring`: no release in the last 12 months. It is the mature, widely used cryptography provider for `rustls` with a stable scope, and the alternatives either need a C and cmake build that complicates static builds or are less proven.
+
 ## Code
 
 - Keep it simple. Do not add abstractions, generics, traits, feature flags or configuration for cases nothing uses yet. If a change seems to need that, stop and ask first.
