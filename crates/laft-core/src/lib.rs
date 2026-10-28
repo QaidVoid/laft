@@ -23,7 +23,7 @@ mod version;
 
 pub use account::{system_gid, system_uid};
 pub use cjson::{CanonicalJsonError, to_canonical_json};
-pub use dep::{Constraint, Dep, Op, PcName, Provide, Soname, VersionReq};
+pub use dep::{Constraint, Constraints, Dep, Op, PcName, Provide, Soname, VersionReq};
 pub use error::ParseError;
 pub use hash::{Blake3Hash, Sha256Hash};
 pub use name::Name;

@@ -202,12 +202,44 @@ pub enum VersionReq {
     Any,
     /// Versions that match the prefix token by token, written `name@prefix`.
     Prefix(VersionPrefix),
-    /// Versions that satisfy every constraint, written `name>=1.3,<2`. The
-    /// list is never empty, because an empty list is written as [`Self::Any`].
-    Constraints(Vec<Constraint>),
+    /// Versions that satisfy every constraint, written `name>=1.3,<2`. Build
+    /// it with [`Self::from_constraints`].
+    Constraints(Constraints),
+}
+
+/// The constraints of [`VersionReq::Constraints`], in the order they are
+/// written. The list is never empty, because [`VersionReq::from_constraints`]
+/// turns an empty list into [`VersionReq::Any`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Constraints(Vec<Constraint>);
+
+impl Constraints {
+    /// The constraints as a slice, which is never empty.
+    pub fn as_slice(&self) -> &[Constraint] {
+        &self.0
+    }
 }
 
 impl VersionReq {
+    /// The requirement that versions satisfy every constraint in
+    /// `constraints`, or [`Self::Any`] when the list is empty.
+    ///
+    /// ```
+    /// use laft_core::VersionReq;
+    ///
+    /// assert_eq!(VersionReq::from_constraints(vec![]), VersionReq::Any);
+    /// let range = VersionReq::from_constraints(vec![">=1.3".parse()?, "<2".parse()?]);
+    /// assert!(range.matches(&"1.9".parse()?, 1));
+    /// # Ok::<(), laft_core::ParseError>(())
+    /// ```
+    pub fn from_constraints(constraints: Vec<Constraint>) -> Self {
+        if constraints.is_empty() {
+            Self::Any
+        } else {
+            Self::Constraints(Constraints(constraints))
+        }
+    }
+
     /// Whether a package of `version` and revision `rev` satisfies the
     /// requirement. Revisions are compared only by constraints that carry
     /// one, as described on [`Constraint::matches`].
@@ -215,9 +247,10 @@ impl VersionReq {
         match self {
             Self::Any => true,
             Self::Prefix(prefix) => prefix.matches(version),
-            Self::Constraints(constraints) => {
-                constraints.iter().all(|c| c.matches(version, Some(rev)))
-            }
+            Self::Constraints(constraints) => constraints
+                .as_slice()
+                .iter()
+                .all(|c| c.matches(version, Some(rev))),
         }
     }
 }
@@ -242,7 +275,7 @@ impl VersionReq {
 ///     panic!("expected a package dependency with constraints");
 /// };
 /// assert_eq!(name.as_str(), "zlib");
-/// assert_eq!(constraints.len(), 2);
+/// assert_eq!(constraints.as_slice().len(), 2);
 /// assert_eq!(dep.to_string(), "zlib>=1.3,<2");
 /// # Ok::<(), laft_core::ParseError>(())
 /// ```
@@ -303,10 +336,7 @@ impl FromStr for Dep {
             ));
         }
         let (name, constraints) = split_constraints(s);
-        let req = match parse_constraints(constraints)? {
-            constraints if constraints.is_empty() => VersionReq::Any,
-            constraints => VersionReq::Constraints(constraints),
-        };
+        let req = VersionReq::from_constraints(parse_constraints(constraints)?);
         Ok(Self::Pkg(name.parse()?, req))
     }
 }
@@ -324,7 +354,7 @@ impl fmt::Display for Dep {
             Self::Pkg(name, VersionReq::Prefix(prefix)) => write!(f, "{name}@{prefix}"),
             Self::Pkg(name, VersionReq::Constraints(constraints)) => {
                 write!(f, "{name}")?;
-                write_constraints(f, constraints)
+                write_constraints(f, constraints.as_slice())
             }
         }
     }

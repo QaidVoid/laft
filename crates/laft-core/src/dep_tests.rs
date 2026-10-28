@@ -35,7 +35,7 @@ fn parses_every_dependency_form() {
             "zlib>=1.3,<2",
             Dep::Pkg(
                 name("zlib"),
-                VersionReq::Constraints(vec![
+                VersionReq::from_constraints(vec![
                     constraint(Op::Ge, "1.3", None),
                     constraint(Op::Lt, "2", None),
                 ]),
@@ -45,7 +45,7 @@ fn parses_every_dependency_form() {
             "zlib=1.3.1-r2",
             Dep::Pkg(
                 name("zlib"),
-                VersionReq::Constraints(vec![constraint(Op::Eq, "1.3.1", Some(2))]),
+                VersionReq::from_constraints(vec![constraint(Op::Eq, "1.3.1", Some(2))]),
             ),
         ),
         (
@@ -59,7 +59,7 @@ fn parses_every_dependency_form() {
             "openssl1.1<=1.1.1w",
             Dep::Pkg(
                 name("openssl1.1"),
-                VersionReq::Constraints(vec![constraint(Op::Le, "1.1.1w", None)]),
+                VersionReq::from_constraints(vec![constraint(Op::Le, "1.1.1w", None)]),
             ),
         ),
     ];
@@ -174,9 +174,9 @@ fn arb_dep() -> impl Strategy<Value = Dep> {
         }),
         (
             arb_name(),
-            proptest::collection::vec(arb_constraint(), 1..4)
+            proptest::collection::vec(arb_constraint(), 0..4)
         )
-            .prop_map(|(n, c)| Dep::Pkg(n, VersionReq::Constraints(c))),
+            .prop_map(|(n, c)| Dep::Pkg(n, VersionReq::from_constraints(c))),
     ]
 }
 
@@ -226,7 +226,7 @@ fn version_requirements_match_by_kind() {
     let prefix = VersionReq::Prefix("19".parse().expect("valid"));
     assert!(prefix.matches(&version("19.1.7"), 1));
     assert!(!prefix.matches(&version("190.1"), 1));
-    let range = VersionReq::Constraints(vec![
+    let range = VersionReq::from_constraints(vec![
         constraint(Op::Ge, "1.3", None),
         constraint(Op::Lt, "2", None),
     ]);
