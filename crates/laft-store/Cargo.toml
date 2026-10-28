@@ -1,0 +1,22 @@
+[package]
+name = "laft-store"
+description = "The Laft package store, views, generations and transactions"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+blake3.workspace = true
+laft-core.workspace = true
+laft-pkg.workspace = true
+rustix = { workspace = true, features = ["fs", "process"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
