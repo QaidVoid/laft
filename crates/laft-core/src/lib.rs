@@ -32,3 +32,9 @@ pub use store::{STORE_DIR, StoreId};
 pub use time::Timestamp;
 pub use variant::Variant;
 pub use version::{PackageVersion, Version, VersionPrefix};
+
+/// Items that exported macros refer to. Not part of the public API.
+#[doc(hidden)]
+pub mod __private {
+    pub use serde;
+}
