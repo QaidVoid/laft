@@ -56,7 +56,8 @@ format, name and version matching, the links /run/laft/system and
 /laft/views/<name>/current, authorization by uid and gid, the order of the
 privilege drop and its verification, the environment handed to the
 command, the default shell, the path search, the working directory
-fallback and the exit statuses 126 and 127. An integration test checks
+fallback, the caller's umask for the command and the exit statuses 126
+and 127. An integration test checks
 that the binary refuses to run without the setuid bit. The mount sequence
 is tested in crates/laft-sandbox inside a user namespace. What remains
 needs a setuid root binary on a booted generation and will be tested here,

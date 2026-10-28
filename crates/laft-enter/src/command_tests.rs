@@ -1,10 +1,15 @@
 use std::ffi::OsString;
+use std::fs::{self, OpenOptions};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
+use std::process::Command;
 
+use rustix::fs::Mode;
 use rustix::io::Errno;
 
 use super::{
-    NOT_EXECUTABLE, NOT_FOUND, candidates, command_line, directories, environment, exit_status,
+    NOT_EXECUTABLE, NOT_FOUND, candidates, command_line, directories, environment, exec,
+    exit_status,
 };
 
 fn env(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
@@ -122,4 +127,55 @@ fn the_working_directory_falls_back_to_home_then_root() {
     );
     assert_eq!(directories(None, &home), paths(&["/home/a", "/"]));
     assert_eq!(directories(None, &[]), paths(&["/"]));
+}
+
+const CREATE: &str = "LAFT_ENTER_TEST_CREATE";
+const EXEC: &str = "LAFT_ENTER_TEST_EXEC";
+
+/// Runs a child copy of this test that sets the hardened umask and then
+/// executes, through [`exec`], a second copy that creates a file.
+#[test]
+fn the_command_runs_with_the_callers_umask() {
+    let me = std::env::current_exe().unwrap();
+    let args = [
+        "--exact",
+        "command::tests::the_command_runs_with_the_callers_umask",
+        "--test-threads=1",
+    ];
+    if let Some(file) = std::env::var_os(CREATE) {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o666)
+            .open(file)
+            .unwrap();
+        return;
+    }
+    if let Some(file) = std::env::var_os(EXEC) {
+        rustix::process::umask(Mode::from_raw_mode(0o077));
+        let command = std::iter::once(me.into_os_string())
+            .chain(args.map(OsString::from))
+            .collect();
+        let failure = exec(
+            command,
+            vec![(CREATE.into(), file)],
+            None,
+            Mode::from_raw_mode(0o022),
+        );
+        panic!("cannot execute the test again: {failure}");
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("created");
+    let output = Command::new(&me)
+        .args(args)
+        .env(EXEC, &file)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let mode = fs::metadata(&file).unwrap().permissions().mode();
+    assert_eq!(format!("{:o}", mode & 0o777), "644");
 }

@@ -10,6 +10,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 
+use rustix::fs::Mode;
 use rustix::io::Errno;
 
 use crate::Failure;
@@ -117,18 +118,21 @@ pub(crate) fn directories(cwd: Option<PathBuf>, env: &[(OsString, OsString)]) ->
         .collect()
 }
 
-/// Changes to the first directory of [`directories`] that works and
-/// executes the command with `env`. Returns only when that fails.
+/// Changes to the first directory of [`directories`] that works, restores
+/// the caller's `umask` and executes the command with `env`. Returns only
+/// when that fails.
 pub(crate) fn exec(
     command: Vec<OsString>,
     env: Vec<(OsString, OsString)>,
     cwd: Option<PathBuf>,
+    umask: Mode,
 ) -> Failure {
     for dir in directories(cwd, &env) {
         if std::env::set_current_dir(dir).is_ok() {
             break;
         }
     }
+    rustix::process::umask(umask);
     let mut command = command_line(command, &env).into_iter();
     let Some(program) = command.next() else {
         return Failure::error("no command");

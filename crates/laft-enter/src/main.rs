@@ -31,9 +31,9 @@
 //! is obtained and what the allocator reports on stderr, never a decision
 //! of this program. An allocation failure they cause aborts the program,
 //! which leaves nothing behind outside its mount namespace. The binary is
-//! static, so no dynamic loader runs with root privileges. The umask stays
-//! 077 for the command, because restoring the caller's umask is not part
-//! of entering a view.
+//! static, so no dynamic loader runs with root privileges. The caller's
+//! umask is restored right before the command is executed, so files the
+//! command creates get the caller's usual permissions.
 
 #![forbid(unsafe_code)]
 
@@ -55,7 +55,7 @@ use crate::access::Caller;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-/// The umask of the whole run.
+/// The umask of every step before the command is executed.
 const UMASK: u32 = 0o077;
 
 /// The exit status of every error of this program.
@@ -136,7 +136,7 @@ fn run() -> Failure {
     if let Err(e) = laft_sandbox::close_inherited_on_exec() {
         return Failure::error(e.to_string());
     }
-    rustix::process::umask(Mode::from_raw_mode(UMASK));
+    let caller_umask = rustix::process::umask(Mode::from_raw_mode(UMASK));
 
     let args: Vec<OsString> = std::env::args_os().collect();
     let env: Vec<(OsString, OsString)> = std::env::vars_os().collect();
@@ -160,7 +160,7 @@ fn run() -> Failure {
         return failure;
     }
     let env = command::environment(env, &invocation.view);
-    let failure = command::exec(invocation.command, env, cwd);
+    let failure = command::exec(invocation.command, env, cwd, caller_umask);
     drop(lock);
     failure
 }
