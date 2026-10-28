@@ -443,6 +443,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "laft-svc"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "laft-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"

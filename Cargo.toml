@@ -10,6 +10,7 @@ members = [
   "crates/laft-resolve",
   "crates/laft-sandbox",
   "crates/laft-store",
+  "crates/laft-svc",
 ]
 
 [workspace.package]
