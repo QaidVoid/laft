@@ -500,11 +500,11 @@ impl Lock {
     /// | storing | the entries the transaction added are removed |
     /// | stored, assembling | the partial generation and views are removed |
     /// | assembled, boot-installed | the generation is kept but not made the default |
-    /// | activating in the same boot | nothing is done, the journal stays for activation to resume |
+    /// | activating in the same boot, or when either boot id is unknown | nothing is done, the journal stays for activation to resume |
     /// | activating after a reboot | the generation is kept but not made the default |
     /// | activated, complete | the generation is made the default |
     ///
-    /// In every case except an activation in the same boot, the staging
+    /// In every case except an activation that stays, the staging
     /// directory is emptied, the filesystem synced, and the journal removed.
     ///
     /// # Errors
@@ -546,7 +546,7 @@ fn recover(root: &Root, journal: Journal) -> Result<Recovery> {
             Outcome::RolledBack
         }
         State::Assembled | State::BootInstalled => Outcome::Built,
-        State::Activating if journal.boot_id == crate::journal::boot_id() => {
+        State::Activating if same_boot(&journal.boot_id, &crate::journal::boot_id()) => {
             return Ok(report(journal, Outcome::ActivationInterrupted));
         }
         State::Activating => Outcome::RebootedDuringActivation,
@@ -561,6 +561,13 @@ fn recover(root: &Root, journal: Journal) -> Result<Recovery> {
     fsx::sync_fs(&root.laft())?;
     journal.remove(root)?;
     Ok(report(journal, outcome))
+}
+
+/// Whether the machine still runs the boot `recorded` names. An empty id is
+/// unknown, and an unknown boot counts as the same one, so that recovery
+/// keeps the journal instead of assuming a reboot it cannot prove.
+fn same_boot(recorded: &str, current: &str) -> bool {
+    recorded.is_empty() || current.is_empty() || recorded == current
 }
 
 fn report(journal: Journal, outcome: Outcome) -> Recovery {

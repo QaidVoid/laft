@@ -164,6 +164,13 @@ fn activation_states_recover_as_recorded() {
     rewrite_journal(&env, State::Activating, None);
     let recovered = lock.recover().expect("recovers");
     assert_eq!(recovered[0].outcome, Outcome::ActivationInterrupted);
+    rewrite_journal(&env, State::Activating, Some(""));
+    let recovered = lock.recover().expect("recovers");
+    assert_eq!(
+        recovered[0].outcome,
+        Outcome::ActivationInterrupted,
+        "an unknown boot id is not proof of a reboot"
+    );
     assert!(matches!(
         apply(&lock, &[&tool], None),
         Err(Error::Pending {

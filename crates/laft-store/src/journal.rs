@@ -175,7 +175,7 @@ impl Journal {
 
 /// The id of the current boot, which tells recovery whether the machine
 /// rebooted since a transaction started. Empty when the kernel does not
-/// provide one.
+/// provide one, and recovery then treats the boot as unknown.
 pub(crate) fn boot_id() -> String {
     fs::read_to_string("/proc/sys/kernel/random/boot_id")
         .map(|id| id.trim().to_owned())
