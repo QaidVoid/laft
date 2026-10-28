@@ -642,7 +642,7 @@ fn check_shared_dirs(specs: &BTreeMap<String, Spec>, errors: &mut Vec<ConfigErro
 
 /// Resolves a declared service into its spec. Validation reports problems
 /// separately, so this never fails.
-fn resolve(name: &str, service: &Service) -> Spec {
+pub(crate) fn resolve(name: &str, service: &Service) -> Spec {
     let mut after: BTreeSet<String> = service.after.iter().cloned().collect();
     if !service.early {
         after.insert(EARLY.to_owned());

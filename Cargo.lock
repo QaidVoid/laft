@@ -460,6 +460,7 @@ dependencies = [
  "blake3",
  "insta",
  "laft-core",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

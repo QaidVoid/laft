@@ -1,0 +1,461 @@
+use std::fs;
+use std::os::unix::fs::MetadataExt;
+use std::os::unix::process::ExitStatusExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use tempfile::TempDir;
+
+use super::{ExecMode, Launcher, restarts};
+use crate::launcher::accounts::Credentials;
+use crate::launcher::process::{drop_privileges, spawn_as};
+use crate::spec::{Spec, SpecDir};
+use crate::validate::resolve;
+use crate::{Error, Restart, Service, ServiceKind};
+
+/// A temporary root with account databases in which `root` is uid 0 and
+/// `me` is the user running the tests.
+struct Fixture {
+    dir: TempDir,
+    launcher: Launcher,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().expect("can create a temporary directory");
+        let (uid, gid) = (
+            rustix::process::getuid().as_raw(),
+            rustix::process::getgid().as_raw(),
+        );
+        fs::create_dir_all(dir.path().join("etc")).expect("mkdir");
+        fs::write(
+            dir.path().join("etc/passwd"),
+            format!("root:x:0:0:root:/root:/bin/sh\nme:x:{uid}:{gid}::/home/me:/bin/sh\n"),
+        )
+        .expect("write");
+        fs::write(
+            dir.path().join("etc/group"),
+            format!("root:x:0:\nme:x:{gid}:\n"),
+        )
+        .expect("write");
+        let launcher = Launcher::new(dir.path());
+        Self { dir, launcher }
+    }
+
+    fn path(&self, relative: &str) -> PathBuf {
+        self.dir.path().join(relative)
+    }
+
+    fn install(&self, spec: &Spec) {
+        let path = self.path(&format!("run/laft/system/services/spec/{}.json", spec.name));
+        fs::create_dir_all(path.parent().expect("has a parent")).expect("mkdir");
+        fs::write(path, spec.to_bytes().expect("encodes")).expect("write");
+    }
+
+    fn ready(&self, name: &str) -> bool {
+        self.path(&format!("run/runit/ready/{name}")).exists()
+    }
+
+    fn mark(&self, name: &str) {
+        self.launcher.mark_ready(name).expect("marks");
+    }
+
+    fn failures(&self) -> String {
+        fs::read_to_string(self.path("run/laft/boot-failures")).unwrap_or_default()
+    }
+
+    /// A oneshot whose `up` runs `script` with `sh`.
+    fn oneshot(&self, name: &str, script: &str, after: &[&str], early: bool) -> Spec {
+        let mut spec = resolve(name, &Service::oneshot(&["/bin/sh", "-c", script]));
+        spec.after = after.iter().map(|&s| s.to_owned()).collect();
+        spec.early = early;
+        self.install(&spec);
+        spec
+    }
+}
+
+fn sh(script: &str) -> Vec<String> {
+    vec!["/bin/sh".into(), "-c".into(), script.into()]
+}
+
+#[test]
+fn missing_spec_is_reported() {
+    let fixture = Fixture::new();
+    let error = fixture.launcher.up("ghost").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "no spec for service ghost in the active generation"
+    );
+}
+
+#[test]
+fn commands_refuse_the_wrong_kind() {
+    let fixture = Fixture::new();
+    fixture.install(&resolve("daemon", &Service::longrun(&["/bin/true"])));
+    assert!(matches!(
+        fixture.launcher.up("daemon"),
+        Err(Error::WrongKind { .. })
+    ));
+}
+
+#[test]
+fn dependency_gate_waits_for_ready_markers() {
+    let fixture = Fixture::new();
+    let flag = fixture.path("ran");
+    fixture.oneshot(
+        "job",
+        &format!("touch {}", flag.display()),
+        &["dbus", "early"],
+        false,
+    );
+    fixture.mark("early");
+    let error = fixture.launcher.up("job").unwrap_err();
+    assert_eq!(error.to_string(), "job waiting for dbus");
+    assert!(!flag.exists());
+    fixture.mark("dbus");
+    assert_eq!(fixture.launcher.up("job").expect("runs"), 0);
+    assert!(flag.exists());
+    assert!(fixture.ready("job"));
+}
+
+#[test]
+fn oneshot_returns_its_exit_status_and_stays_unready_on_failure() {
+    let fixture = Fixture::new();
+    fixture.oneshot("job", "exit 3", &[], false);
+    assert_eq!(fixture.launcher.up("job").expect("runs"), 3);
+    assert!(!fixture.ready("job"));
+    fixture.oneshot("killed", "kill -s KILL $$", &[], false);
+    assert_eq!(fixture.launcher.up("killed").expect("runs"), 128 + 9);
+}
+
+#[test]
+fn oneshot_runs_with_its_environment_umask_and_working_directory() {
+    let fixture = Fixture::new();
+    let out = fixture.path("out");
+    let work = fixture.path("work");
+    fs::create_dir(&work).expect("mkdir");
+    let mut spec = fixture.oneshot(
+        "job",
+        &format!(
+            "echo \"$USER $HOME $GREETING $(pwd) $(umask)\" > {}",
+            out.display()
+        ),
+        &[],
+        false,
+    );
+    spec.env.insert("GREETING".into(), "hello".into());
+    spec.cwd = work.display().to_string();
+    spec.umask = 0o027;
+    fixture.install(&spec);
+    assert_eq!(fixture.launcher.up("job").expect("runs"), 0);
+    let text = fs::read_to_string(out).expect("written");
+    assert_eq!(text, format!("root /root hello {} 0027\n", work.display()));
+}
+
+#[test]
+fn early_failure_is_recorded_and_dependents_skip() {
+    let fixture = Fixture::new();
+    let flag = fixture.path("swap-ran");
+    fixture.oneshot("mount-fs", "exit 1", &[], true);
+    fixture.oneshot(
+        "swap",
+        &format!("touch {}", flag.display()),
+        &["mount-fs"],
+        true,
+    );
+    fixture.oneshot("clock", "exit 0", &[], true);
+    assert_eq!(fixture.launcher.up("mount-fs").expect("never fails"), 0);
+    assert_eq!(fixture.launcher.up("swap").expect("never fails"), 0);
+    assert_eq!(fixture.launcher.up("clock").expect("never fails"), 0);
+    assert_eq!(fixture.failures(), "mount-fs failed\nswap skipped\n");
+    assert!(!flag.exists());
+    assert!(!fixture.ready("mount-fs") && !fixture.ready("swap"));
+    assert!(fixture.ready("clock"));
+}
+
+#[test]
+fn early_setup_failure_counts_as_a_failure() {
+    let fixture = Fixture::new();
+    let mut spec = fixture.oneshot("hostname", "exit 0", &[], true);
+    spec.user = "ghost".into();
+    fixture.install(&spec);
+    assert_eq!(fixture.launcher.up("hostname").expect("never fails"), 0);
+    assert_eq!(fixture.failures(), "hostname failed\n");
+}
+
+#[test]
+fn failed_activation_does_not_skip_its_dependents() {
+    let fixture = Fixture::new();
+    let flag = fixture.path("mounted");
+    fixture.oneshot("laft-activate", "exit 1", &[], true);
+    fixture.oneshot(
+        "kernel-fs",
+        &format!("touch {}", flag.display()),
+        &["laft-activate"],
+        true,
+    );
+    fixture.launcher.up("laft-activate").expect("never fails");
+    fixture.launcher.up("kernel-fs").expect("never fails");
+    assert_eq!(fixture.failures(), "laft-activate failed\n");
+    assert!(flag.exists());
+}
+
+#[test]
+fn state_directories_are_prepared_before_the_command() {
+    let fixture = Fixture::new();
+    let mut spec = fixture.oneshot("job", "exit 0", &[], false);
+    spec.state_dirs = vec![SpecDir {
+        path: "/var/lib/job/data".into(),
+        mode: 0o750,
+        owner: Some("me".into()),
+        group: None,
+    }];
+    fixture.install(&spec);
+    assert_eq!(fixture.launcher.up("job").expect("runs"), 0);
+    let meta = fs::metadata(fixture.path("var/lib/job/data")).expect("created");
+    assert_eq!(meta.mode() & 0o7777, 0o750);
+    assert_eq!(meta.uid(), rustix::process::getuid().as_raw());
+}
+
+#[test]
+fn down_runs_and_clears_the_marker() {
+    let fixture = Fixture::new();
+    let flag = fixture.path("down-ran");
+    let mut spec = fixture.oneshot("job", "exit 0", &[], false);
+    spec.down = sh(&format!("touch {}", flag.display()));
+    fixture.install(&spec);
+    fixture.mark("job");
+    assert_eq!(fixture.launcher.down("job").expect("runs"), 0);
+    assert!(flag.exists());
+    assert!(!fixture.ready("job"));
+}
+
+#[test]
+fn restart_policy_decides_after_an_exit() {
+    let mut spec = resolve("x", &Service::longrun(&["/bin/true"]));
+    for (restart, code, expected) in [
+        (Restart::Always, 0, true),
+        (Restart::Always, -1, true),
+        (Restart::OnFailure, 0, false),
+        (Restart::OnFailure, 1, true),
+        (Restart::OnFailure, -1, true),
+        (Restart::Never, 1, false),
+        (Restart::Never, 111, true),
+        (Restart::Always, 100, true),
+    ] {
+        spec.restart = restart;
+        assert_eq!(restarts(&spec, code), expected, "{restart:?} {code}");
+    }
+    spec.kind = ServiceKind::Oneshot;
+    assert!(!restarts(&spec, 100));
+}
+
+#[test]
+fn finish_keeps_a_service_down_when_its_policy_says_so() {
+    let fixture = Fixture::new();
+    let mut spec = resolve("x", &Service::longrun(&["/bin/true"]));
+    spec.restart = Restart::OnFailure;
+    spec.restart_delay_ms = 0;
+    fixture.install(&spec);
+    let service_dir = fixture.path("sv/x");
+    fs::create_dir_all(service_dir.join("supervise")).expect("mkdir");
+    fs::write(service_dir.join("supervise/control"), "").expect("write");
+    fixture.mark("x");
+    fixture
+        .launcher
+        .finish("x", 1, &service_dir)
+        .expect("finishes");
+    assert_eq!(read(&service_dir.join("supervise/control")), "");
+    assert!(!fixture.ready("x"));
+    fixture
+        .launcher
+        .finish("x", 0, &service_dir)
+        .expect("finishes");
+    assert_eq!(read(&service_dir.join("supervise/control")), "d");
+}
+
+#[test]
+fn finish_stops_an_emulated_oneshot_with_its_down_command() {
+    let fixture = Fixture::new();
+    let flag = fixture.path("down-ran");
+    let mut spec = fixture.oneshot("boot-complete", "exit 0", &[], false);
+    spec.down = sh(&format!("touch {}", flag.display()));
+    spec.restart_delay_ms = 0;
+    fixture.install(&spec);
+    let service_dir = fixture.path("sv/boot-complete");
+    fs::create_dir_all(&service_dir).expect("mkdir");
+    fixture
+        .launcher
+        .finish("boot-complete", 100, &service_dir)
+        .ok();
+    assert!(!flag.exists(), "down runs only after a successful up");
+    fixture.mark("boot-complete");
+    fixture
+        .launcher
+        .finish("boot-complete", -1, &service_dir)
+        .expect("finishes");
+    assert!(flag.exists());
+    assert!(!fixture.ready("boot-complete"));
+}
+
+fn read(path: &Path) -> String {
+    fs::read_to_string(path).expect("readable")
+}
+
+#[test]
+fn notify_watcher_marks_ready_only_on_a_newline() {
+    let fixture = Fixture::new();
+    assert!(
+        !fixture
+            .launcher
+            .watch_notify("dbus", &b"partial"[..])
+            .expect("watches")
+    );
+    assert!(!fixture.ready("dbus"));
+    assert!(
+        fixture
+            .launcher
+            .watch_notify("dbus", &b"unix:path=/run/dbus\n"[..])
+            .expect("watches")
+    );
+    assert!(fixture.ready("dbus"));
+}
+
+#[test]
+fn check_poller_marks_ready_once_the_check_passes() {
+    let fixture = Fixture::new();
+    let spec = resolve("udevd", &Service::longrun(&["/bin/true"]));
+    let credentials = Credentials {
+        user: "root".into(),
+        uid: 0,
+        gid: 0,
+        groups: vec![0],
+        home: "/root".into(),
+        shell: "/bin/sh".into(),
+    };
+    let failing = sh("exit 1");
+    let passed = fixture
+        .launcher
+        .poll_check(&spec, &credentials, &failing, 1000, 1000)
+        .expect("polls");
+    assert!(!passed && !fixture.ready("udevd"));
+    let flag = fixture.path("up");
+    let second_try = sh(&format!(
+        "test -e {0} || {{ touch {0}; exit 1; }}",
+        flag.display()
+    ));
+    let passed = fixture
+        .launcher
+        .poll_check(&spec, &credentials, &second_try, 1, 5000)
+        .expect("polls");
+    assert!(passed && fixture.ready("udevd"));
+}
+
+#[test]
+fn logger_directory_and_rotation_settings_are_written() {
+    let fixture = Fixture::new();
+    let (uid, gid) = (
+        rustix::process::getuid().as_raw(),
+        rustix::process::getgid().as_raw(),
+    );
+    fixture
+        .launcher
+        .prepare_log("myapp", 5_000_000, 5, uid, gid)
+        .expect("prepares");
+    let dir = fixture.path("var/log/myapp");
+    assert_eq!(fs::metadata(&dir).expect("exists").mode() & 0o7777, 0o750);
+    assert_eq!(read(&dir.join("config")), "s5000000\nn5\n");
+}
+
+#[test]
+fn logger_refuses_a_service_that_is_not_logged() {
+    let fixture = Fixture::new();
+    let spec = resolve(
+        "quiet",
+        &Service {
+            log: crate::Log::Discard,
+            ..Service::longrun(&["/bin/true"])
+        },
+    );
+    fixture.install(&spec);
+    let error = fixture.launcher.logger("quiet").unwrap_err();
+    assert_eq!(error.to_string(), "service quiet is not logged");
+}
+
+#[test]
+fn background_start_skips_after_a_failed_dependency() {
+    let fixture = Fixture::new();
+    let mut spec = resolve("udevd", &Service::longrun(&["/bin/true"]));
+    spec.early = true;
+    spec.after = vec!["kernel-fs".into()];
+    fixture.install(&spec);
+    fixture
+        .launcher
+        .record_failure("kernel-fs", "failed")
+        .expect("records");
+    let code = fixture
+        .launcher
+        .exec("udevd", ExecMode::Background)
+        .expect("never fails");
+    assert_eq!(code, 0);
+    assert_eq!(fixture.failures(), "kernel-fs failed\nudevd skipped\n");
+}
+
+#[test]
+fn stop_early_signals_each_listed_process() {
+    let fixture = Fixture::new();
+    let mut spec = resolve("udevd", &Service::longrun(&["/bin/true"]));
+    spec.early = true;
+    spec.stop_timeout_ms = 5000;
+    fixture.install(&spec);
+    let mut child = Command::new("/usr/bin/sleep")
+        .arg("100")
+        .spawn()
+        .expect("spawns");
+    let list = fixture.path("run/laft/booted/services/runit/early-longruns");
+    fs::create_dir_all(list.parent().expect("has a parent")).expect("mkdir");
+    fs::write(&list, "udevd\nmissing\n").expect("write");
+    let pid_file = fixture.path("run/runit/early/udevd.pid");
+    fs::create_dir_all(pid_file.parent().expect("has a parent")).expect("mkdir");
+    fs::write(&pid_file, format!("{}\n", child.id())).expect("write");
+    let status = std::thread::scope(|scope| {
+        let reaper = scope.spawn(|| child.wait().expect("waits"));
+        assert_eq!(fixture.launcher.stop_early().expect("stops"), 0);
+        reaper.join().expect("the reaper finishes")
+    });
+    assert_eq!(status.signal(), Some(15));
+    assert!(!pid_file.exists());
+}
+
+#[test]
+fn privileges_are_dropped_for_the_command() {
+    if !rustix::process::geteuid().is_root() {
+        println!("skipping: dropping privileges needs root");
+        return;
+    }
+    let credentials = Credentials {
+        user: "nobody".into(),
+        uid: 65534,
+        gid: 65534,
+        groups: vec![65534],
+        home: "/var/empty".into(),
+        shell: "/usr/bin/nologin".into(),
+    };
+    let mut id = Command::new("/usr/bin/id");
+    id.arg("-u").stdout(std::process::Stdio::piped());
+    let output = spawn_as("nobody", &credentials, id)
+        .expect("spawns")
+        .wait_with_output()
+        .expect("waits");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "65534\n");
+    assert!(
+        rustix::process::geteuid().is_root(),
+        "the launcher stays root"
+    );
+    std::thread::spawn(move || {
+        drop_privileges("nobody", &credentials).expect("drops");
+        assert_eq!(rustix::process::geteuid().as_raw(), 65534);
+    })
+    .join()
+    .expect("the thread finishes");
+}

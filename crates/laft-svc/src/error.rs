@@ -43,6 +43,8 @@ pub enum Error {
         /// The kind the command needs.
         expected: ServiceKind,
     },
+    /// The logger was started for a service whose output is not logged.
+    NotLogged(String),
     /// A dependency is not ready yet.
     Waiting {
         /// The service.
@@ -93,6 +95,7 @@ impl fmt::Display for Error {
             Self::WrongKind { name, expected } => {
                 write!(f, "service {name} is not a {}", expected.as_str())
             }
+            Self::NotLogged(name) => write!(f, "service {name} is not logged"),
             Self::Waiting { name, dep } => write!(f, "{name} waiting for {dep}"),
             Self::UnknownAccount {
                 name,
