@@ -14,6 +14,12 @@ pub(crate) const FORMAT: u32 = 1;
 pub struct GenerationInput {
     /// The resolved packages of the system view.
     pub packages: Vec<PackageInput>,
+    /// The resolved packages of the initrd, which belong to no view. They
+    /// must be in the store and are only recorded.
+    pub initrd_packages: Vec<PackageInput>,
+    /// Kernel module trees of other store entries to place in the system
+    /// view, for a running kernel that no package of the view ships.
+    pub carry_over: Vec<CarryOver>,
     /// The member the resolution chose for every alternatives group present
     /// in the system view, by group. Only the chosen member contributes the
     /// group's paths.
@@ -36,6 +42,22 @@ pub struct GenerationInput {
     pub config_files: Vec<ConfigFile>,
     /// The repository indexes the packages were resolved from.
     pub indexes: Vec<IndexRecord>,
+    /// The paths in `/etc` the generation manages, as its rendered `etc`
+    /// tree records them.
+    pub etc: EtcRecord,
+}
+
+/// The kernel modules of a store entry carried into the system view.
+///
+/// Every entry of the store entry at `usr/lib/modules/<kernel>`, below it
+/// and on the way to it joins the view with the same rules as a package's
+/// entries, so the view keeps the modules of a kernel that still runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarryOver {
+    /// The kernel release, for example `6.17.4-laft1`.
+    pub kernel: String,
+    /// The directory name of the store entry that ships the modules.
+    pub dir: String,
 }
 
 /// The manifest of a generation, stored as `gen.json`.

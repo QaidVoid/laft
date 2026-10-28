@@ -21,6 +21,7 @@ pub(crate) const POINTS: &[&str] = &[
     "gen.staged",
     "gen.published",
     "assembled",
+    "boot.installed",
     "default.linked",
     "complete",
 ];

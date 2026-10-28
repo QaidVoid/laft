@@ -223,6 +223,8 @@ pub(crate) fn name(s: &str) -> Name {
 pub(crate) fn gen_input(packages: &[&Built], views: &[(&str, u64)]) -> GenerationInput {
     GenerationInput {
         packages: inputs(packages),
+        initrd_packages: vec![],
+        carry_over: vec![],
         alternatives: BTreeMap::new(),
         views: views.iter().map(|(n, v)| (name(n), *v)).collect(),
         message: Some("test".into()),
@@ -235,6 +237,7 @@ pub(crate) fn gen_input(packages: &[&Built], views: &[(&str, u64)]) -> Generatio
         config: b"{\"packages\": []}\n".to_vec(),
         config_files: vec![],
         indexes: vec![],
+        etc: Default::default(),
     }
 }
 
@@ -269,6 +272,7 @@ pub(crate) fn apply(lock: &Lock, packages: &[&Built], view: Option<&str>) -> cra
         versions.push((view, tx.assemble_view(&view_input(view, packages))?));
     }
     tx.assemble_generation(&gen_input(packages, &versions))?;
+    tx.boot_installed()?;
     tx.make_default()
 }
 

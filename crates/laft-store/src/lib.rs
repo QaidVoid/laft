@@ -52,14 +52,14 @@ mod test_support;
 pub use error::{Conflict, Error, Result};
 pub use gc::{Decision, GcPlan, GcPolicy, Subject, plan_gc};
 pub use generation::{
-    CarriedModule, ConfigFile, ConfigRecord, EtcRecord, Generation, GenerationInput, IndexRecord,
-    Init,
+    CarriedModule, CarryOver, ConfigFile, ConfigRecord, EtcRecord, Generation, GenerationInput,
+    IndexRecord, Init,
 };
 pub use journal::State;
 pub use lock::{Lock, LockInfo};
 pub use root::Root;
 pub use store::{Difference, Store};
-pub use transaction::{Outcome, Plan, Recovery, Transaction};
+pub use transaction::{Outcome, Plan, Recovery, StagedGeneration, Transaction};
 pub use view::{
     PackageInput, PackageRecord, Reason, TriggerRecord, TriggerStatus, ViewInput, ViewManifest,
 };

@@ -265,3 +265,89 @@ fn view_inputs_must_be_planned() {
         .expect_err("not planned");
     assert!(matches!(error, Error::Invalid(_)));
 }
+
+#[test]
+fn carried_modules_join_the_system_view_and_are_recorded() {
+    let env = Env::new();
+    let old = Pkg::new("linux", "6.17.4")
+        .file("usr/lib/modules/6.17.4-laft1/vmlinuz", b"old kernel")
+        .file("usr/lib/modules/6.17.4-laft1/kernel/a.ko.zst", b"old a")
+        .file("usr/share/doc/linux/README", b"old docs")
+        .build(&env);
+    let new = Pkg::new("linux", "6.17.5")
+        .file("usr/lib/modules/6.17.5-laft1/vmlinuz", b"new kernel")
+        .file("usr/share/doc/linux/README", b"new docs")
+        .build(&env);
+    let lock = env.lock();
+    let mut tx = Transaction::begin(&lock, &plan(&env.root, &[])).unwrap();
+    tx.add(&old.path, &old.id).unwrap();
+    tx.add(&new.path, &new.id).unwrap();
+    let mut input = gen_input(&[&new], &[]);
+    input.carry_over = vec![crate::CarryOver {
+        kernel: "6.17.4-laft1".into(),
+        dir: old.dir.clone(),
+    }];
+    input.initrd_packages = vec![crate::PackageInput {
+        dir: old.dir.clone(),
+        reasons: vec![],
+    }];
+    let staged = tx.stage_generation(&input).unwrap();
+    assert_eq!(
+        staged.owner("usr/lib/modules/6.17.4-laft1/kernel/a.ko.zst"),
+        Some(old.id)
+    );
+    assert_eq!(
+        staged.owner("usr/lib/modules/6.17.5-laft1/vmlinuz"),
+        Some(new.id)
+    );
+    assert_eq!(staged.owner("usr/bin/missing"), None);
+    let tree = staged.path().to_path_buf();
+    tx.publish_generation(staged).unwrap();
+    tx.make_default().unwrap();
+
+    let usr = env.root.gen_dir(1).join("usr");
+    assert!(same_inode(
+        &usr.join("lib/modules/6.17.4-laft1/kernel/a.ko.zst"),
+        &env.root
+            .store()
+            .path(&old.dir)
+            .join("usr/lib/modules/6.17.4-laft1/kernel/a.ko.zst"),
+    ));
+    assert_eq!(
+        fs::read(usr.join("share/doc/linux/README")).unwrap(),
+        b"new docs"
+    );
+    assert!(!tree.exists());
+    let generation = env.root.generation(1).unwrap();
+    assert_eq!(generation.carried_modules.len(), 1);
+    assert_eq!(generation.carried_modules[0].kernel, "6.17.4-laft1");
+    assert_eq!(generation.carried_modules[0].id, old.id);
+    assert_eq!(generation.packages.len(), 1);
+    assert_eq!(generation.initrd_packages[0].id, old.id);
+}
+
+#[test]
+fn files_added_to_a_staged_generation_are_published_with_it() {
+    let env = Env::new();
+    let tool = Pkg::new("tool", "1")
+        .file("usr/bin/tool", b"tool")
+        .build(&env);
+    let lock = env.lock();
+    let mut tx = Transaction::begin(&lock, &plan(&env.root, &[])).unwrap();
+    tx.add(&tool.path, &tool.id).unwrap();
+    let mut input = gen_input(&[&tool], &[]);
+    input.etc.managed = vec!["hostname".into()];
+    let staged = tx.stage_generation(&input).unwrap();
+    fs::create_dir(staged.path().join("boot")).unwrap();
+    fs::write(staged.path().join("boot/boot.json"), b"{}").unwrap();
+    fs::write(staged.path().join("usr/bin/generated"), b"cache").unwrap();
+    tx.publish_generation(staged).unwrap();
+    tx.boot_installed().unwrap();
+    tx.make_default().unwrap();
+
+    let dir = env.root.gen_dir(1);
+    assert_eq!(fs::read(dir.join("boot/boot.json")).unwrap(), b"{}");
+    assert_eq!(fs::read(dir.join("usr/bin/generated")).unwrap(), b"cache");
+    assert_mode(&dir.join("boot"), 0o555);
+    assert_eq!(env.root.generation(1).unwrap().etc.managed, ["hostname"]);
+}

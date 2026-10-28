@@ -8,7 +8,7 @@ use laft_pkg::{Entry, Identity};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Conflict, Error, Result, io};
-use crate::{Store, fault};
+use crate::{CarriedModule, CarryOver, Store, fault};
 
 /// The version of the `view.json` format.
 pub(crate) const FORMAT: u32 = 1;
@@ -145,6 +145,7 @@ pub enum TriggerStatus {
 }
 
 /// One path of a view tree.
+#[derive(Debug)]
 enum Node {
     Dir,
     File(PathBuf),
@@ -152,12 +153,18 @@ enum Node {
 }
 
 /// A view tree computed from its packages, ready to be created.
+#[derive(Debug)]
 pub(crate) struct Layout {
     /// The packages, sorted by name.
     pub(crate) packages: Vec<PackageRecord>,
     /// The effective alternatives choices.
     pub(crate) alternatives: BTreeMap<Name, Name>,
-    nodes: BTreeMap<String, Node>,
+    /// The carried kernel modules, in the order given.
+    pub(crate) carried: Vec<CarriedModule>,
+    /// Every path with its node and the index of its owner in `owners`.
+    nodes: BTreeMap<String, (Node, usize)>,
+    /// The store id of every package, then of every carried entry.
+    owners: Vec<StoreId>,
 }
 
 /// A package loaded for assembly.
@@ -168,30 +175,42 @@ struct Loaded {
     groups: Vec<laft_pkg::Alternative>,
 }
 
-/// Computes the tree of view `view` from `packages`, applying the
-/// alternatives `choices` of the resolution, and checks that no path has two owners and that no store
+/// The record of the store entry `input` names.
+pub(crate) fn record(store: &Store, input: &PackageInput) -> Result<PackageRecord> {
+    let manifest = store.manifest(&input.dir)?;
+    Ok(package_record(&manifest, input))
+}
+
+fn package_record(manifest: &laft_pkg::Manifest, input: &PackageInput) -> PackageRecord {
+    let identity = manifest.package();
+    PackageRecord {
+        name: identity.name.clone(),
+        version: identity.version.clone(),
+        rev: identity.rev,
+        variant: identity.variant,
+        id: manifest.store_id(),
+        dir: input.dir.clone(),
+        reasons: input.reasons.clone(),
+    }
+}
+
+/// Computes the tree of view `view` from `packages` and the carried kernel
+/// modules `carry_over`, applying the alternatives `choices` of the
+/// resolution, and checks that no path has two owners and that no store
 /// file is near the hard link limit. Nothing is written.
 pub(crate) fn layout(
     store: &Store,
     view: &str,
     packages: &[PackageInput],
     choices: &BTreeMap<Name, Name>,
+    carry_over: &[CarryOver],
 ) -> Result<Layout> {
-    let mut loaded = Vec::with_capacity(packages.len());
+    let mut loaded = Vec::with_capacity(packages.len() + carry_over.len());
     for input in packages {
         let (manifest, meta) = store.load(&input.dir)?;
-        let identity = manifest.package().clone();
         loaded.push(Loaded {
-            record: PackageRecord {
-                name: identity.name.clone(),
-                version: identity.version.clone(),
-                rev: identity.rev,
-                variant: identity.variant,
-                id: manifest.store_id(),
-                dir: input.dir.clone(),
-                reasons: input.reasons.clone(),
-            },
-            identity,
+            record: package_record(&manifest, input),
+            identity: manifest.package().clone(),
             entries: manifest.entries().to_vec(),
             groups: meta.alternatives,
         });
@@ -207,7 +226,31 @@ pub(crate) fn layout(
         });
     }
 
-    let (alternatives, skipped) = apply_alternatives(view, &loaded, choices)?;
+    let (alternatives, mut skipped) = apply_alternatives(view, &loaded, choices)?;
+
+    let mut carried = Vec::with_capacity(carry_over.len());
+    let mut kernels = vec![None; loaded.len()];
+    for carry in carry_over {
+        let manifest = store.manifest(&carry.dir)?;
+        carried.push(CarriedModule {
+            kernel: carry.kernel.clone(),
+            id: manifest.store_id(),
+        });
+        loaded.push(Loaded {
+            record: package_record(
+                &manifest,
+                &PackageInput {
+                    dir: carry.dir.clone(),
+                    reasons: Vec::new(),
+                },
+            ),
+            identity: manifest.package().clone(),
+            entries: manifest.entries().to_vec(),
+            groups: Vec::new(),
+        });
+        kernels.push(Some(format!("usr/lib/modules/{}", carry.kernel)));
+        skipped.push(BTreeSet::new());
+    }
 
     let mut nodes: BTreeMap<String, (Node, usize)> = BTreeMap::new();
     let mut conflicts: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -217,6 +260,13 @@ pub(crate) fn layout(
         for entry in &package.entries {
             let path = entry.path();
             if !(path == "usr" || path.starts_with("usr/")) || is_skipped(skip, path) {
+                continue;
+            }
+            if let Some(modules) = &kernels[index]
+                && !(modules.starts_with(&format!("{path}/"))
+                    || path == modules
+                    || path.starts_with(&format!("{modules}/")))
+            {
                 continue;
             }
             match (nodes.get(path), entry) {
@@ -253,12 +303,15 @@ pub(crate) fn layout(
                 .collect(),
         });
     }
-    let nodes: BTreeMap<String, Node> = nodes.into_iter().map(|(p, (n, _))| (p, n)).collect();
     check_headroom(&nodes, store)?;
+    let owners = loaded.iter().map(|l| l.record.id).collect();
+    loaded.truncate(packages.len());
     Ok(Layout {
         packages: loaded.into_iter().map(|l| l.record).collect(),
         alternatives,
+        carried,
         nodes,
+        owners,
     })
 }
 
@@ -354,11 +407,11 @@ pub(crate) fn label(identity: &Identity) -> String {
 /// Fails when linking every file of `nodes` once more would bring a store
 /// file within [`LINK_HEADROOM`] of the filesystem's hard link limit. Files
 /// that share an inode in the store count together.
-fn check_headroom(nodes: &BTreeMap<String, Node>, store: &Store) -> Result<()> {
+fn check_headroom(nodes: &BTreeMap<String, (Node, usize)>, store: &Store) -> Result<()> {
     let limit = link_max(&store.path(""))?;
     let mut inodes: HashMap<(u64, u64), (u64, u64)> = HashMap::new();
     let mut files = Vec::new();
-    for node in nodes.values() {
+    for (node, _) in nodes.values() {
         if let Node::File(path) = node {
             let metadata = fs::symlink_metadata(path).map_err(io(path))?;
             let key = (metadata.dev(), metadata.ino());
@@ -411,7 +464,7 @@ impl Layout {
             let usr = tree.join("usr");
             builder.create(&usr).map_err(io(&usr))?;
         }
-        for (path, node) in &self.nodes {
+        for (path, (node, _)) in &self.nodes {
             let target = tree.join(path);
             match node {
                 Node::Dir => builder.create(&target).map_err(io(&target))?,
@@ -420,6 +473,13 @@ impl Layout {
             }
         }
         Ok(())
+    }
+
+    /// The store id of the entry that contributes `path`, relative to the
+    /// tree, or `None` when no entry does. A directory that several entries
+    /// ship belongs to the first of them in name order.
+    pub(crate) fn owner(&self, path: &str) -> Option<StoreId> {
+        self.nodes.get(path).map(|(_, owner)| self.owners[*owner])
     }
 }
 

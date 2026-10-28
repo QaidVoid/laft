@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use laft_core::{Blake3Hash, Name, StoreId, Timestamp};
 
 use crate::error::{Error, Result, io};
-use crate::generation::{ConfigRecord, EtcRecord, FORMAT as GEN_FORMAT};
+use crate::generation::{ConfigRecord, FORMAT as GEN_FORMAT};
 use crate::journal::{Counters, Journal};
 use crate::root::to_json;
 use crate::store::Prepared;
@@ -41,13 +41,17 @@ pub struct Plan {
 ///    versions.
 /// 2. [`Transaction::add`] adds each package to the store.
 /// 3. [`Transaction::assemble_view`] assembles each planned view, then
-///    [`Transaction::assemble_generation`] the generation.
-/// 4. [`Transaction::make_default`] makes it the default generation, or
+///    [`Transaction::assemble_generation`] the generation. A caller that
+///    adds more to the generation uses [`Transaction::stage_generation`]
+///    and [`Transaction::publish_generation`] instead.
+/// 4. [`Transaction::boot_installed`] records that the boot files are
+///    installed, when the caller installs them.
+/// 5. [`Transaction::make_default`] makes it the default generation, or
 ///    [`Transaction::close`] leaves it built but unused.
 ///
 /// ```no_run
 /// use std::collections::BTreeSet;
-/// use std::path::Path;
+/// use std::path::{Path, PathBuf};
 ///
 /// use laft_store::{
 ///     GenerationInput, Init, PackageInput, Plan, Root, Transaction,
@@ -66,6 +70,8 @@ pub struct Plan {
 /// let dir = tx.add(Path::new("ripgrep-14.1.1-r1.x86_64-v3.lpkg"), &id)?;
 /// tx.assemble_generation(&GenerationInput {
 ///     packages: vec![PackageInput { dir, reasons: vec![] }],
+///     initrd_packages: vec![],
+///     carry_over: vec![],
 ///     alternatives: Default::default(),
 ///     views: Default::default(),
 ///     message: None,
@@ -75,6 +81,7 @@ pub struct Plan {
 ///     config: b"{}".to_vec(),
 ///     config_files: vec![],
 ///     indexes: vec![],
+///     etc: Default::default(),
 /// })?;
 /// let generation = tx.make_default()?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -232,6 +239,7 @@ impl<'l> Transaction<'l> {
             input.name.as_str(),
             &input.packages,
             &input.alternatives,
+            &[],
         )?;
         let staging = self.staging(&format!("view-{}-{version}", input.name))?;
         layout.create(&staging)?;
@@ -264,22 +272,41 @@ impl<'l> Transaction<'l> {
 
     /// Assembles the generation and returns its number.
     ///
-    /// The generation directory holds the system view as `usr`, the
-    /// configuration as `config.json`, and `gen.json`, which is written last.
-    /// Its `etc`, `services` and `boot` directories are created empty. The
-    /// generation appears with one rename.
+    /// This is [`Self::stage_generation`] followed by
+    /// [`Self::publish_generation`], with empty `etc`, `services` and `boot`
+    /// directories.
+    ///
+    /// # Errors
+    ///
+    /// Fails as those two do.
+    pub fn assemble_generation(&mut self, input: &GenerationInput) -> Result<u64> {
+        let staged = self.stage_generation(input)?;
+        for dir in ["etc", "services", "boot"] {
+            fsx::create_dir(&staged.path().join(dir), 0o755)?;
+        }
+        self.publish_generation(staged)
+    }
+
+    /// Starts assembling the generation in a staging directory and returns
+    /// it, so that the caller can add what the generation needs besides its
+    /// packages before [`Self::publish_generation`] makes it appear.
+    ///
+    /// The staging directory holds the system view as `usr`, with the
+    /// kernel modules of `input.carry_over`, and the configuration as
+    /// `config.json`. Every directory in it is writable until the
+    /// generation is published, and a crash before that leaves nothing
+    /// behind after recovery.
     ///
     /// # Errors
     ///
     /// Fails as [`Self::assemble_view`] does, when the generation is
-    /// assembled already, and when a view version in `input.views` does not
-    /// exist.
-    pub fn assemble_generation(&mut self, input: &GenerationInput) -> Result<u64> {
+    /// assembled already, when a view version in `input.views` does not
+    /// exist, and when an initrd package is missing from the store.
+    pub fn stage_generation(&mut self, input: &GenerationInput) -> Result<StagedGeneration> {
         let number = self.generation();
         self.start_assembly()?;
         let root = self.lock.root();
-        let target = root.gen_dir(number);
-        if target.exists() {
+        if root.gen_dir(number).exists() {
             return Err(Error::Invalid(format!(
                 "generation {number} is assembled already"
             )));
@@ -287,14 +314,24 @@ impl<'l> Transaction<'l> {
         for (name, version) in &input.views {
             root.view(name, *version)?;
         }
-        let layout = view::layout(&root.store(), SYSTEM, &input.packages, &input.alternatives)?;
-        let staging = self.staging(&format!("gen-{number}"))?;
-        layout.create(&staging)?;
-        for dir in ["etc", "services", "boot"] {
-            fsx::create_dir(&staging.join(dir), 0o755)?;
-        }
-        fsx::write_new(&staging.join("config.json"), &input.config, 0o444)?;
-        let generation = Generation {
+        let store = root.store();
+        let layout = view::layout(
+            &store,
+            SYSTEM,
+            &input.packages,
+            &input.alternatives,
+            &input.carry_over,
+        )?;
+        let mut initrd_packages = input
+            .initrd_packages
+            .iter()
+            .map(|package| view::record(&store, package))
+            .collect::<Result<Vec<_>>>()?;
+        initrd_packages.sort_by(|a, b| a.name.cmp(&b.name));
+        let path = self.staging(&format!("gen-{number}"))?;
+        layout.create(&path)?;
+        fsx::write_new(&path.join("config.json"), &input.config, 0o444)?;
+        let record = Generation {
             format: GEN_FORMAT,
             generation: number,
             parent: self.journal.previous,
@@ -308,20 +345,71 @@ impl<'l> Transaction<'l> {
                 files: input.config_files.clone(),
             },
             indexes: input.indexes.clone(),
-            packages: layout.packages,
-            initrd_packages: Vec::new(),
-            alternatives: layout.alternatives,
+            packages: layout.packages.clone(),
+            initrd_packages,
+            alternatives: layout.alternatives.clone(),
             views: input.views.clone(),
-            carried_modules: Vec::new(),
-            etc: EtcRecord::default(),
+            carried_modules: layout.carried.clone(),
+            etc: input.etc.clone(),
         };
-        let path = staging.join("gen.json");
-        fsx::write_new(&path, &to_json(&path, &generation)?, 0o444)?;
-        fsx::seal(&staging, false)?;
+        Ok(StagedGeneration {
+            path,
+            record,
+            layout,
+        })
+    }
+
+    /// Finishes the staged generation: writes its `gen.json` last, seals
+    /// every directory below it with mode `0o555`, and makes it appear with
+    /// one rename. Returns its number.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `staged` belongs to another generation, the generation
+    /// exists already, or writing fails. Nothing is created in the
+    /// generations directory then.
+    pub fn publish_generation(&mut self, staged: StagedGeneration) -> Result<u64> {
+        let number = self.generation();
+        let root = self.lock.root();
+        let target = root.gen_dir(number);
+        if staged.record.generation != number || self.journal.state != State::Assembling {
+            return Err(Error::Invalid(format!(
+                "the staged generation is not generation {number} of this transaction"
+            )));
+        }
+        if target.exists() {
+            return Err(Error::Invalid(format!(
+                "generation {number} is assembled already"
+            )));
+        }
+        let path = staged.path.join("gen.json");
+        fsx::write_new(&path, &to_json(&path, &staged.record)?, 0o444)?;
+        fsx::seal(&staged.path, false)?;
         fault::point("gen.staged")?;
-        publish_tree(&staging, &target)?;
+        publish_tree(&staged.path, &target)?;
         fault::point("gen.published")?;
         Ok(number)
+    }
+
+    /// Records that the generation's boot files are installed, after the
+    /// generation was made durable.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the generation was not assembled or the state cannot be
+    /// written.
+    pub fn boot_installed(&mut self) -> Result<()> {
+        self.finish_assembly()?;
+        if self.journal.state == State::Assembled {
+            self.set_state(State::BootInstalled, "boot.installed")?;
+        }
+        Ok(())
+    }
+
+    /// The active system generation the transaction started from, which is
+    /// the parent of the new one.
+    pub fn previous(&self) -> Option<u64> {
+        self.journal.previous
     }
 
     /// Finishes the transaction with the generation built but neither
@@ -380,18 +468,24 @@ impl<'l> Transaction<'l> {
     fn finish_assembly(&mut self) -> Result<u64> {
         let number = self.generation();
         let root = self.lock.root();
-        if self.journal.state != State::Assembling || !root.gen_dir(number).exists() {
+        let state = self.journal.state;
+        let assembling = state == State::Assembling;
+        if !(assembling || matches!(state, State::Assembled | State::BootInstalled))
+            || !root.gen_dir(number).exists()
+        {
             return Err(Error::Invalid(format!(
                 "generation {number} has not been assembled"
             )));
         }
-        fsx::sync_fs(&root.laft())?;
-        self.set_state(State::Assembled, "assembled")?;
+        if assembling {
+            fsx::sync_fs(&root.laft())?;
+            self.set_state(State::Assembled, "assembled")?;
+        }
         Ok(number)
     }
 
     /// A fresh staging directory for this transaction.
-    fn staging(&self, name: &str) -> Result<std::path::PathBuf> {
+    fn staging(&self, name: &str) -> Result<PathBuf> {
         let path = self
             .lock
             .root()
@@ -400,6 +494,36 @@ impl<'l> Transaction<'l> {
         fsx::remove_tree(&path)?;
         fsx::create_dir(&path, 0o700)?;
         Ok(path)
+    }
+}
+
+/// A generation being assembled in a staging directory, returned by
+/// [`Transaction::stage_generation`].
+#[derive(Debug)]
+pub struct StagedGeneration {
+    path: PathBuf,
+    record: Generation,
+    layout: view::Layout,
+}
+
+impl StagedGeneration {
+    /// The staging directory, which becomes the generation directory when
+    /// it is published.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The `gen.json` the generation gets.
+    pub fn record(&self) -> &Generation {
+        &self.record
+    }
+
+    /// The store id of the package or carried entry that contributes the
+    /// system view path `path`, such as `usr/bin/doas`, or `None` when no
+    /// store entry does. A directory that several packages ship belongs to
+    /// the first of them in name order.
+    pub fn owner(&self, path: &str) -> Option<StoreId> {
+        self.layout.owner(path)
     }
 }
 
