@@ -38,8 +38,8 @@ const SCRIPT: u32 = 0o555;
 /// The mode of other rendered files.
 const DATA: u32 = 0o444;
 
-/// The wait in `sv -w` at shutdown when no supervised service sets a
-/// longer stop timeout.
+/// The shortest wait in `sv -w` at shutdown, in seconds. A supervised
+/// service with a longer stop timeout makes the wait that long.
 const DEFAULT_SHUTDOWN_WAIT: u64 = 10;
 
 /// runsvdir's status line: it shows the latest output of services without a
@@ -451,8 +451,7 @@ fn stage3(specs: &BTreeMap<String, Spec>, early: &[&Spec]) -> Vec<u8> {
         .values()
         .filter(|s| !s.early)
         .map(|s| s.stop_timeout_ms.div_ceil(1000))
-        .max()
-        .unwrap_or(DEFAULT_SHUTDOWN_WAIT);
+        .fold(DEFAULT_SHUTDOWN_WAIT, u64::max);
     let mut out = format!(
         "#!/bin/sh\n\
          PATH=/usr/bin\n\

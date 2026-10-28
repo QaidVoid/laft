@@ -273,3 +273,17 @@ fn the_finish_script_passes_runits_exit_code_and_signal_to_the_launcher() {
         "svc\nfinish\n--backend\nrunit\nmyapp\n-1\n15\n"
     );
 }
+
+#[test]
+fn shutdown_waits_for_the_longest_stop_timeout_but_at_least_the_default() {
+    let stage3 = |timeout: u32| {
+        let app = Service {
+            stop_timeout: timeout,
+            ..Service::longrun(&["/usr/bin/app"])
+        };
+        let rendered = render(&valid(&config(&[("app", app)])), 1).expect("renders");
+        dump(&rendered, "services/runit/stage/3")
+    };
+    assert!(stage3(1).contains("sv -w 10 force-stop"));
+    assert!(stage3(90).contains("sv -w 90 force-stop"));
+}
