@@ -197,3 +197,27 @@ fn shutdown_waits_for_the_slowest_supervised_service() {
     let text = std::str::from_utf8(bytes).expect("text");
     assert!(text.contains("sv -w 90 force-stop /run/runit/service/*\n"));
 }
+
+#[test]
+fn the_finish_script_passes_runits_exit_code_and_signal_to_the_launcher() {
+    let rendered = render(&valid(&example()), 1).expect("renders");
+    let Some(Entry::File { bytes, .. }) = rendered.entries().get("services/runit/sv/myapp/finish")
+    else {
+        panic!("myapp has a finish script");
+    };
+    let script = String::from_utf8(bytes.clone())
+        .expect("text")
+        .replace("exec /usr/bin/laft", "exec printf '%s\\n'");
+    let dir = tempfile::tempdir().expect("can create a temporary directory");
+    let path = dir.path().join("finish");
+    fs::write(&path, script).expect("write");
+    let output = std::process::Command::new("/bin/sh")
+        .arg(&path)
+        .args(["-1", "15"])
+        .output()
+        .expect("runs");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "svc\nfinish\n--backend\nrunit\nmyapp\n-1\n15\n"
+    );
+}

@@ -205,21 +205,27 @@ impl Launcher {
         Ok(code)
     }
 
-    /// Handles the end of a supervised service, called with the exit status
-    /// of its `run` script (`-1` when it was killed) and the service
-    /// directory, the supervisor's working directory for `finish`.
+    /// Handles the end of a supervised service, called with the two
+    /// arguments runit passes to `finish`: the exit code of the `run`
+    /// script, or `-1` when it did not exit normally, and the low byte of
+    /// its wait status, which is the signal that killed it in that case.
     ///
     /// A oneshot that was up runs its `down` command. The ready marker is
     /// removed. When the restart policy says no, the supervisor is told to
-    /// keep the service down, otherwise the restart delay passes before
-    /// this returns.
+    /// keep the service down through the control pipe of the service's
+    /// directory in the scan directory, `/run/runit/service/<name>`, which
+    /// is also the working directory runit gives `finish`. Otherwise the
+    /// restart delay passes before this returns.
     ///
     /// # Errors
     ///
     /// Fails when the spec is missing or invalid, or the marker or the
     /// supervisor's control pipe cannot be written.
-    pub fn finish(&self, name: &str, exit_code: i32, service_dir: &Path) -> Result<i32, Error> {
+    pub fn finish(&self, name: &str, exit_code: i32, exit_signal: i32) -> Result<i32, Error> {
         let spec = self.load(name)?;
+        if exit_code == -1 {
+            eprintln!("laft svc: {name}: killed by signal {exit_signal}");
+        }
         let was_up = self.ready_marker(name).exists();
         if spec.kind == ServiceKind::Oneshot && was_up && !spec.down.is_empty() {
             match self.run(&spec, &spec.down) {
@@ -230,7 +236,7 @@ impl Launcher {
         }
         self.clear_ready(name)?;
         if !restarts(&spec, exit_code) {
-            let control = service_dir.join("supervise/control");
+            let control = self.service_dir(name).join("supervise/control");
             OpenOptions::new()
                 .write(true)
                 .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
@@ -674,6 +680,11 @@ impl Launcher {
         self.root
             .join("run/laft/system/services/spec")
             .join(format!("{name}.json"))
+    }
+
+    /// The service's directory in the supervisor's scan directory.
+    fn service_dir(&self, name: &str) -> PathBuf {
+        self.root.join("run/runit/service").join(name)
     }
 
     fn ready_marker(&self, name: &str) -> PathBuf {

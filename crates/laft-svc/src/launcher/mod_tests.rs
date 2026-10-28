@@ -71,6 +71,15 @@ impl Fixture {
         self.launcher.mark_ready(name).expect("marks");
     }
 
+    /// Creates the supervisor's control pipe of `name`, as a plain file,
+    /// in the service directory under the scan directory.
+    fn supervise_control(&self, name: &str) -> PathBuf {
+        let control = self.path(&format!("run/runit/service/{name}/supervise/control"));
+        fs::create_dir_all(control.parent().expect("has a parent")).expect("mkdir");
+        fs::write(&control, "").expect("write");
+        control
+    }
+
     fn failures(&self) -> String {
         fs::read_to_string(self.path("run/laft/boot-failures")).unwrap_or_default()
     }
@@ -268,21 +277,25 @@ fn finish_keeps_a_service_down_when_its_policy_says_so() {
     spec.restart = Restart::OnFailure;
     spec.restart_delay_ms = 0;
     fixture.install(&spec);
-    let service_dir = fixture.path("sv/x");
-    fs::create_dir_all(service_dir.join("supervise")).expect("mkdir");
-    fs::write(service_dir.join("supervise/control"), "").expect("write");
+    let control = fixture.supervise_control("x");
     fixture.mark("x");
-    fixture
-        .launcher
-        .finish("x", 1, &service_dir)
-        .expect("finishes");
-    assert_eq!(read(&service_dir.join("supervise/control")), "");
+    fixture.launcher.finish("x", 1, 0).expect("finishes");
+    assert_eq!(read(&control), "");
     assert!(!fixture.ready("x"));
-    fixture
-        .launcher
-        .finish("x", 0, &service_dir)
-        .expect("finishes");
-    assert_eq!(read(&service_dir.join("supervise/control")), "d");
+    fixture.launcher.finish("x", 0, 0).expect("finishes");
+    assert_eq!(read(&control), "d");
+}
+
+#[test]
+fn finish_counts_a_killed_service_as_failed() {
+    let fixture = Fixture::new();
+    let mut spec = resolve("x", &Service::longrun(&["/bin/true"]));
+    spec.restart = Restart::OnFailure;
+    spec.restart_delay_ms = 0;
+    fixture.install(&spec);
+    let control = fixture.supervise_control("x");
+    fixture.launcher.finish("x", -1, 9).expect("finishes");
+    assert_eq!(read(&control), "");
 }
 
 #[test]
@@ -293,17 +306,12 @@ fn finish_stops_an_emulated_oneshot_with_its_down_command() {
     spec.down = sh(&format!("touch {}", flag.display()));
     spec.restart_delay_ms = 0;
     fixture.install(&spec);
-    let service_dir = fixture.path("sv/boot-complete");
-    fs::create_dir_all(&service_dir).expect("mkdir");
-    fixture
-        .launcher
-        .finish("boot-complete", 100, &service_dir)
-        .ok();
+    fixture.launcher.finish("boot-complete", 100, 0).ok();
     assert!(!flag.exists(), "down runs only after a successful up");
     fixture.mark("boot-complete");
     fixture
         .launcher
-        .finish("boot-complete", -1, &service_dir)
+        .finish("boot-complete", -1, 15)
         .expect("finishes");
     assert!(flag.exists());
     assert!(!fixture.ready("boot-complete"));
