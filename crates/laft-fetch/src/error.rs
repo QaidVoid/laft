@@ -3,6 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use laft_core::Blake3Hash;
+use laft_index::KeyId;
 
 /// An error from fetching or caching a repository file.
 ///
@@ -56,7 +57,9 @@ pub enum ErrorKind {
     },
     /// The server did not answer or stopped sending in time.
     Timeout,
-    /// The connection, TLS handshake or HTTP exchange failed.
+    /// The connection, TLS handshake or HTTP exchange failed. A server that
+    /// cannot resume a partial download is reported this way too, after the
+    /// partial file is emptied, so the next attempt starts over.
     Transport {
         /// The cause.
         reason: String,
@@ -90,6 +93,19 @@ pub enum ErrorKind {
     /// The repository's trust model rejected a downloaded document, or its
     /// state records could not be read or written.
     Trust(Box<laft_index::Error>),
+    /// The cached index is signed by a key that the `keys.json` accepted
+    /// since revokes. It is refused and removed from the cache.
+    CachedIndexRevoked {
+        /// The revoked key.
+        signer: KeyId,
+    },
+    /// A key revocation lowered the accepted generation of the channel and
+    /// cleared the hash that pinned the cached index, so the cached index
+    /// cannot be verified any more.
+    CachedIndexUnpinned {
+        /// The generation the revocation lowered the record to.
+        generation: u64,
+    },
     /// Every URL failed. The attempts are in the order they were made.
     AllFailed {
         /// What was being fetched, for example a path in the repository.
@@ -183,6 +199,14 @@ impl fmt::Display for ErrorKind {
             }
             Self::Io { path, source } => write!(f, "cannot access {}: {source}", path.display()),
             Self::Trust(e) => fmt::Display::fmt(e, f),
+            Self::CachedIndexRevoked { signer } => write!(
+                f,
+                "the cached index is signed by key {signer}, which the accepted keys.json revokes, so it was removed from the cache"
+            ),
+            Self::CachedIndexUnpinned { generation } => write!(
+                f,
+                "the cached index is no longer pinned, because a key revocation lowered the accepted generation to {generation}, and only a newly downloaded index can be trusted"
+            ),
             Self::AllFailed { what, attempts } => {
                 write!(f, "every URL failed for {what}")?;
                 for attempt in attempts {

@@ -114,14 +114,6 @@ fn keys_json_then_the_signature_then_the_index_are_fetched() {
             format!("{CHANNEL}/index.json.zst"),
         ]
     );
-    assert!(
-        client
-            .fetcher
-            .config()
-            .cache
-            .join("index/core/keys.json")
-            .exists()
-    );
 }
 
 #[test]
@@ -209,7 +201,7 @@ fn a_keys_json_that_disappears_after_acceptance_is_not_direct_mode() {
     let failure = cache_failure(&synced);
     assert!(
         matches!(
-            failure.kind(),
+            last_attempt(failure),
             ErrorKind::Trust(e) if matches!(e.kind(), laft_index::ErrorKind::KeysMissing)
         ),
         "{failure}"
@@ -279,6 +271,69 @@ fn a_cached_index_that_differs_from_the_accepted_one_is_refused() {
     ));
 }
 
+/// The `keys.json` files of `core` at `version`, signed by `root`, listing
+/// `online` and revoking `revoked`.
+fn keys_files(
+    root: &TestKey,
+    version: u64,
+    online: &TestKey,
+    revoked: &TestKey,
+    generation_floor: Option<u64>,
+) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let keys = laft_index::Keys {
+        format: laft_index::Keys::FORMAT,
+        repo: "core".parse().expect("valid name"),
+        version,
+        keys: vec![online.online()],
+        revoked: vec![revoked.public.id()],
+        generation_floor,
+    };
+    let json = keys.to_json().expect("sample keys are valid");
+    let signature = root.sign(&json, &keys.comment().to_string());
+    [
+        ("keys.json".to_owned(), json),
+        ("keys.json.minisig".to_owned(), signature),
+    ]
+    .into()
+}
+
+fn last_attempt(error: &Error) -> &ErrorKind {
+    let ErrorKind::AllFailed { attempts, .. } = error.kind() else {
+        panic!("expected every source to fail, got {error}");
+    };
+    attempts.last().map(Error::kind).expect("an attempt")
+}
+
+#[test]
+fn a_mirror_without_keys_json_does_not_decide_direct_mode_alone() {
+    let (root, online) = (TestKey::generate(), TestKey::generate());
+    let empty = Server::start();
+    let full = Server::start();
+    full.put_all(&publish(&root, Some(&online), &index(T0)));
+    let client = Client::new(&root);
+    let synced = client.sync(&[empty.url(), full.url()]).expect("synced");
+    assert_eq!(mirror_base(&synced), full.url());
+    let Source::Mirror { trust, .. } = &synced.source else {
+        panic!("expected a mirror");
+    };
+    assert_eq!(trust.keys().map(|k| k.version), Some(1));
+}
+
+#[test]
+fn every_mirror_without_keys_json_means_direct_mode() {
+    let root = TestKey::generate();
+    let first = Server::start();
+    let second = Server::start();
+    second.put_all(&publish(&root, None, &index(T0)));
+    let client = Client::new(&root);
+    let synced = client
+        .sync(&[first.url(), refusing_url(), second.url()])
+        .expect("synced");
+    assert_eq!(mirror_base(&synced), second.url());
+    assert_eq!(first.requests("keys.json").len(), 1);
+    assert_eq!(second.requests("keys.json").len(), 1);
+}
+
 #[test]
 fn a_corrupt_state_record_fails_the_sync_instead_of_using_the_cache() {
     let root = TestKey::generate();
@@ -298,4 +353,83 @@ fn a_corrupt_state_record_fails_the_sync_instead_of_using_the_cache() {
             "{error}"
         );
     }
+}
+
+#[test]
+fn keys_acceptance_does_not_write_to_the_cache() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (root, online) = (TestKey::generate(), TestKey::generate());
+    let server = Server::start();
+    server.put_all(&publish(&root, Some(&online), &index(T0)));
+    let client = Client::new(&root);
+    let repo_cache = client.fetcher.config().cache.join("index/core");
+    std::fs::create_dir_all(repo_cache.join(CHANNEL)).expect("writable");
+    std::fs::set_permissions(&repo_cache, std::fs::Permissions::from_mode(0o555))
+        .expect("the test owns the directory");
+    if std::fs::write(repo_cache.join("probe"), b"").is_ok() {
+        println!("skipped: read-only directories are writable for this user");
+        return;
+    }
+    let synced = client.sync(&[server.url()]);
+    std::fs::set_permissions(&repo_cache, std::fs::Permissions::from_mode(0o755))
+        .expect("the test owns the directory");
+    let synced = synced.expect("the index is cached below the read-only directory");
+    assert_eq!(mirror_base(&synced), server.url());
+    assert!(!repo_cache.join("keys.json").exists());
+}
+
+#[test]
+fn a_cached_index_signed_by_a_key_revoked_since_is_refused_and_dropped() {
+    let (root, old, new) = (
+        TestKey::generate(),
+        TestKey::generate(),
+        TestKey::generate(),
+    );
+    let server = Server::start();
+    server.put_all(&publish(&root, Some(&old), &index(T0)));
+    let client = Client::new(&root);
+    client.sync(&[server.url()]).expect("first sync");
+    server.put_all(&keys_files(&root, 2, &new, &old, None));
+    let error = client
+        .sync(&[server.url()])
+        .expect_err("the cached index is signed by a revoked key");
+    assert!(
+        matches!(last_attempt(&error), ErrorKind::CachedIndexRevoked { signer } if *signer == old.public.id()),
+        "{error}"
+    );
+    assert!(error.to_string().contains("cached index"), "{error}");
+    let error = client
+        .offline()
+        .sync(&[server.url()])
+        .expect_err("the cached index is gone");
+    assert!(
+        matches!(last_attempt(&error), ErrorKind::NotFound),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_cached_index_whose_pin_a_revocation_cleared_is_refused() {
+    let (root, old, new) = (
+        TestKey::generate(),
+        TestKey::generate(),
+        TestKey::generate(),
+    );
+    let server = Server::start();
+    server.put_all(&publish(&root, Some(&old), &index(T0)));
+    let client = Client::new(&root);
+    client.sync(&[server.url()]).expect("first sync");
+    server.put_all(&keys_files(&root, 2, &new, &old, Some(T0 - 60)));
+    let error = client
+        .sync(&[server.url()])
+        .expect_err("the cached index is no longer pinned");
+    assert!(
+        matches!(
+            last_attempt(&error),
+            ErrorKind::CachedIndexUnpinned { generation } if *generation == T0 - 60
+        ),
+        "{error}"
+    );
+    assert!(error.to_string().contains("cached index"), "{error}");
 }

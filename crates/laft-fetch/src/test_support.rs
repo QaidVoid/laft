@@ -31,6 +31,8 @@ pub(crate) enum Fault {
     Stall(Duration),
     /// Answers with the whole file even when a range was asked for.
     IgnoreRange,
+    /// Announces this `Content-Length` but sends nothing of the body.
+    Length(u64),
 }
 
 /// A request the server received.
@@ -156,15 +158,16 @@ fn handle(stream: TcpStream, state: &Mutex<State>) {
         (state.files.get(&path).cloned(), fault)
     };
     let mut stream = stream;
-    let (file, truncate) = match fault {
+    let (file, truncate, announced) = match fault {
         Some(Fault::Status(code)) => return respond(&mut stream, code, &[], 0, &[]),
         Some(Fault::Stall(time)) => return thread::sleep(time),
         Some(Fault::IgnoreRange) => {
             range = None;
-            (file, None)
+            (file, None, None)
         }
-        Some(Fault::Truncate(n)) => (file, Some(n)),
-        None => (file, None),
+        Some(Fault::Truncate(n)) => (file, Some(n), None),
+        Some(Fault::Length(n)) => (file, Some(0), Some(n)),
+        None => (file, None, None),
     };
     let Some(file) = file else {
         return respond(&mut stream, 404, &[], 0, &[]);
@@ -182,8 +185,8 @@ fn handle(stream: TcpStream, state: &Mutex<State>) {
         }
         None => (200, &file[..], vec![]),
     };
-    let length = body.len();
-    let sent = truncate.unwrap_or(length).min(length);
+    let sent = truncate.unwrap_or(body.len()).min(body.len());
+    let length = announced.unwrap_or(body.len() as u64);
     respond(&mut stream, code, &headers, length, &body[..sent]);
 }
 
@@ -193,7 +196,7 @@ fn respond(
     stream: &mut TcpStream,
     code: u16,
     headers: &[(&str, String)],
-    length: usize,
+    length: u64,
     body: &[u8],
 ) {
     let mut head =

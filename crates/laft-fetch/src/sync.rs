@@ -7,7 +7,7 @@ use laft_index::{
 };
 
 use crate::fetch::{all_failed, read_file};
-use crate::fs::write_atomic;
+use crate::fs::{remove, write_atomic};
 use crate::{BaseUrl, Error, ErrorKind, Fetcher, Mirrors, ObjectKind, Progress};
 
 const KEYS: &str = "keys.json";
@@ -18,7 +18,7 @@ const KEYS_SIGNATURE: &str = "keys.json.minisig";
 pub struct SyncRequest<'a> {
     /// The repository's trust configuration.
     pub repo: &'a Repo,
-    /// The URLs to try, with the verified signed mirror list appended.
+    /// The URLs to try, in order.
     pub mirrors: &'a Mirrors,
     /// The accepted-state records.
     pub state: &'a IndexState,
@@ -66,24 +66,29 @@ impl Fetcher {
     /// Syncs one channel of a repository and returns its accepted index.
     ///
     /// For each URL in order, `keys.json` and then its signature are
-    /// downloaded and handed to [`IndexState::accept_keys`]. A 404 for
-    /// `keys.json` from the first URL that answers is passed on as
-    /// [`KeysFetch::NotFound`], which means direct mode unless a
-    /// `keys.json` was accepted before. Any other failure, including a
-    /// rejection, moves on to the next URL. Then, for each URL in order,
+    /// downloaded and handed to [`IndexState::accept_keys`] until one is
+    /// accepted. Any failure, including a 404 or a rejection, moves on to
+    /// the next URL. When no URL serves a `keys.json` and at least one
+    /// answers 404 for it, [`KeysFetch::NotFound`] is passed on, which means
+    /// direct mode unless a `keys.json` was accepted before. The accepted
+    /// `keys.json` is not cached, because only its record is needed later.
+    /// Then, for each URL in order,
     /// the index signature and the index of the channel are downloaded and
     /// handed to [`IndexState::accept_index`] until one is accepted. When
     /// the two do not match, because the repository was published between
     /// the two requests, the pair is downloaded once more, and then the
     /// immutable snapshot named by the signature is used.
     ///
-    /// Accepted files are written to `index/<repo>/` in the cache with the
+    /// Accepted indexes are written to `index/<repo>/` in the cache with the
     /// repository's layout, through a synced `.part` file and a rename.
     ///
     /// When every URL fails, the index accepted by an earlier sync is read
-    /// from the cache, provided it is still the accepted one and has not
-    /// expired, and [`Source::Cache`] says why the sync failed. Offline,
-    /// only `file://` URLs are tried.
+    /// from the cache, provided it is still the accepted one, its record
+    /// still pins its hash, and it has not expired, and [`Source::Cache`]
+    /// says why the sync failed. When this sync accepted a `keys.json` that
+    /// revokes the cached index's signer, the cached index is refused and
+    /// removed from the cache. Offline, network URLs are refused without a
+    /// request, so only `file://` URLs are tried.
     ///
     /// # Errors
     ///
@@ -98,12 +103,24 @@ impl Fetcher {
         progress: &mut dyn FnMut(Progress),
     ) -> Result<Synced, Error> {
         let mut attempts = Vec::new();
-        if let Some(synced) = self.sync_online(request, progress, &mut attempts)? {
-            return Ok(synced);
+        let trust = self.sync_keys(request, &mut attempts)?;
+        if let Some(trust) = &trust {
+            for base in request.mirrors.bases() {
+                match self.index_from(base, request, trust, progress) {
+                    Ok(index) => {
+                        let base = base.clone();
+                        let trust = trust.clone();
+                        let source = Source::Mirror { base, trust };
+                        return Ok(Synced { index, source });
+                    }
+                    Err(e) if is_fatal(&e) => return Err(e),
+                    Err(e) => attempts.push(e),
+                }
+            }
         }
         let repo = request.repo;
         let what = format!("repo {} channel {}/{}", repo.name, repo.channel, repo.arch);
-        match self.cached_index(request) {
+        match self.cached_index(request, trust.as_ref()) {
             Ok(index) => Ok(Synced {
                 index,
                 source: Source::Cache {
@@ -118,76 +135,66 @@ impl Fetcher {
         }
     }
 
-    fn sync_online(
-        &self,
-        request: &SyncRequest<'_>,
-        progress: &mut dyn FnMut(Progress),
-        attempts: &mut Vec<Error>,
-    ) -> Result<Option<Synced>, Error> {
-        let Some(trust) = self.sync_keys(request, attempts)? else {
-            return Ok(None);
-        };
-        for base in request.mirrors.bases() {
-            match self.index_from(base, request, &trust, progress) {
-                Ok(index) => {
-                    let base = base.clone();
-                    let source = Source::Mirror { base, trust };
-                    return Ok(Some(Synced { index, source }));
-                }
-                Err(e) if is_fatal(&e) => return Err(e),
-                Err(e) => attempts.push(e),
-            }
-        }
-        Ok(None)
-    }
-
     fn sync_keys(
         &self,
         request: &SyncRequest<'_>,
         attempts: &mut Vec<Error>,
     ) -> Result<Option<Trust>, Error> {
         let quiet = &mut |_: Progress| {};
+        let mut not_found = None;
+        let mut served = false;
         for base in request.mirrors.bases() {
-            let keys = match self.fetch(base, KEYS, ObjectKind::Keys, quiet) {
-                Ok(json) => match self.fetch(base, KEYS_SIGNATURE, ObjectKind::Signature, quiet) {
-                    Ok(signature) => Some((json, signature)),
-                    Err(e) => {
-                        attempts.push(e);
-                        continue;
+            let json = match self.fetch(base, KEYS, ObjectKind::Keys, quiet) {
+                Ok(json) => json,
+                Err(e) => {
+                    if matches!(e.kind(), ErrorKind::NotFound) {
+                        not_found.get_or_insert(base);
                     }
-                },
-                Err(e) if matches!(e.kind(), ErrorKind::NotFound) => None,
+                    attempts.push(e);
+                    continue;
+                }
+            };
+            served = true;
+            let signature = match self.fetch(base, KEYS_SIGNATURE, ObjectKind::Signature, quiet) {
+                Ok(signature) => signature,
                 Err(e) => {
                     attempts.push(e);
                     continue;
                 }
             };
-            let fetch = match &keys {
-                Some((json, signature)) => KeysFetch::Found { json, signature },
-                None => KeysFetch::NotFound,
+            let fetch = KeysFetch::Found {
+                json: &json,
+                signature: &signature,
             };
-            match request.state.accept_keys(request.repo, fetch) {
-                Ok(trust) => {
-                    let dir = self.repo_cache(request.repo);
-                    let cached = keys.as_ref().map_or(Ok(()), |(json, signature)| {
-                        write_atomic(&dir.join(KEYS), json)?;
-                        write_atomic(&dir.join(KEYS_SIGNATURE), signature)
-                    });
-                    match cached {
-                        Ok(()) => return Ok(Some(trust)),
-                        Err(e) => attempts.push(e),
-                    }
-                }
-                Err(e) => {
-                    let error = Error::new(base.join(KEYS), ErrorKind::Trust(Box::new(e)));
-                    if is_fatal(&error) {
-                        return Err(error);
-                    }
-                    attempts.push(error);
-                }
+            match self.accept_keys(request, fetch, base) {
+                Ok(trust) => return Ok(Some(trust)),
+                Err(e) if is_fatal(&e) => return Err(e),
+                Err(e) => attempts.push(e),
             }
         }
-        Ok(None)
+        let Some(base) = not_found.filter(|_| !served) else {
+            return Ok(None);
+        };
+        match self.accept_keys(request, KeysFetch::NotFound, base) {
+            Ok(trust) => Ok(Some(trust)),
+            Err(e) if is_fatal(&e) => Err(e),
+            Err(e) => {
+                attempts.push(e);
+                Ok(None)
+            }
+        }
+    }
+
+    fn accept_keys(
+        &self,
+        request: &SyncRequest<'_>,
+        fetch: KeysFetch<'_>,
+        base: &BaseUrl,
+    ) -> Result<Trust, Error> {
+        request
+            .state
+            .accept_keys(request.repo, fetch)
+            .map_err(|e| Error::new(base.join(KEYS), ErrorKind::Trust(Box::new(e))))
     }
 
     /// Downloads and accepts the index of the channel from `base`, and
@@ -243,8 +250,13 @@ impl Fetcher {
         accept(&snapshot_path, &snapshot, &signature)
     }
 
-    /// The index accepted by an earlier sync, read back from the cache.
-    fn cached_index(&self, request: &SyncRequest<'_>) -> Result<AcceptedIndex, Error> {
+    /// The index accepted by an earlier sync, read back from the cache, and
+    /// checked against `trust` when this sync accepted a `keys.json`.
+    fn cached_index(
+        &self,
+        request: &SyncRequest<'_>,
+        trust: Option<&Trust>,
+    ) -> Result<AcceptedIndex, Error> {
         let repo = request.repo;
         let path = self
             .repo_cache(repo)
@@ -259,14 +271,19 @@ impl Fetcher {
             .into_iter()
             .find(|r| r.channel == repo.channel && r.arch == repo.arch)
             .ok_or_else(|| Error::new(&url, ErrorKind::NotFound))?;
-        // A generation floor clears the hash of an index signed by a key
-        // that was revoked since.
         let expected = record.blake3.ok_or_else(|| {
-            let kind = laft_index::ErrorKind::RevokedKey {
-                signer: record.signer,
-            };
-            trust_error(laft_index::Error::from(kind))
+            let generation = record.generation;
+            Error::new(&url, ErrorKind::CachedIndexUnpinned { generation })
         })?;
+        if trust
+            .and_then(Trust::keys)
+            .is_some_and(|keys| keys.is_revoked(record.signer))
+        {
+            remove(&path)?;
+            remove(&path.with_extension("zst.minisig"))?;
+            let signer = record.signer;
+            return Err(Error::new(&url, ErrorKind::CachedIndexRevoked { signer }));
+        }
         let bytes = read_file(&path, &url, MAX_INDEX_SIZE, &mut |_| {})?;
         let actual = Blake3Hash::of(&bytes);
         if actual != expected {

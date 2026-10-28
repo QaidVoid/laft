@@ -472,6 +472,28 @@ fn a_stale_partial_file_that_does_not_match_is_downloaded_again() {
 }
 
 #[test]
+fn a_huge_length_on_a_resumed_answer_is_too_large() {
+    let server = Server::start();
+    let content = bytes(100_000, 11);
+    let entry = package(&content);
+    server.put(&entry.file, &content);
+    server.fault(&entry.file, Fault::Length(u64::MAX - 10));
+    let cache = tempfile::tempdir().expect("temporary directory");
+    let dest = cache.path().join(format!("pkgs/{}.lpkg", entry.id));
+    std::fs::create_dir_all(dest.parent().expect("in a directory")).expect("writable");
+    std::fs::write(part_path(&dest), &content[..40_000]).expect("writable");
+    let fetcher = Fetcher::new(config(cache.path()));
+    let error = fetcher
+        .download_package(&mirrors(&[server.url()]), &entry, &mut quiet())
+        .expect_err("the announced length is beyond the entry's size");
+    assert!(
+        matches!(error.kind(), ErrorKind::TooLarge { limit: 100_000 }),
+        "{error}"
+    );
+    assert!(!part_path(&dest).exists());
+}
+
+#[test]
 fn a_transfer_cut_off_mid_body_is_retried() {
     let server = Server::start();
     let keys = bytes(5000, 12);

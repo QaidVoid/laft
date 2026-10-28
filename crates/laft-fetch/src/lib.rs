@@ -3,8 +3,7 @@
 //! A repository is a tree of static files below a base URL ([`BaseUrl`]),
 //! reached over `https://`, over a local `file://` directory, or over plain
 //! `http://` when the repository allows it. [`Mirrors`] orders the URLs of
-//! one repository: the configured URL, the configured mirrors, then the
-//! mirrors of its verified signed mirror list.
+//! one repository: the configured URL, then the configured mirrors.
 //!
 //! A [`Fetcher`] moves bytes and caches them. [`Fetcher::fetch`] reads small
 //! signed documents into memory with a size limit per [`ObjectKind`].

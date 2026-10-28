@@ -125,17 +125,19 @@ impl fmt::Display for BaseUrl {
 }
 
 /// The base URLs of one repository in the order they are tried: the
-/// configured URL, then the configured mirrors, then the mirrors of the
-/// repository's signed mirror list. A URL that appears twice is tried
-/// once, at its first place.
+/// configured URL, then the configured mirrors. A URL that appears twice is
+/// tried once, at its first place.
 ///
 /// ```
 /// use laft_fetch::Mirrors;
 ///
-/// let mirrors = Mirrors::new("https://a.example.org", &["https://b.example.org"], false)?
-///     .with_signed(&["https://c.example.org", "http://d.example.org"]);
+/// let mirrors = Mirrors::new(
+///     "https://a.example.org",
+///     &["https://b.example.org", "https://a.example.org/"],
+///     false,
+/// )?;
 /// let urls: Vec<&str> = mirrors.bases().iter().map(|b| b.as_str()).collect();
-/// assert_eq!(urls, ["https://a.example.org", "https://b.example.org", "https://c.example.org"]);
+/// assert_eq!(urls, ["https://a.example.org", "https://b.example.org"]);
 /// # Ok::<(), laft_fetch::Error>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,21 +158,6 @@ impl Mirrors {
             this.push(BaseUrl::parse(url, allow_http)?);
         }
         Ok(this)
-    }
-
-    /// Appends the mirrors of the repository's signed mirror list. The
-    /// caller verifies the list first. Only `https://` mirrors are used, and
-    /// any other entry is skipped.
-    #[must_use]
-    pub fn with_signed(mut self, mirrors: &[impl AsRef<str>]) -> Self {
-        for url in mirrors {
-            if let Ok(base) = BaseUrl::parse(url.as_ref(), false)
-                && base.scheme == Scheme::Https
-            {
-                self.push(base);
-            }
-        }
-        self
     }
 
     /// The same mirrors with `first` moved to the front, for example the

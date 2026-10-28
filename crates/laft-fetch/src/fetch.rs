@@ -29,7 +29,7 @@ pub struct Config {
     pub connect_timeout: Duration,
     /// The longest time a server may stay silent, while sending the
     /// response headers or the body. A slow but steady download never
-    /// times out.
+    /// times out. The same limit applies to each write of the request.
     pub read_timeout: Duration,
     /// How often a request to one URL is repeated after a timeout, a broken
     /// connection, or an HTTP status that says the server is busy or
@@ -73,8 +73,6 @@ pub struct Progress {
 pub enum ObjectKind {
     /// `keys.json`, at most 1 MiB.
     Keys,
-    /// `mirrors.json`, at most 1 MiB.
-    Mirrors,
     /// A `.minisig` signature, at most 64 KiB.
     Signature,
     /// A compressed index or snapshot, at most as large as an index may be
@@ -86,7 +84,7 @@ impl ObjectKind {
     /// The largest file of this kind, in bytes.
     pub const fn max_size(self) -> u64 {
         match self {
-            Self::Keys | Self::Mirrors => 1 << 20,
+            Self::Keys => 1 << 20,
             Self::Signature => 64 << 10,
             Self::Index => MAX_INDEX_SIZE,
         }
@@ -360,13 +358,17 @@ impl Fetcher {
             StatusCode::OK => {}
             StatusCode::PARTIAL_CONTENT if range_start(&response) == Some(offset) => {}
             StatusCode::PARTIAL_CONTENT | StatusCode::RANGE_NOT_SATISFIABLE => {
+                // The partial file is emptied, so the retry that this
+                // transient error leads to downloads the whole file.
                 truncate(&mut file, part, &mut hasher)?;
                 let reason = format!("the server cannot resume the download at byte {offset}");
                 return Err(Error::new(url, ErrorKind::Transport { reason }));
             }
             status => return Err(status_error(url, status)),
         }
-        if content_length(&response).is_some_and(|n| offset + n > limit) {
+        if content_length(&response)
+            .is_some_and(|n| offset.checked_add(n).is_none_or(|end| end > limit))
+        {
             return Err(Error::new(url, ErrorKind::TooLarge { limit }));
         }
         let mut reader = response.into_body().into_reader();

@@ -47,8 +47,8 @@ pub enum KeysFetch<'a> {
         /// The bytes of `keys.json.minisig`.
         signature: &'a [u8],
     },
-    /// The first URL that answered reported that `keys.json` does not
-    /// exist (HTTP 404, or a missing file in a local repository).
+    /// No URL served `keys.json`, and at least one reported that it does
+    /// not exist (HTTP 404, or a missing file in a local repository).
     NotFound,
 }
 
@@ -216,8 +216,8 @@ impl IndexState {
     /// so that honest indexes above the floor are accepted again. A floor
     /// never raises an accepted generation.
     ///
-    /// The caller keeps the accepted bytes in its cache. The record holds
-    /// only the version and hash, which is all that later checks need.
+    /// The record holds only the version and hash, which is all that later
+    /// checks need, so the caller need not keep the accepted bytes.
     ///
     /// # Errors
     ///

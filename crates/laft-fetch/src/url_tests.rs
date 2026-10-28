@@ -57,27 +57,16 @@ fn malformed_base_urls_are_rejected() {
 }
 
 #[test]
-fn mirrors_follow_the_configured_url_then_mirrors_then_the_signed_list() {
+fn mirrors_follow_the_configured_url_then_mirrors_once_each() {
     let mirrors = Mirrors::new(
         "https://a.example.org/laft/",
         &["https://b.example.org", "https://a.example.org/laft"],
         false,
     )
-    .expect("valid URLs")
-    .with_signed(&[
-        "https://c.example.org",
-        "http://d.example.org",
-        "file:///srv/repo",
-        "not a url",
-        "https://b.example.org",
-    ]);
+    .expect("valid URLs");
     assert_eq!(
         urls(&mirrors),
-        [
-            "https://a.example.org/laft",
-            "https://b.example.org",
-            "https://c.example.org"
-        ]
+        ["https://a.example.org/laft", "https://b.example.org"]
     );
 }
 
