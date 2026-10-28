@@ -7,7 +7,7 @@ use std::path::Path;
 
 use rustix::fs::{AtFlags, CWD, Timespec, Timestamps};
 
-use crate::error::{Result, io};
+use crate::error::{Result, corrupt, io};
 
 /// The mode of every directory in a store entry, view or generation.
 pub(crate) const SEALED_DIR: u32 = 0o555;
@@ -178,11 +178,23 @@ pub(crate) fn sync_fs(path: &Path) -> Result<()> {
     rustix::fs::syncfs(&dir).map_err(io(path))
 }
 
-/// The number at the end of a symlink target such as `42` or
-/// `mounts/42`, or `None` when `link` is missing or does not end in one.
-pub(crate) fn link_number(link: &Path) -> Option<u64> {
-    let target = fs::read_link(link).ok()?;
-    target.file_name()?.to_str()?.parse().ok()
+/// The number at the end of the target of symlink `link`, such as `42` or
+/// `mounts/42`, or `None` when `link` does not exist.
+///
+/// Fails when `link` exists but cannot be read as a symlink, or when its
+/// target does not end in a number.
+pub(crate) fn link_number(link: &Path) -> Result<Option<u64>> {
+    let target = match fs::read_link(link) {
+        Ok(target) => target,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(io(link)(e)),
+    };
+    target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(canonical_number)
+        .map(Some)
+        .ok_or_else(|| corrupt(link, "the link does not name a number"))
 }
 
 /// The names of the numbered subdirectories of `dir`, sorted.

@@ -186,3 +186,58 @@ fn gc_keeps_pinned_entries_and_referenced_views() {
     ));
     assert_consistent(&env.root);
 }
+
+/// Replaces the content of a sealed record file and returns the old bytes.
+fn overwrite(path: &std::path::Path, content: &[u8]) -> Vec<u8> {
+    use std::os::unix::fs::PermissionsExt;
+    let old = fs::read(path).expect("the record exists");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o644)).expect("can chmod");
+    fs::write(path, content).expect("can write");
+    old
+}
+
+#[test]
+fn gc_refuses_to_plan_around_unreadable_records() {
+    let env = Env::new();
+    let first = Pkg::new("first", "1")
+        .file("usr/bin/first", b"1")
+        .build(&env);
+    let second = Pkg::new("second", "1")
+        .file("usr/bin/second", b"2")
+        .build(&env);
+    {
+        let lock = env.lock();
+        apply(&lock, &[&first], Some("dev")).expect("generation 1 with dev@1");
+        apply(&lock, &[&second], None).expect("generation 2");
+    }
+    let lock = env.lock();
+    let policy = GcPolicy::default();
+    let plan = plan_gc(&lock, &policy, SystemTime::now()).expect("plans");
+    assert_eq!(deleted(plan.decisions()), Vec::<String>::new());
+
+    let gen_json = env.root.gen_dir(1).join("gen.json");
+    let old = overwrite(&gen_json, b"{");
+    let error = plan_gc(&lock, &policy, SystemTime::now()).expect_err("gen.json is corrupt");
+    assert!(matches!(error, crate::Error::Corrupt { .. }), "{error}");
+    overwrite(&gen_json, &old);
+
+    let view_json = env.root.view_dir(&name("dev"), 1).join("view.json");
+    let old = overwrite(&view_json, b"{");
+    let error = plan_gc(&lock, &policy, SystemTime::now()).expect_err("view.json is corrupt");
+    assert!(matches!(error, crate::Error::Corrupt { .. }), "{error}");
+    overwrite(&view_json, &old);
+
+    let default = env.root.gens_dir().join("default");
+    fs::remove_file(&default).expect("can unlink");
+    symlink("latest", &default).expect("can link");
+    let error = plan_gc(&lock, &policy, SystemTime::now()).expect_err("default is corrupt");
+    assert!(matches!(error, crate::Error::Corrupt { .. }), "{error}");
+
+    fs::remove_file(&default).expect("can unlink");
+    symlink("2", &default).expect("can link");
+    fs::write(env.root.pins_dir().join("broken"), b"").expect("can write");
+    let error = plan_gc(&lock, &policy, SystemTime::now()).expect_err("the pin is not a link");
+    assert!(matches!(error, crate::Error::Io { .. }), "{error}");
+    fs::remove_file(env.root.pins_dir().join("broken")).expect("can remove");
+    assert!(plan_gc(&lock, &policy, SystemTime::now()).is_ok());
+}

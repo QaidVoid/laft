@@ -1,5 +1,4 @@
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use laft_core::Name;
@@ -75,14 +74,7 @@ impl Root {
     ///
     /// Fails when the link exists but cannot be read as a generation number.
     pub fn default_generation(&self) -> Result<Option<u64>> {
-        let link = self.gens_dir().join("default");
-        match fs::symlink_metadata(&link) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(io(&link)(e)),
-            Ok(_) => fsx::link_number(&link)
-                .map(Some)
-                .ok_or_else(|| corrupt(&link, "the link does not name a generation")),
-        }
+        fsx::link_number(&self.gens_dir().join("default"))
     }
 
     /// The versions of view `name`, sorted.

@@ -8,7 +8,7 @@ use laft_core::{Blake3Hash, Name, StoreId, Timestamp};
 use laft_pkg::Manifest;
 use rustix::fs::FlockOperation;
 
-use crate::error::{Result, io};
+use crate::error::{Result, corrupt, io};
 use crate::journal::{Journal, view_names};
 use crate::{Generation, Lock, Root, fsx};
 
@@ -167,7 +167,12 @@ impl fmt::Display for GcPlan {
 ///
 /// # Errors
 ///
-/// Fails when the generations, views, store or state cannot be read.
+/// Fails when the generations, views, store or state cannot be read. That
+/// includes a generation without a valid `gen.json`, a retained view
+/// version without a valid `view.json`, and a pointer such as
+/// `laft/gens/default`, a view's `current` or a pin that is not a symlink
+/// to what it should name. The planner never guesses what such a record
+/// would have kept.
 pub fn plan_gc(lock: &Lock, policy: &GcPolicy, now: SystemTime) -> Result<GcPlan> {
     let root = lock.root();
     let journals = Journal::all(root)?;
@@ -179,9 +184,7 @@ pub fn plan_gc(lock: &Lock, policy: &GcPolicy, now: SystemTime) -> Result<GcPlan
     let numbers = root.generations()?;
     let mut generations: BTreeMap<u64, Generation> = BTreeMap::new();
     for &number in &numbers {
-        if let Ok(generation) = root.generation(number) {
-            generations.insert(number, generation);
-        }
+        generations.insert(number, root.generation(number)?);
     }
     let newest: BTreeSet<u64> = generations
         .keys()
@@ -192,11 +195,11 @@ pub fn plan_gc(lock: &Lock, policy: &GcPolicy, now: SystemTime) -> Result<GcPlan
     let horizon = now.checked_sub(Duration::from_secs(policy.keep_days.saturating_mul(86_400)));
     let run = root.run_dir();
     let pointers = [
-        (fsx::link_number(&run.join("system")), "active system"),
-        (fsx::link_number(&run.join("booted")), "booted"),
-        (root.default_generation().ok().flatten(), "default"),
+        (fsx::link_number(&run.join("system"))?, "active system"),
+        (fsx::link_number(&run.join("booted"))?, "booted"),
+        (root.default_generation()?, "default"),
     ];
-    for number in numbers.into_iter().rev() {
+    for (&number, generation) in generations.iter().rev() {
         let mut reasons: Vec<String> = pointers
             .iter()
             .filter(|(target, _)| *target == Some(number))
@@ -205,11 +208,6 @@ pub fn plan_gc(lock: &Lock, policy: &GcPolicy, now: SystemTime) -> Result<GcPlan
         if journals.iter().any(|j| j.generation == Some(number)) {
             reasons.push(UNFINISHED.into());
         }
-        let Some(generation) = generations.get(&number) else {
-            reasons.push("gen.json is unreadable".into());
-            decisions.push(keep(Subject::Generation(number), reasons));
-            continue;
-        };
         if newest.contains(&number) {
             reasons.push(format!("newest {}", policy.keep_generations));
         }
@@ -255,7 +253,7 @@ pub fn plan_gc(lock: &Lock, policy: &GcPolicy, now: SystemTime) -> Result<GcPlan
         }
     }
     for name in view_names(&root.views_dir())? {
-        let current = fsx::link_number(&root.views_dir().join(name.as_str()).join("current"));
+        let current = fsx::link_number(&root.views_dir().join(name.as_str()).join("current"))?;
         for version in root.view_versions(&name)? {
             let mut reasons = view_reasons
                 .remove(&(name.clone(), version))
@@ -277,14 +275,9 @@ pub fn plan_gc(lock: &Lock, policy: &GcPolicy, now: SystemTime) -> Result<GcPlan
                 ));
                 continue;
             }
-            match root.view(&name, version) {
-                Ok(view) => {
-                    let tag = format!("view {name}@{version}");
-                    for package in &view.packages {
-                        add_reason(&mut entry_reasons, package.dir.clone(), &tag);
-                    }
-                }
-                Err(_) => reasons.push("view.json is unreadable".into()),
+            let tag = format!("view {name}@{version}");
+            for package in &root.view(&name, version)?.packages {
+                add_reason(&mut entry_reasons, package.dir.clone(), &tag);
             }
             decisions.push(keep(subject, reasons));
         }
@@ -369,11 +362,11 @@ fn pins(root: &Root) -> Result<Vec<String>> {
     let mut pinned = Vec::new();
     for item in fs::read_dir(&dir).map_err(io(&dir))? {
         let path = item.map_err(io(&dir))?.path();
-        if let Ok(target) = fs::read_link(&path)
-            && let Some(name) = target.file_name()
-        {
-            pinned.push(name.to_string_lossy().into_owned());
-        }
+        let target = fs::read_link(&path).map_err(io(&path))?;
+        let name = target
+            .file_name()
+            .ok_or_else(|| corrupt(&path, "the pin does not name a store entry"))?;
+        pinned.push(name.to_string_lossy().into_owned());
     }
     Ok(pinned)
 }
