@@ -62,10 +62,7 @@ impl FromStr for IndexComment {
         Ok(Self {
             repo: name(s, repo)?,
             channel: name(s, channel)?,
-            arch: [Arch::X86_64V3, Arch::Any]
-                .into_iter()
-                .find(|a| a.as_str() == arch)
-                .ok_or_else(|| invalid(s))?,
+            arch: arch.parse::<Arch>().map_err(|_| invalid(s))?,
             generation: number(s, generation)?,
         })
     }
