@@ -213,9 +213,10 @@ impl IndexState {
     /// the accepted one, with identical bytes for an equal version.
     ///
     /// When a newer `keys.json` revokes the key that signed an accepted
-    /// index and sets a generation floor, that index record's generation is
-    /// replaced by the floor and its hash is cleared, so that honest indexes
-    /// above the floor are accepted again.
+    /// index and sets a generation floor below that index's generation, the
+    /// record's generation is lowered to the floor and its hash is cleared,
+    /// so that honest indexes above the floor are accepted again. A floor
+    /// never raises an accepted generation.
     ///
     /// The caller keeps the accepted bytes in its cache. The record holds
     /// only the version and hash, which is all that later checks need.
@@ -323,7 +324,10 @@ impl IndexState {
         };
         let mut records = self.index_records(repo)?;
         let mut lowered = false;
-        for record in records.iter_mut().filter(|r| keys.is_revoked(r.signer)) {
+        for record in records
+            .iter_mut()
+            .filter(|r| keys.is_revoked(r.signer) && floor < r.generation)
+        {
             record.generation = floor;
             record.blake3 = None;
             lowered = true;

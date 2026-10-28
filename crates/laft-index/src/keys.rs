@@ -33,8 +33,9 @@ pub struct Keys {
     /// The last known good index generation, set when a key is revoked.
     ///
     /// A client whose accepted index was signed by a revoked key lowers its
-    /// accepted generation to this value, so that an index with an inflated
-    /// generation signed by a leaked key cannot freeze it.
+    /// accepted generation to this value when it is higher, so that an index
+    /// with an inflated generation signed by a leaked key cannot freeze it.
+    /// A floor above the accepted generation changes nothing.
     pub generation_floor: Option<u64>,
 }
 

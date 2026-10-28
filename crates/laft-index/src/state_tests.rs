@@ -564,6 +564,34 @@ fn generation_floor_recovers_a_client_frozen_by_a_leaked_key() {
 }
 
 #[test]
+fn generation_floor_never_raises_the_accepted_generation() {
+    let client = Client::new();
+    let trust = client.accept_keys(&client.keys_v1()).expect("keys.json");
+    client
+        .accept(&trust, &client.online.sign_index(&index(T0)))
+        .expect("index");
+    let before = client
+        .state
+        .index_records(&client.repo.name)
+        .expect("records");
+
+    let next = TestKey::generate();
+    let mut revoke = keys(2, vec![next.online()], vec![client.online.id()]);
+    revoke.generation_floor = Some(T0 + 100 * DAY);
+    let trust = client.accept_keys(&revoke).expect("keys.json");
+    assert_eq!(
+        client
+            .state
+            .index_records(&client.repo.name)
+            .expect("records"),
+        before
+    );
+    client
+        .accept(&trust, &next.sign_index(&index(T0 + 100)))
+        .expect("an index between the accepted generation and the floor");
+}
+
+#[test]
 fn reset_makes_the_next_sync_a_first_sync() {
     let client = Client::new();
     let trust = client.accept_keys(&client.keys_v1()).expect("keys.json");
