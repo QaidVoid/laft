@@ -7,7 +7,8 @@ use std::os::unix::fs::{DirBuilderExt, symlink};
 use std::path::Path;
 
 use laft_store::{
-    CarryOver, GenerationInput, Lock, PackageInput, Root, Store, Transaction, TriggerRecord,
+    CarryOver, GenerationInput, Lock, PackageInput, Recovery, Root, Store, Transaction,
+    TriggerRecord,
 };
 use laft_svc::ServiceSet;
 use laft_svc::runit::{self, Entry};
@@ -18,7 +19,7 @@ use crate::initramfs::{self, BootRecord, Host};
 use crate::privileged::{self, PrivilegedRecord};
 use crate::render::{Node, render};
 use crate::trigger::{self, Contributor};
-use crate::{declare, fault, fsx, state};
+use crate::{declare, fault, fsx, install_boot, state};
 
 /// Everything a generation is assembled from, as plain values.
 #[derive(Debug, Clone, Copy)]
@@ -322,6 +323,22 @@ fn booted(root: &Root) -> Result<Option<u64>> {
                 target.display()
             ))
         })
+}
+
+/// Finishes or rolls back every interrupted transaction, as
+/// [`Lock::recover`] does, and then installs the boot files again when it
+/// recovered anything, so that the boot menu on the EFI system partition
+/// at `esp` lists exactly the generations that exist.
+///
+/// # Errors
+///
+/// Fails as [`Lock::recover`] and [`install_boot`] do.
+pub fn recover(lock: &Lock, esp: &Path) -> Result<Vec<Recovery>> {
+    let recovered = lock.recover()?;
+    if !recovered.is_empty() {
+        install_boot(lock.root(), esp)?;
+    }
+    Ok(recovered)
 }
 
 #[cfg(test)]

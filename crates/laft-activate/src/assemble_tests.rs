@@ -645,3 +645,50 @@ fn privileged_files_reach_only_views_with_the_same_closure() {
         BTreeSet::from(["older".to_owned(), "same".to_owned()])
     );
 }
+
+#[test]
+fn recovery_renders_the_boot_menu_again() {
+    let env = Env::new();
+    let lock = env.lock();
+    let mut tx = Transaction::begin(
+        &lock,
+        &Plan {
+            command: "apply".into(),
+            previous: None,
+            views: BTreeSet::new(),
+        },
+    )
+    .unwrap();
+    tx.assemble_generation(&GenerationInput {
+        packages: vec![],
+        initrd_packages: vec![],
+        carry_over: vec![],
+        alternatives: BTreeMap::new(),
+        views: BTreeMap::new(),
+        message: None,
+        laft_version: "0.1.0".into(),
+        arch: "x86_64-v3".into(),
+        init: Init {
+            backend: "runit".into(),
+            exec: vec!["/usr/bin/runit".into()],
+        },
+        config: b"{}".to_vec(),
+        config_files: vec![],
+        indexes: vec![],
+        etc: Default::default(),
+    })
+    .unwrap();
+    tx.boot_installed().unwrap();
+    drop(tx);
+    let esp = env.path("boot");
+    fs::create_dir_all(&esp).unwrap();
+    let recovered = recover(&lock, &esp).unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].outcome, laft_store::Outcome::Built);
+    assert!(esp.join("limine.conf").is_file());
+    assert_eq!(
+        fs::read_to_string(esp.join("laft/entries.json")).unwrap(),
+        r#"{"default_gen":null,"entries":[],"version":1}"#
+    );
+    assert!(recover(&lock, &esp).unwrap().is_empty());
+}

@@ -6,7 +6,8 @@
 //! from resolved packages and the configuration as plain values: the
 //! system view with the outputs of its triggers and its privileged copies,
 //! `/etc`, the services, the accounts and the initramfs with its boot
-//! record.
+//! record. [`install_boot`] copies the kernels and initramfs files of every
+//! generation to the EFI system partition and renders the boot menu.
 //!
 //! The configuration reaches this crate as plain values ([`EtcConfig`]).
 //! [`declare`] resolves the configured accounts into [`Declared`] accounts
@@ -34,6 +35,7 @@ mod assemble;
 mod boot;
 mod config;
 mod error;
+mod esp;
 mod etc;
 mod fault;
 mod format;
@@ -52,13 +54,14 @@ pub use accounts::{
     AccountsReport, Allocations, Declared, DeclaredGroup, DeclaredUser, Password, apply_accounts,
     declare,
 };
-pub use assemble::{Assembled, Assembly, assemble};
+pub use assemble::{Assembled, Assembly, assemble, recover};
 pub use boot::{BootActivation, activate_boot};
 pub use config::{
     Boot, BootConfig, EtcConfig, File, Fs, Group, Initrd, Kernel, Luks, Microcode, Privileged,
     Security, User, Users,
 };
 pub use error::{ConfigError, Conflict, ConflictKind, Error, Result, Warning};
+pub use esp::{BootInstall, check_esp, install_boot};
 pub use etc::{EtcReport, OnConflict, check_etc, reconcile_etc, reset_etc};
 pub use initramfs::{BootRecord, Host};
 pub use privileged::{PRIVILEGED_FILE, PrivilegedFile, PrivilegedRecord, ViewPrivileges};
