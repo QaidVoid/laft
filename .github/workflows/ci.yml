@@ -37,3 +37,18 @@ jobs:
       - name: Check for git dependencies
         run: |
           ! grep -q 'source = "git+' Cargo.lock
+      - name: Install the musl C compiler
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build static binaries
+        run: cargo build --workspace --release --target x86_64-unknown-linux-musl
+      - name: Check that every binary is static
+        run: |
+          count=0
+          for bin in $(find target/x86_64-unknown-linux-musl/release -maxdepth 1 -type f -perm -u+x); do
+            count=$((count + 1))
+            if readelf -lW "$bin" | grep -q INTERP || readelf -dW "$bin" | grep -q NEEDED; then
+              echo "$bin is not a static executable"
+              exit 1
+            fi
+          done
+          test "$count" -gt 0
