@@ -287,23 +287,33 @@ struct Archive<R> {
 }
 
 impl<R: Read> Archive<R> {
-    fn block(&mut self) -> Result<[u8; tar::BLOCK], Error> {
-        let mut block = [0; tar::BLOCK];
-        self.stream.read_exact(&mut block).map_err(|e| {
+    /// Fills `buf`, reporting an early end of the archive as `truncated` and
+    /// passing every other read or decompression error through.
+    fn read_exact(&mut self, buf: &mut [u8], truncated: &str) -> Result<(), Error> {
+        self.stream.read_exact(buf).map_err(|e| {
             if e.kind() == io::ErrorKind::UnexpectedEof {
-                Error::invalid("the archive ends without the end-of-archive marker")
+                Error::invalid(truncated)
             } else {
                 Error::from(e)
             }
-        })?;
+        })
+    }
+
+    fn block(&mut self) -> Result<[u8; tar::BLOCK], Error> {
+        let mut block = [0; tar::BLOCK];
+        self.read_exact(
+            &mut block,
+            "the archive ends without the end-of-archive marker",
+        )?;
         Ok(block)
     }
 
     fn skip_padding(&mut self, size: u64) -> Result<(), Error> {
         let mut padding = [0; tar::BLOCK];
-        self.stream
-            .read_exact(&mut padding[..tar::padding(size)])
-            .map_err(|_| Error::invalid("the archive ends inside the padding of a member"))
+        self.read_exact(
+            &mut padding[..tar::padding(size)],
+            "the archive ends inside the padding of a member",
+        )
     }
 
     /// Reads the next member header, applying a pax extended header if one
@@ -324,9 +334,7 @@ impl<R: Read> Archive<R> {
                 return Err(Error::invalid("a pax extended header is too large"));
             }
             let mut data = vec![0; header.size as usize];
-            self.stream
-                .read_exact(&mut data)
-                .map_err(|_| Error::invalid("the archive ends inside a pax extended header"))?;
+            self.read_exact(&mut data, "the archive ends inside a pax extended header")?;
             self.skip_padding(header.size)?;
             let pax = tar::parse_pax(&data).map_err(Error::invalid)?;
             let block = self.block()?;
@@ -367,9 +375,7 @@ impl<R: Read> Archive<R> {
             )));
         }
         let mut bytes = vec![0; header.size as usize];
-        self.stream
-            .read_exact(&mut bytes)
-            .map_err(|_| Error::invalid(format!("the archive ends inside `{path}`")))?;
+        self.read_exact(&mut bytes, &format!("the archive ends inside `{path}`"))?;
         self.skip_padding(header.size)?;
         Ok(bytes)
     }

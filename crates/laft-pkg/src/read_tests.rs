@@ -243,6 +243,34 @@ fn extended_attributes_are_rejected() {
     );
 }
 
+/// Yields `data`, then fails every read.
+struct FailsAfter<'a>(&'a [u8]);
+
+impl Read for FailsAfter<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.0.is_empty() {
+            return Err(io::Error::other("the disk failed"));
+        }
+        self.0.read(buf)
+    }
+}
+
+#[test]
+fn read_errors_are_reported_rather_than_truncation() {
+    let (_, bytes, _) = sample();
+    for len in 0..bytes.len() {
+        let result = Reader::new(FailsAfter(&bytes[..len])).and_then(|reader| {
+            let out = tempfile::tempdir().expect("temporary directory");
+            reader.unpack(out.path())
+        });
+        let err = result.expect_err("the input fails before the end");
+        assert!(
+            matches!(err.kind(), ErrorKind::Io(e) if e.to_string() == "the disk failed"),
+            "failing after {len} bytes: {err}"
+        );
+    }
+}
+
 #[test]
 fn unpacking_needs_an_empty_directory() {
     let (_, bytes, _) = sample();
