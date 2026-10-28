@@ -45,12 +45,14 @@ These properties define Laft. A change that breaks one is a bug, even when every
 - `semver_check` is on. A breaking change to an API that has been released must be marked as breaking in its commit message. A change to an API that no release has shipped yet is not breaking, so do not mark it.
 - On-disk and on-wire formats (package files, manifests, indexes, generation records, state files) are versioned. Changing one requires a new format version and a reader for the old one, and the commit is marked as breaking.
 - Crates that are not meant for crates.io set `publish = false`, and release-plz skips them.
-- When a new publishable crate is added, add it to `changelog_include` of the `laft` package in `.release-plz.toml`.
+- When a new publishable crate is added, add it to `changelog_include` of the package that owns the shared changelog in `.release-plz.toml` (the `[[package]]` entry with `changelog_path`).
 
 ## Dependencies
 
 - Only crates.io dependencies. No git dependencies, no path dependencies outside this workspace, and no `[patch]` sections. This holds for transitive dependencies too.
-- Add, remove and change dependencies only with `cargo add` and `cargo remove`. Never hand-edit dependency tables in a manifest. Use `cargo add --no-default-features --features ...` to keep the feature set minimal.
+- Declare every dependency once, in `[workspace.dependencies]` of the root `Cargo.toml`, with its version and the smallest feature set that every user of it needs. Use `default-features = false` when the defaults are not needed. This covers dev-dependencies and the workspace's own crates too, which are listed with both `path` and `version`. The fuzz crate is outside the workspace and declares its own.
+- Crates inherit dependencies with `name.workspace = true` and add only the extra features they need with `features = [...]`. Crate manifests never carry their own versions.
+- To add a dependency, add its entry to `[workspace.dependencies]` (cargo has no command for that table), then run `cargo add -p <crate> <name>` (with `--dev` for dev-dependencies), which writes the inheriting entry. To upgrade, change the version once in the root table and run `cargo update -p <name>`. To remove one, run `cargo remove -p <crate> <name>` and delete the root entry once no crate uses it.
 - Every dependency must build for `x86_64-unknown-linux-musl` without system libraries, because every binary is static. Prefer pure Rust implementations.
 - Keep the dependency trees of `laft-enter` and `laft-boot` as small as possible. Every crate in them runs as root before anything else can protect the system.
 - Vet every dependency before adding it, and state the result in the commit body. Check that it:

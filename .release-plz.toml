@@ -21,7 +21,7 @@ git_release_body = """
 name = "laft-core"
 git_tag_name = "v{{ version }}"
 git_release_enable = true
-changelog_include = []
+changelog_include = ["laft-pkg"]
 changelog_path = "./CHANGELOG.md"
 
 [changelog]

@@ -11,12 +11,12 @@ version.workspace = true
 workspace = true
 
 [dependencies]
-blake3 = { version = "1.8.7", default-features = false, features = ["std"] }
-laft-core = { version = "0.1.0", path = "../laft-core" }
-serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
-serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
-zstd = { version = "0.14.3", default-features = false }
+blake3.workspace = true
+laft-core.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
-proptest = "1.12.0"
-tempfile = "3.27.0"
+proptest.workspace = true
+tempfile.workspace = true
