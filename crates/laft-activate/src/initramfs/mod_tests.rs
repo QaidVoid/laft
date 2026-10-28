@@ -65,13 +65,13 @@ fn file_system_and_luks_drivers_the_kernel_lacks_fail_the_build() {
         config
     };
     let host = Host::default();
-    let (names, _) = requested(&with_root("ext4"), &host, &index, "6.1").unwrap();
+    let (names, _) = requested(&with_root("ext4"), &host, &index, "6.1", &mut Vec::new()).unwrap();
     assert!(
         names.contains("ext4") && names.contains("vfat"),
         "{names:?}"
     );
 
-    let err = requested(&with_root("btrfs"), &host, &index, "6.1").unwrap_err();
+    let err = requested(&with_root("btrfs"), &host, &index, "6.1", &mut Vec::new()).unwrap_err();
     assert!(err.to_string().contains("no module btrfs"), "{err}");
 
     let mut luks = with_root("ext4");
@@ -82,6 +82,36 @@ fn file_system_and_luks_drivers_the_kernel_lacks_fail_the_build() {
             options: BTreeSet::new(),
         },
     );
-    let err = requested(&luks, &host, &index, "6.1").unwrap_err();
+    let err = requested(&luks, &host, &index, "6.1", &mut Vec::new()).unwrap_err();
     assert!(err.to_string().contains("no module dm_crypt"), "{err}");
+}
+
+#[test]
+fn a_host_only_initramfs_without_host_modules_takes_the_generic_drivers() {
+    let index = ModuleIndex::parse(
+        "kernel/drivers/nvme/host/nvme.ko.zst:\nkernel/sound/snd.ko.zst:\n",
+        "",
+        "",
+        "",
+    )
+    .unwrap();
+    let config = BootConfig::default();
+    assert!(config.boot.initrd.hostonly);
+
+    let mut warnings = Vec::new();
+    let (_, dirs) = requested(&config, &Host::default(), &index, "6.1", &mut warnings).unwrap();
+    assert_eq!(dirs, modules::GENERIC_DIRS);
+    assert_eq!(warnings, [Warning::NoHostModules]);
+
+    let host = Host {
+        modules: BTreeSet::from(["nvme".to_owned()]),
+        ..Host::default()
+    };
+    let mut warnings = Vec::new();
+    let (names, dirs) = requested(&config, &host, &index, "6.1", &mut warnings).unwrap();
+    assert!(
+        dirs.is_empty() && names.contains("nvme"),
+        "{dirs:?} {names:?}"
+    );
+    assert!(warnings.is_empty());
 }

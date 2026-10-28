@@ -17,7 +17,7 @@ use laft_store::{Generation, Store};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{BootConfig, Fs, Microcode};
-use crate::error::{Error, Result, corrupt, io};
+use crate::error::{Error, Result, Warning, corrupt, io};
 use crate::{fsx, tree};
 
 mod cpio;
@@ -190,8 +190,9 @@ pub(crate) struct Inputs<'a> {
 }
 
 /// Builds the initramfs into `boot/initramfs` of the tree and writes
-/// `boot/boot.json`, and returns the boot record.
-pub(crate) fn build(inputs: &Inputs<'_>) -> Result<BootRecord> {
+/// `boot/boot.json`, and returns the boot record. What the user should know
+/// about the module selection goes to `warnings`.
+pub(crate) fn build(inputs: &Inputs<'_>, warnings: &mut Vec<Warning>) -> Result<BootRecord> {
     let boot = &inputs.config.boot;
     for word in &boot.cmdline {
         if word.is_empty() || word.contains(char::is_whitespace) {
@@ -204,7 +205,7 @@ pub(crate) fn build(inputs: &Inputs<'_>) -> Result<BootRecord> {
     let release_dir = format!("usr/lib/modules/{release}");
     let index = read_index(inputs.tree, &release_dir)?;
 
-    let (names, dirs) = requested(inputs.config, inputs.host, &index, &release)?;
+    let (names, dirs) = requested(inputs.config, inputs.host, &index, &release, warnings)?;
     let order = index.select(&names, &dirs);
     let mut main = Archive::default();
     for dir in ["dev", "proc", "sys", "run", "newroot"] {
@@ -433,11 +434,14 @@ fn read_index(tree: &Path, release_dir: &str) -> Result<ModuleIndex> {
 /// mounts and the device mapper modules for LUKS are required. Without them
 /// the system cannot boot, so each must be a module or built into the
 /// kernel. Keyboard and host modules are wanted when the kernel has them.
+/// A host only initramfs for a host whose boot device drivers are unknown
+/// gets the generic drivers instead, with a warning.
 fn requested<'a>(
     config: &BootConfig,
     host: &Host,
     index: &ModuleIndex,
     release: &str,
+    warnings: &mut Vec<Warning>,
 ) -> Result<(BTreeSet<String>, Vec<&'a str>)> {
     let initrd = &config.boot.initrd;
     let mut required = Vec::new();
@@ -479,7 +483,10 @@ fn requested<'a>(
         names.insert(name);
     }
     names.extend(KEYBOARD.map(String::from));
-    if initrd.hostonly {
+    if initrd.hostonly && host.modules.is_empty() {
+        warnings.push(Warning::NoHostModules);
+        dirs.extend(GENERIC_DIRS);
+    } else if initrd.hostonly {
         names.extend(host.modules.iter().map(|m| normalize(m)));
     } else {
         dirs.extend(GENERIC_DIRS);

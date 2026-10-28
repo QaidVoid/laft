@@ -215,14 +215,17 @@ pub fn assemble(
     )?;
     fault::point("assemble.privileged")?;
 
-    let boot = initramfs::build(&initramfs::Inputs {
-        tree: &dir,
-        store: &store,
-        generation: staged.record(),
-        config: assembly.boot,
-        host: assembly.host,
-        previous: previous.as_deref(),
-    })?;
+    let boot = initramfs::build(
+        &initramfs::Inputs {
+            tree: &dir,
+            store: &store,
+            generation: staged.record(),
+            config: assembly.boot,
+            host: assembly.host,
+            previous: previous.as_deref(),
+        },
+        &mut warnings,
+    )?;
     fault::point("assemble.boot")?;
 
     let generation = tx.publish_generation(staged)?;
