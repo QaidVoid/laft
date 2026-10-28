@@ -29,9 +29,11 @@ impl DeviceSpec {
     /// # Errors
     ///
     /// Fails for anything but `UUID=<uuid>`, `/dev/<name>` and
-    /// `/dev/mapper/<name>` with a single path component as the name.
+    /// `/dev/mapper/<name>` with a single path component other than `.` and
+    /// `..` as the name.
     pub(crate) fn parse(text: &str) -> Result<Self, String> {
-        let single = |name: &str| !name.is_empty() && !name.contains('/') && name != "..";
+        let single =
+            |name: &str| !name.is_empty() && !name.contains('/') && name != "." && name != "..";
         if let Some(uuid) = text.strip_prefix("UUID=") {
             if !uuid.is_empty() && uuid.bytes().all(|b| b.is_ascii_graphic()) {
                 return Ok(Self::Uuid(uuid.to_owned()));

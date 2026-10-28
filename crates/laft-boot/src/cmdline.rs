@@ -75,27 +75,67 @@ impl Cmdline {
     }
 }
 
-/// Splits a command line on whitespace outside double quotes and drops the
-/// quotes, the way the kernel reads its parameters.
+/// Splits a command line into parameters the way the kernel does.
+///
+/// Parameters are separated by ASCII whitespace outside double quotes, and
+/// every double quote switches quoting on or off. Of the quotes, only these
+/// are then removed: one that starts the parameter, one that starts its
+/// value right after the first `=` that is not the first character, and
+/// one that ends the parameter when either of those was removed. Every
+/// other quote stays part of the parameter.
 fn split(text: &str) -> Vec<String> {
     let mut params = Vec::new();
     let mut current = String::new();
     let mut quoted = false;
     for c in text.chars() {
-        match c {
-            '"' => quoted = !quoted,
-            c if c.is_ascii_whitespace() && !quoted => {
-                if !current.is_empty() {
-                    params.push(std::mem::take(&mut current));
-                }
+        if is_space(c) && !quoted {
+            if !current.is_empty() {
+                params.push(unquote(&std::mem::take(&mut current)));
             }
-            c => current.push(c),
+            continue;
         }
+        if c == '"' {
+            quoted = !quoted;
+        }
+        current.push(c);
     }
     if !current.is_empty() {
-        params.push(current);
+        params.push(unquote(&current));
     }
     params
+}
+
+/// Whitespace as the kernel's `isspace` sees it among ASCII characters.
+fn is_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
+}
+
+/// Removes the quotes of one parameter that the kernel removes.
+fn unquote(raw: &str) -> String {
+    let (body, quoted) = match raw.strip_prefix('"') {
+        Some(body) => (body, true),
+        None => (raw, false),
+    };
+    let equals = body.char_indices().skip(1).find(|&(_, c)| c == '=');
+    let mut end = body.len();
+    let mut value = None;
+    if let Some((at, _)) = equals {
+        let mut start = at + 1;
+        if body[start..].starts_with('"') {
+            start += 1;
+            if body.ends_with('"') {
+                end -= 1;
+            }
+        }
+        value = Some((at, start));
+    }
+    if quoted && end == body.len() && body.ends_with('"') {
+        end -= 1;
+    }
+    match value {
+        Some((at, start)) => format!("{}={}", &body[..at], &body[start.min(end)..end]),
+        None => body[..end].to_owned(),
+    }
 }
 
 /// A decimal number made of digits only.

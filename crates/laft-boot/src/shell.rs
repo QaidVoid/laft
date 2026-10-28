@@ -23,15 +23,15 @@ const BUSYBOX: &str = "/bin/busybox";
 pub(crate) fn emergency(log: &mut Log, message: &str, allowed: bool) {
     log.record_error(message);
     console(message);
-    console(
-        "emergency shell. Boot log: /run/laft/boot.log\n\
-         type \"exit\" to retry the failed step, or \"reboot -f\" to reboot.",
-    );
     if !allowed || !Path::new(BUSYBOX).exists() {
         console("no emergency shell available; rebooting in 30 seconds");
         thread::sleep(Duration::from_secs(30));
         reboot();
     }
+    console(
+        "emergency shell. Boot log: /run/laft/boot.log\n\
+         type \"exit\" to retry the failed step, or \"reboot -f\" to reboot.",
+    );
     // The shell needs its own session for `cttyhack` to give it the console
     // as controlling terminal, so that Ctrl-C works.
     let shell = Command::new(BUSYBOX)

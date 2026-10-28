@@ -46,7 +46,10 @@ fn other_device_forms_are_rejected() {
         "/dev/disk/by-id/nvme-x",
         "/dev/",
         "/dev/..",
+        "/dev/.",
         "/dev/mapper/",
+        "/dev/mapper/.",
+        "/dev/mapper/..",
         "UUID=",
         "sda1",
     ] {

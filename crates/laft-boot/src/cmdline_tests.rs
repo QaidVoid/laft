@@ -60,3 +60,13 @@ fn a_bad_value_keeps_an_earlier_good_one() {
     assert_eq!(cmdline.generation, Some(42));
     assert_eq!(cmdline.warnings.len(), 1);
 }
+
+#[test]
+fn only_quotes_around_a_parameter_or_its_value_are_removed() {
+    let cmdline = Cmdline::parse(r#""laft.init=/usr/bin/my init" laft.rootwait="9""#);
+    assert_eq!(cmdline.init.as_deref(), Some("/usr/bin/my init"));
+    assert_eq!(cmdline.rootwait, Some(9));
+    let cmdline = Cmdline::parse(r#"laft.init=/usr/bin/a"b c"d laft.gen=4"2""#);
+    assert_eq!(cmdline.init.as_deref(), Some(r#"/usr/bin/a"b c"d"#));
+    assert_eq!(cmdline.generation, None);
+}

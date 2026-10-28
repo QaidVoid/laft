@@ -23,7 +23,8 @@ tested here:
 - A LUKS2 root boots after the passphrase is typed on the console. Two
   wrong passphrases followed by the right one boot, and three wrong ones
   drop to the emergency shell.
-- UUID probing matches blkid for images made by each mkfs tool.
+- For images made by each mkfs tool, UUID probing finds the UUID that the
+  filesystem's own tools report.
 - With the root disk detached, the shell appears after root_wait seconds
   and lists the block devices seen.
 - A generation whose init fails is booted the configured number of times,
@@ -42,8 +43,9 @@ tested here:
 
 Each test builds a disk image in a temporary directory, writes the ESP and
 the root from a Laft generation, boots it with QEMU and OVMF, and drives
-the serial console with expect-style scripts. The result is read from the
-console and from the image after shutdown.
+the serial console with scripts that wait for its output and type the
+replies. The result is read from the console and from the image after
+shutdown.
 
 laft-enter
 
