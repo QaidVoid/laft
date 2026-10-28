@@ -486,6 +486,41 @@ fn additional_root_key_signs_keys_json_while_the_root_is_replaced() {
 }
 
 #[test]
+fn rotating_to_the_additional_root_key_keeps_rollback_protection() {
+    let mut client = Client::new();
+    let next_root = TestKey::generate();
+    client.repo.keys.push(next_root.public.clone());
+    let accept = |client: &Client, signed: &Signed| {
+        client.state.accept_keys(
+            &client.repo,
+            KeysFetch::Found {
+                json: &signed.bytes,
+                signature: &signed.signature,
+            },
+        )
+    };
+    let v1 = next_root.sign_keys(&client.keys_v1());
+    let v2 = next_root.sign_keys(&keys(2, vec![client.online.online()], vec![]));
+    accept(&client, &v2).expect("signed by the additional root key");
+
+    client.repo = repo(&next_root);
+    assert_kind(accept(&client, &v1), |k| {
+        matches!(
+            k,
+            ErrorKind::KeysRollback {
+                version: 1,
+                accepted: 2
+            }
+        )
+    });
+    assert_kind(
+        client.state.accept_keys(&client.repo, KeysFetch::NotFound),
+        |k| matches!(k, ErrorKind::KeysMissing),
+    );
+    accept(&client, &v2).expect("the accepted keys.json again");
+}
+
+#[test]
 fn generation_floor_recovers_a_client_frozen_by_a_leaked_key() {
     let client = Client::new();
     let trust = client.accept_keys(&client.keys_v1()).expect("keys.json");

@@ -114,9 +114,10 @@ pub struct KeysRecord {
     pub version: u64,
     /// The BLAKE3 hash of the accepted file.
     pub blake3: Blake3Hash,
-    /// The configured root key at the time. A record made under another
-    /// root key is discarded, which is the only way it is ever cleared
-    /// apart from a reset.
+    /// The root key that verified the accepted file. The record holds while
+    /// that key is a configured root key, as the main key or an additional
+    /// one. A record whose root key is no longer configured is discarded,
+    /// which is the only way it is ever cleared apart from a reset.
     pub root: KeyId,
 }
 
@@ -206,8 +207,8 @@ impl IndexState {
     /// may be signed with.
     ///
     /// A missing `keys.json` means direct mode, where indexes are signed
-    /// with a root key, unless one was accepted before under the same root
-    /// key. A `keys.json` must be signed by a root key, name the repository
+    /// with a root key, unless one was accepted before and verified by a
+    /// root key that is still configured. A `keys.json` must be signed by a root key, name the repository
     /// in its trusted comment and content, and have a version no lower than
     /// the accepted one, with identical bytes for an equal version.
     ///
@@ -235,7 +236,9 @@ impl IndexState {
         };
         let path = self.keys_path(&repo.name);
         let recorded = self.keys_record(&repo.name)?;
-        let stored = recorded.as_ref().filter(|r| r.root == repo.key.id());
+        let stored = recorded
+            .as_ref()
+            .filter(|r| repo.roots().any(|k| k.id() == r.root));
         let (json, signature) = match fetch {
             KeysFetch::NotFound if stored.is_some() => return Err(ErrorKind::KeysMissing.into()),
             KeysFetch::NotFound => {
@@ -307,7 +310,7 @@ impl IndexState {
             format: FORMAT,
             version: keys.version,
             blake3,
-            root: repo.key.id(),
+            root: signer,
         };
         self.write_record(&path, &record)?;
         trust.keys = Some(keys);
