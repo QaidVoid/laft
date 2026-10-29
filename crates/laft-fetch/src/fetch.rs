@@ -167,7 +167,7 @@ impl Fetcher {
             return Err(Error::new(url, ErrorKind::Offline));
         }
         self.retrying(|| {
-            let response = self.get(base, &url, 0)?;
+            let response = self.get(base.scheme(), &url, 0)?;
             match response.status() {
                 StatusCode::OK => {}
                 status => return Err(status_error(&url, status)),
@@ -245,7 +245,7 @@ impl Fetcher {
                     ErrorKind::NotCached { path: dest.clone() },
                 ))
             } else {
-                self.download(base, &url, &dest, &expected, progress)
+                self.download_package_file(base, &url, &dest, &expected, progress)
                     .map(|()| dest.clone())
             };
             match result {
@@ -258,7 +258,7 @@ impl Fetcher {
 
     /// Downloads `url` to `dest` through its partial file, retrying and
     /// resuming after transient failures.
-    fn download(
+    fn download_package_file(
         &self,
         base: &BaseUrl,
         url: &str,
@@ -349,7 +349,7 @@ impl Fetcher {
                 Blake3Hash::from_bytes(*hasher.finalize().as_bytes()),
             ));
         }
-        let response = self.get(base, url, offset)?;
+        let response = self.get(base.scheme(), url, offset)?;
         match response.status() {
             StatusCode::OK if offset > 0 => {
                 truncate(&mut file, part, &mut hasher)?;
@@ -393,6 +393,75 @@ impl Fetcher {
         Ok((size?, Blake3Hash::from_bytes(*hasher.finalize().as_bytes())))
     }
 
+    /// Downloads the whole file at `url` to `dest`, replacing what `dest`
+    /// held, and returns its size.
+    ///
+    /// `url` is an `https://` URL, an `http://` URL when `allow_http` is
+    /// set, or a `file://` URL naming an absolute path, which is copied.
+    /// Unlike repository files, the URL may carry a query, and nothing is
+    /// known about the file in advance, so its size is not limited and the
+    /// caller verifies what arrives. Transient failures are retried, each
+    /// time from the start. The file is synced before this returns, but
+    /// not renamed, so the caller decides where it is published.
+    ///
+    /// # Errors
+    ///
+    /// Fails with [`ErrorKind::UnsupportedScheme`],
+    /// [`ErrorKind::HttpNotAllowed`] or [`ErrorKind::InvalidUrl`] for a URL
+    /// it does not accept, with [`ErrorKind::Offline`] for a network URL in
+    /// offline mode, with [`ErrorKind::NotFound`] when the file does not
+    /// exist, and otherwise with the error of the last attempt. Every error
+    /// names the URL.
+    pub fn download(
+        &self,
+        url: &str,
+        allow_http: bool,
+        dest: &Path,
+        progress: &mut dyn FnMut(Progress),
+    ) -> Result<u64, Error> {
+        let scheme = download_scheme(url, allow_http)?;
+        if let Some(path) = url.strip_prefix("file://") {
+            let mut from = open(Path::new(path), url)?;
+            let total = from.metadata().ok().map(|m| m.len());
+            let mut file = create(dest)?;
+            let size = pump(
+                &mut from,
+                url,
+                io(Path::new(path)),
+                u64::MAX,
+                Progress { done: 0, total },
+                progress,
+                |chunk| file.write_all(chunk).map_err(io(dest)),
+            )?;
+            file.sync_all().map_err(io(dest))?;
+            return Ok(size);
+        }
+        if self.config.offline {
+            return Err(Error::new(url, ErrorKind::Offline));
+        }
+        self.retrying(|| {
+            let response = self.get(scheme, url, 0)?;
+            match response.status() {
+                StatusCode::OK => {}
+                status => return Err(status_error(url, status)),
+            }
+            let total = content_length(&response);
+            let mut file = create(dest)?;
+            let mut reader = response.into_body().into_reader();
+            let size = pump(
+                &mut reader,
+                url,
+                net(url),
+                u64::MAX,
+                Progress { done: 0, total },
+                progress,
+                |chunk| file.write_all(chunk).map_err(io(dest)),
+            )?;
+            file.sync_all().map_err(io(dest))?;
+            Ok(size)
+        })
+    }
+
     /// Calls `attempt` until it succeeds, fails for a reason that a repeat
     /// cannot fix, or the retries are used up.
     fn retrying<T>(&self, mut attempt: impl FnMut() -> Result<T, Error>) -> Result<T, Error> {
@@ -411,8 +480,8 @@ impl Fetcher {
 
     /// Sends a GET request for `url`, asking for the bytes from `offset` on
     /// when it is not zero.
-    fn get(&self, base: &BaseUrl, url: &str, offset: u64) -> Result<Response<ureq::Body>, Error> {
-        let agent = match base.scheme() {
+    fn get(&self, scheme: Scheme, url: &str, offset: u64) -> Result<Response<ureq::Body>, Error> {
+        let agent = match scheme {
             Scheme::Http => &self.http,
             _ => &self.https,
         };
@@ -511,6 +580,51 @@ pub(crate) fn read_file(
         },
     )?;
     Ok(bytes)
+}
+
+/// The scheme of a URL that [`Fetcher::download`] accepts.
+fn download_scheme(url: &str, allow_http: bool) -> Result<Scheme, Error> {
+    let invalid = |reason: &str| {
+        Error::new(
+            url,
+            ErrorKind::InvalidUrl {
+                reason: reason.into(),
+            },
+        )
+    };
+    if let Some(path) = url.strip_prefix("file://") {
+        return if path.starts_with('/') {
+            Ok(Scheme::File)
+        } else {
+            Err(invalid("a file:// URL names an absolute path"))
+        };
+    }
+    let scheme = if url.starts_with("https://") {
+        Scheme::Https
+    } else if url.starts_with("http://") {
+        if !allow_http {
+            return Err(Error::new(url, ErrorKind::HttpNotAllowed));
+        }
+        Scheme::Http
+    } else {
+        return Err(Error::new(url, ErrorKind::UnsupportedScheme));
+    };
+    match ureq::http::Uri::try_from(url) {
+        Ok(uri) if uri.host().is_some_and(|h| !h.is_empty()) => Ok(scheme),
+        Ok(_) => Err(invalid("the host is missing")),
+        Err(e) => Err(invalid(&e.to_string())),
+    }
+}
+
+/// Creates or empties the file `path`.
+fn create(path: &Path) -> Result<File, Error> {
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(FILE_MODE)
+        .open(path)
+        .map_err(io(path))
 }
 
 fn open(path: &Path, url: &str) -> Result<File, Error> {

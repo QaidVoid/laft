@@ -534,3 +534,74 @@ fn a_transfer_cut_off_mid_body_is_retried() {
     assert_eq!(fetched.expect("the second attempt succeeds"), keys);
     assert_eq!(server.requests("keys.json").len(), 2);
 }
+
+#[test]
+fn downloads_replace_the_destination_and_start_over_after_a_failure() {
+    let server = Server::start();
+    let content = bytes(100_000, 3);
+    server.put("src/foo-1.0.tar.gz", &content);
+    server.fault("src/foo-1.0.tar.gz", Fault::Truncate(1000));
+    let dir = laft_test::tempdir();
+    let dest = dir.path().join("download");
+    std::fs::write(&dest, b"an older, longer file that is replaced").expect("writable");
+    let fetcher = Fetcher::new(config(dir.path()));
+    let url = format!("{}/src/foo-1.0.tar.gz", server.url());
+    let size = fetcher
+        .download(&url, true, &dest, &mut quiet())
+        .expect("the second attempt succeeds");
+    assert_eq!(size, content.len() as u64);
+    assert_eq!(std::fs::read(&dest).expect("downloaded"), content);
+    let ranges: Vec<_> = server
+        .requests("src/foo-1.0.tar.gz")
+        .into_iter()
+        .map(|r| r.range)
+        .collect();
+    assert_eq!(ranges, [None, None]);
+}
+
+#[test]
+fn downloads_copy_local_files_and_refuse_urls_they_cannot_use() {
+    let dir = laft_test::tempdir();
+    let source = dir.path().join("foo.tar.gz");
+    std::fs::write(&source, b"archive").expect("writable");
+    let dest = dir.path().join("download");
+    let fetcher = Fetcher::new(config(dir.path()));
+    let url = format!("file://{}", source.display());
+    assert_eq!(
+        fetcher.download(&url, false, &dest, &mut quiet()).ok(),
+        Some(7)
+    );
+    assert_eq!(std::fs::read(&dest).expect("copied"), b"archive");
+
+    let missing = format!("file://{}/none.tar.gz", dir.path().display());
+    let refused = [
+        ("ftp://ftp.example.org/foo.tar.gz", "UnsupportedScheme"),
+        ("http://example.org/foo.tar.gz", "HttpNotAllowed"),
+        ("file://relative/foo.tar.gz", "InvalidUrl"),
+        ("https:///foo.tar.gz", "InvalidUrl"),
+        (missing.as_str(), "NotFound"),
+    ];
+    for (url, kind) in refused {
+        let error = fetcher
+            .download(url, false, &dest, &mut quiet())
+            .expect_err(url);
+        assert!(
+            format!("{:?}", error.kind()).starts_with(kind),
+            "{url}: {error}"
+        );
+        assert_eq!(error.url(), Some(url));
+    }
+
+    let offline = Fetcher::new(Config {
+        offline: true,
+        ..config(dir.path())
+    });
+    let error = offline
+        .download("https://example.org/foo.tar.gz", false, &dest, &mut quiet())
+        .expect_err("offline");
+    assert!(matches!(error.kind(), ErrorKind::Offline));
+    assert_eq!(
+        offline.download(&url, false, &dest, &mut quiet()).ok(),
+        Some(7)
+    );
+}

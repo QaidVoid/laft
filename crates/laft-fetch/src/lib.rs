@@ -9,7 +9,9 @@
 //! signed documents into memory with a size limit per [`ObjectKind`].
 //! [`Fetcher::download_package`] makes a package available as a local file
 //! whose size and BLAKE3 hash match its index entry, resuming interrupted
-//! downloads and failing over between mirrors. [`Fetcher::sync`] syncs one
+//! downloads and failing over between mirrors. [`Fetcher::download`]
+//! copies any single file, such as an upstream source archive that the
+//! caller verifies itself. [`Fetcher::sync`] syncs one
 //! repository channel: it downloads `keys.json` and the index, hands them
 //! to `laft-index` for every trust decision, and falls back to the cached
 //! index when no URL works.
