@@ -34,6 +34,15 @@ pub(crate) fn emit(ui: &Ui, report: &Diagnostics) {
     }
 }
 
+/// Writes diagnostics about one source text that stands alone, such as the
+/// syntax errors of a file being formatted.
+pub(crate) fn emit_source(ui: &Ui, name: &str, text: &str, diagnostics: &[Diagnostic]) {
+    let sources = Sources(BTreeMap::from([(0, SimpleFile::new(name, text))]));
+    for diagnostic in diagnostics {
+        emit_one(ui, &sources, Some(0), diagnostic);
+    }
+}
+
 fn emit_one(ui: &Ui, sources: &Sources<'_>, file: Option<usize>, diagnostic: &Diagnostic) {
     let file = file.filter(|file| sources.0.contains_key(file));
     match ui.message_format {

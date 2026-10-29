@@ -262,3 +262,251 @@ fn freed_bytes(env: &Env, plan: &laft_store::GcPlan) -> u64 {
         })
         .sum()
 }
+
+/// The leaves of a JSON value by dotted path.
+fn flatten(value: &Value, prefix: &str, out: &mut std::collections::BTreeMap<String, Value>) {
+    match value {
+        Value::Object(map) => {
+            for (key, inner) in map {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                flatten(inner, &path, out);
+            }
+        }
+        other => {
+            out.insert(prefix.to_owned(), other.clone());
+        }
+    }
+}
+
+/// The `/etc` paths two generations manage that were added, removed or
+/// changed in content, relative to `/etc`.
+fn etc_changes(
+    env: &Env,
+    a: &Generation,
+    b: &Generation,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let paths = |g: &Generation| -> BTreeSet<String> {
+        g.etc.managed.iter().chain(&g.etc.copy).cloned().collect()
+    };
+    let (old, new) = (paths(a), paths(b));
+    let read = |g: &Generation, p: &str| {
+        let path = gen_dir(env, g.generation).join("etc").join(p);
+        std::fs::read_link(&path)
+            .map(|t| t.into_os_string().into_encoded_bytes())
+            .or_else(|_| std::fs::read(&path))
+            .ok()
+    };
+    let added = new.difference(&old).cloned().collect();
+    let removed = old.difference(&new).cloned().collect();
+    let changed = old
+        .intersection(&new)
+        .filter(|p| read(a, p) != read(b, p))
+        .cloned()
+        .collect();
+    (added, removed, changed)
+}
+
+/// `laft gens diff`.
+pub(crate) fn diff(env: &Env, a: u64, b: Option<u64>, etc_diffs: bool) -> Result<u8, Failure> {
+    let b = match b {
+        Some(b) => b,
+        None => env
+            .active()?
+            .ok_or_else(|| Failure::general("no generation is active"))?,
+    };
+    let (old, new) = (env.generation(a)?, env.generation(b)?);
+    let mut doc = serde_json::Map::new();
+    let mut out = format!("generation {a} {} {b}\n", env.ui.arrow());
+
+    let mut sections = vec![(
+        "system".to_owned(),
+        records(&old.packages),
+        records(&new.packages),
+    )];
+    sections.push((
+        "initrd".into(),
+        records(&old.initrd_packages),
+        records(&new.initrd_packages),
+    ));
+    let names: BTreeSet<&laft_core::Name> = old.views.keys().chain(new.views.keys()).collect();
+    for name in names {
+        let view = |g: &Generation| {
+            g.views
+                .get(name)
+                .and_then(|v| env.root.view(name, *v).ok())
+                .map(|m| records(&m.packages))
+                .unwrap_or_default()
+        };
+        sections.push((format!("view {name}"), view(&old), view(&new)));
+    }
+    let mut packages = serde_json::Map::new();
+    for (title, before, after) in sections {
+        let changes = crate::plan::changes(&before, &after);
+        packages.insert(title.clone(), crate::plan::changes_json(&changes));
+        if !changes.is_empty() {
+            out.push_str(&format!("  {title}\n"));
+            out.push_str(&crate::plan::render_changes(&env.ui, &changes));
+        }
+    }
+    doc.insert("packages".into(), Value::Object(packages));
+
+    let groups: BTreeSet<&laft_core::Name> = old
+        .alternatives
+        .keys()
+        .chain(new.alternatives.keys())
+        .collect();
+    let mut alternatives = Vec::new();
+    for group in groups {
+        let (x, y) = (old.alternatives.get(group), new.alternatives.get(group));
+        if x != y {
+            let show = |m: Option<&laft_core::Name>| m.map_or("-".to_owned(), ToString::to_string);
+            out.push_str(&format!(
+                "  alternative {group}: {} {} {}\n",
+                show(x),
+                env.ui.arrow(),
+                show(y)
+            ));
+            alternatives.push(json!({"group": group, "from": x, "to": y}));
+        }
+    }
+    doc.insert("alternatives".into(), json!(alternatives));
+
+    let (added, removed, changed) = etc_changes(env, &old, &new);
+    if !(added.is_empty() && removed.is_empty() && changed.is_empty()) {
+        out.push_str("  etc\n");
+        for (sym, list) in [
+            (crate::ui::Sym::Changed, &changed),
+            (crate::ui::Sym::Added, &added),
+            (crate::ui::Sym::Removed, &removed),
+        ] {
+            for path in list {
+                out.push_str(&format!("    {} {path}\n", env.ui.sym(sym)));
+            }
+        }
+    }
+    doc.insert(
+        "etc".into(),
+        json!({"added": added, "removed": removed, "changed": changed}),
+    );
+
+    let units = |g: &Generation| {
+        laft_svc::runit::load_units(&gen_dir(env, g.generation).join("services"))
+            .unwrap_or_default()
+    };
+    let classes = laft_svc::reconcile::plan(&units(&old), &units(&new)).classes;
+    let mut services = serde_json::Map::new();
+    let mut lines = String::new();
+    for (name, class) in classes {
+        use laft_svc::reconcile::Class;
+        let (sym, kind) = match class {
+            Class::Added => (crate::ui::Sym::Added, "added"),
+            Class::Removed => (crate::ui::Sym::Removed, "removed"),
+            Class::Restructured | Class::Changed(_) => (crate::ui::Sym::Changed, "changed"),
+            Class::Unchanged => continue,
+        };
+        lines.push_str(&format!("    {} {name}\n", env.ui.sym(sym)));
+        services.insert(name, json!(kind));
+    }
+    if !lines.is_empty() {
+        out.push_str("  services\n");
+        out.push_str(&lines);
+    }
+    doc.insert("services".into(), Value::Object(services));
+
+    let config = |g: &Generation| {
+        std::fs::read(gen_dir(env, g.generation).join("config.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .unwrap_or(Value::Null)
+    };
+    let (mut x, mut y) = (Default::default(), Default::default());
+    flatten(&config(&old), "", &mut x);
+    flatten(&config(&new), "", &mut y);
+    let keys: BTreeSet<&String> = x.keys().chain(y.keys()).collect();
+    let mut config_changes = Vec::new();
+    for key in keys {
+        let (from, to) = (x.get(key), y.get(key));
+        if from != to {
+            config_changes.push(json!({"path": key, "from": from, "to": to}));
+            let show = |v: Option<&Value>| v.map_or("-".to_owned(), ToString::to_string);
+            out.push_str(&format!(
+                "  config {key}: {} {} {}\n",
+                show(from),
+                env.ui.arrow(),
+                show(to)
+            ));
+        }
+    }
+    doc.insert("config".into(), json!(config_changes));
+
+    if etc_diffs {
+        let mut diffs = Vec::new();
+        for path in &changed {
+            let read = |n: u64| {
+                std::fs::read_to_string(gen_dir(env, n).join("etc").join(path)).unwrap_or_default()
+            };
+            let text = crate::diff::unified(
+                &format!("generation {a}: /etc/{path}"),
+                &format!("generation {b}: /etc/{path}"),
+                &read(a),
+                &read(b),
+            );
+            out.push_str(&text);
+            diffs.push(json!({"path": path, "diff": text}));
+        }
+        doc.insert("etc_diffs".into(), json!(diffs));
+    }
+    if env.ui.json {
+        doc.insert("from".into(), json!(a));
+        doc.insert("to".into(), json!(b));
+        env.ui.doc(Value::Object(doc));
+    } else {
+        env.ui.page(&out);
+    }
+    Ok(0)
+}
+
+fn records(
+    records: &[laft_store::PackageRecord],
+) -> std::collections::BTreeMap<laft_core::Name, crate::plan::Pkg> {
+    records
+        .iter()
+        .map(|p| (p.name.clone(), crate::plan::Pkg::of_record(p)))
+        .collect()
+}
+
+/// `laft gens rm`.
+pub(crate) fn rm(env: &Env, numbers: &[u64], no_gc: bool) -> Result<u8, Failure> {
+    env.require_write("gens rm")?;
+    env.ui.start("gens rm");
+    let lock = env.lock("gens rm")?;
+    if let Some(active) = env.active()?.filter(|a| numbers.contains(a)) {
+        return Err(Failure::new(
+            crate::failure::exit::USAGE,
+            format!("generation {active} is active and cannot be deleted"),
+        ));
+    }
+    let list: Vec<String> = numbers.iter().map(ToString::to_string).collect();
+    env.ui
+        .confirm(&format!("delete generation {}?", list.join(", ")))?;
+    laft_store::remove_generations(&lock, numbers)
+        .map_err(|e| Failure::new(crate::failure::exit::USAGE, e))?;
+    if !no_gc {
+        let policy = env
+            .load(&|_| Ok(()))
+            .map(|l| l.config.gc.policy)
+            .unwrap_or_default();
+        activate::auto_gc(env, &lock, &policy, &env.esp_dir());
+    }
+    activate::install_boot(env, &env.esp_dir())?;
+    env.ui.event(json!({"event": "result", "deleted": numbers}));
+    env.ui.note(format!(
+        "done        deleted generation {}",
+        list.join(", ")
+    ));
+    Ok(0)
+}

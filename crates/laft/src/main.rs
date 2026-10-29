@@ -36,15 +36,22 @@
 mod activate;
 mod apply;
 mod cli;
+mod diff;
 mod env;
+mod etc;
+mod explain;
 mod failure;
 mod gens;
+mod lang;
 mod live;
 mod plan;
+mod query;
+mod repo;
 mod report;
 mod resolve;
 mod tz;
 mod ui;
+mod verify;
 
 use std::collections::BTreeSet;
 use std::process::ExitCode;
@@ -52,7 +59,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use laft_resolve::Upgrade;
 
-use crate::cli::{Cli, Command, GensCommand, ViewCommand};
+use crate::cli::{Cli, Command, EtcCommand, GensCommand, RepoCommand, ViewCommand};
 use crate::env::Env;
 use crate::failure::{Failure, exit};
 
@@ -136,7 +143,39 @@ fn run(env: &Env, command: Command) -> Result<u8, Failure> {
             generation,
             packages,
         }) => gens::show(env, generation, packages),
+        Command::Gens(GensCommand::Diff { a, b, etc }) => gens::diff(env, a, b, etc),
+        Command::Gens(GensCommand::Rm { generations, no_gc }) => gens::rm(env, &generations, no_gc),
         Command::Gc(args) => gens::gc(env, &args),
+        Command::Verify(args) => verify::verify(env, &args),
+        Command::Doctor => verify::doctor(env),
+        Command::Etc(EtcCommand::Status) => etc::status(env),
+        Command::Etc(EtcCommand::Diff { paths }) => etc::diff(env, &paths),
+        Command::Etc(EtcCommand::Reset { paths }) => etc::reset(env, &paths),
+        Command::Search {
+            query,
+            repo,
+            all_versions,
+        } => query::search(env, &query, repo.as_deref(), all_versions),
+        Command::Info { pkg } => query::info(env, &pkg),
+        Command::Files { pkg, long } => query::files(env, &pkg, long),
+        Command::Owns { target, view } => query::owns(env, &target, view.as_deref()),
+        Command::Why { name, view, all } => query::why(env, &name, view.as_deref(), all),
+        Command::Repo(RepoCommand::Sync { names }) => repo::sync(env, &names),
+        Command::Repo(RepoCommand::List) => repo::list(env),
+        Command::Repo(RepoCommand::Reset { name }) => repo::reset(env, &name),
+        Command::View(ViewCommand::List) => repo::view_list(env),
+        Command::View(ViewCommand::Show { name }) => repo::view_show(env, &name),
+        Command::Fmt {
+            paths,
+            check,
+            stdin,
+        } => lang::fmt(env, &paths, check, stdin),
+        Command::Check { file, refresh } => lang::check(env, file.as_deref(), refresh),
+        Command::Eval { attr, file, output } => {
+            lang::eval(env, attr.as_deref(), file.as_deref(), output)
+        }
+        Command::Options { prefix, all } => lang::options(env, prefix.as_deref(), all),
+        Command::Explain { code } => lang::explain(env, &code),
         _ => Err(Failure::new(exit::USAGE, "not available yet")),
     }
 }

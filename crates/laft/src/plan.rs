@@ -47,7 +47,8 @@ impl Pkg {
         format!("{}-r{}", self.version, self.rev)
     }
 
-    fn of_record(p: &laft_store::PackageRecord) -> Self {
+    /// The plan package of a generation's record.
+    pub(crate) fn of_record(p: &laft_store::PackageRecord) -> Self {
         Self {
             name: p.name.clone(),
             version: p.version.clone(),
@@ -167,7 +168,8 @@ fn resolved_packages(resolution: &Resolution<'_>) -> BTreeMap<Name, Pkg> {
         .collect()
 }
 
-fn changes(old: &BTreeMap<Name, Pkg>, new: &BTreeMap<Name, Pkg>) -> Vec<Change> {
+/// How the packages `old` became `new`, by name.
+pub(crate) fn changes(old: &BTreeMap<Name, Pkg>, new: &BTreeMap<Name, Pkg>) -> Vec<Change> {
     let names: BTreeSet<&Name> = old.keys().chain(new.keys()).collect();
     let mut out = Vec::new();
     for name in names {
@@ -384,50 +386,18 @@ impl Plan<'_> {
                 let _ = writeln!(out, "generation {generation}");
             }
         }
-        let arrow = ui.arrow();
         for view in &self.views {
-            let mut rows: Vec<(String, String, String)> = Vec::new();
-            for change in &view.changes {
-                let row = match change {
-                    Change::Added(n) => (ui.sym(Sym::Added), n.reference(), n.full_version()),
-                    Change::Removed(o) => (ui.sym(Sym::Removed), o.reference(), o.full_version()),
-                    Change::Upgraded(o, n) => (
-                        ui.sym(Sym::Upgraded),
-                        n.reference(),
-                        format!("{} {arrow} {}", o.full_version(), n.full_version()),
-                    ),
-                    Change::Downgraded(o, n) => (
-                        ui.sym(Sym::Downgraded),
-                        n.reference(),
-                        format!("{} {arrow} {}", o.full_version(), n.full_version()),
-                    ),
-                    Change::Changed(o, n) => (
-                        ui.sym(Sym::Changed),
-                        n.reference(),
-                        if o.variant == n.variant {
-                            format!("{} rebuilt", n.full_version())
-                        } else {
-                            format!("{} {arrow} {}", o.reference(), n.reference())
-                        },
-                    ),
-                };
-                rows.push(row);
-            }
             let title = if view.name == SYSTEM || view.name == INITRD {
                 view.name.clone()
             } else {
                 format!("view {}", view.name)
             };
-            if rows.is_empty() {
+            if view.changes.is_empty() {
                 let _ = writeln!(out, "  {title:<18}{} unchanged", ui.sym(Sym::Unchanged));
                 continue;
             }
             let _ = writeln!(out, "  {title}");
-            let width = rows.iter().map(|r| ui::width(&r.1)).max().unwrap_or(0);
-            for (sym, name, detail) in rows {
-                let pad = " ".repeat(width - ui::width(&name) + 2);
-                let _ = writeln!(out, "    {sym} {name}{pad}{detail}");
-            }
+            out.push_str(&render_changes(ui, &view.changes));
         }
         let s = &self.services;
         if !(s.added.is_empty()
@@ -475,30 +445,9 @@ impl Plan<'_> {
     /// The plan as JSON, the `plan` event of `laft apply` and the document
     /// of `laft plan`.
     pub(crate) fn to_json(&self) -> Value {
-        let pkg = |p: &Pkg| json!({"name": p.name, "version": p.full_version(), "variant": p.variant.to_string(), "id": p.id.to_string()});
-        let pair = |o: &Pkg, n: &Pkg| json!({"name": n.name, "from": pkg(o), "to": pkg(n)});
         let mut views = serde_json::Map::new();
         for view in &self.views {
-            let mut added = Vec::new();
-            let mut removed = Vec::new();
-            let mut upgraded = Vec::new();
-            let mut downgraded = Vec::new();
-            let mut changed = Vec::new();
-            for change in &view.changes {
-                match change {
-                    Change::Added(n) => added.push(pkg(n)),
-                    Change::Removed(o) => removed.push(pkg(o)),
-                    Change::Upgraded(o, n) => upgraded.push(pair(o, n)),
-                    Change::Downgraded(o, n) => downgraded.push(pair(o, n)),
-                    Change::Changed(o, n) => changed.push(pair(o, n)),
-                }
-            }
-            views.insert(
-                view.name.clone(),
-                json!({"added": added, "removed": removed, "upgraded": upgraded,
-                    "downgraded": downgraded, "changed": changed,
-                    "unchanged": view.changes.is_empty()}),
-            );
+            views.insert(view.name.clone(), changes_json(&view.changes));
         }
         let s = &self.services;
         json!({
@@ -518,6 +467,66 @@ impl Plan<'_> {
             "nothing_to_do": self.nothing_to_do,
         })
     }
+}
+
+/// Package changes as indented lines with symbols and aligned columns.
+pub(crate) fn render_changes(ui: &Ui, changes: &[Change]) -> String {
+    let arrow = ui.arrow();
+    let rows: Vec<(String, String, String)> = changes
+        .iter()
+        .map(|change| match change {
+            Change::Added(n) => (ui.sym(Sym::Added), n.reference(), n.full_version()),
+            Change::Removed(o) => (ui.sym(Sym::Removed), o.reference(), o.full_version()),
+            Change::Upgraded(o, n) => (
+                ui.sym(Sym::Upgraded),
+                n.reference(),
+                format!("{} {arrow} {}", o.full_version(), n.full_version()),
+            ),
+            Change::Downgraded(o, n) => (
+                ui.sym(Sym::Downgraded),
+                n.reference(),
+                format!("{} {arrow} {}", o.full_version(), n.full_version()),
+            ),
+            Change::Changed(o, n) => (
+                ui.sym(Sym::Changed),
+                n.reference(),
+                if o.variant == n.variant {
+                    format!("{} rebuilt", n.full_version())
+                } else {
+                    format!("{} {arrow} {}", o.reference(), n.reference())
+                },
+            ),
+        })
+        .collect();
+    let width = rows.iter().map(|r| ui::width(&r.1)).max().unwrap_or(0);
+    let mut out = String::new();
+    for (sym, name, detail) in rows {
+        let pad = " ".repeat(width - ui::width(&name) + 2);
+        let _ = writeln!(out, "    {sym} {name}{pad}{detail}");
+    }
+    out
+}
+
+/// Package changes as JSON lists by kind.
+pub(crate) fn changes_json(changes: &[Change]) -> Value {
+    let pkg = |p: &Pkg| {
+        json!({"name": p.name, "version": p.full_version(),
+            "variant": p.variant.to_string(), "id": p.id.to_string()})
+    };
+    let pair = |o: &Pkg, n: &Pkg| json!({"name": n.name, "from": pkg(o), "to": pkg(n)});
+    let (mut added, mut removed, mut upgraded, mut downgraded, mut changed) =
+        (vec![], vec![], vec![], vec![], vec![]);
+    for change in changes {
+        match change {
+            Change::Added(n) => added.push(pkg(n)),
+            Change::Removed(o) => removed.push(pkg(o)),
+            Change::Upgraded(o, n) => upgraded.push(pair(o, n)),
+            Change::Downgraded(o, n) => downgraded.push(pair(o, n)),
+            Change::Changed(o, n) => changed.push(pair(o, n)),
+        }
+    }
+    json!({"added": added, "removed": removed, "upgraded": upgraded,
+        "downgraded": downgraded, "changed": changed, "unchanged": changes.is_empty()})
 }
 
 #[cfg(test)]

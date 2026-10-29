@@ -20,6 +20,8 @@ pub(crate) mod exit {
     pub(crate) const BUSY: u8 = 7;
     /// The generation is active but an activation step failed.
     pub(crate) const PARTIAL: u8 = 8;
+    /// `verify` or `doctor` found problems.
+    pub(crate) const PROBLEMS: u8 = 9;
     /// The user declined a confirmation.
     pub(crate) const ABORTED: u8 = 10;
     /// The configuration is invalid.

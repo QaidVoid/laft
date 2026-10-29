@@ -91,7 +91,11 @@ fn compute<'i>(
         .iter()
         .chain(resolved.views.values().flat_map(|r| r.warnings.iter()))
     {
-        env.ui.warn(format!("[{}] {warning}", warning.code()));
+        let text = warning.to_string();
+        let text = text
+            .split_once("]: ")
+            .map_or(text.as_str(), |(_, rest)| rest);
+        env.ui.warn_code(warning.code(), text);
     }
     let plan = plan::plan(&plan::Inputs {
         root: &env.root,

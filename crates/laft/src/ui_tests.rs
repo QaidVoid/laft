@@ -33,3 +33,16 @@ fn tables_align_columns_and_ignore_color_codes() {
         "GEN  FLAGS  MESSAGE\n43   \x1b[32m*\x1b[0m d    add ripgrep\n7\n"
     );
 }
+
+#[test]
+fn long_fields_are_cut_with_an_ellipsis() {
+    assert_eq!(truncate("ripgrep", 10, false), "ripgrep");
+    assert_eq!(truncate("Recursively search", 8, false), "Recursi\u{2026}");
+    assert_eq!(truncate("Recursively search", 8, true), "Recur...");
+}
+
+#[test]
+fn tables_without_a_header_align_their_rows() {
+    let rows = vec![vec!["a".into(), "b".into()], vec!["ccc".into(), "d".into()]];
+    assert_eq!(table(&[], &rows), "a    b\nccc  d\n");
+}

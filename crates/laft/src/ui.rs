@@ -106,6 +106,8 @@ pub(crate) struct Ui {
     pub(crate) ascii: bool,
     /// Whether only errors and the final result are printed.
     pub(crate) quiet: bool,
+    /// How much more detail to print.
+    pub(crate) verbose: u8,
     /// Whether confirmations are assumed.
     pub(crate) yes: bool,
     /// How configuration diagnostics are written.
@@ -146,6 +148,7 @@ impl Ui {
             json: global.json,
             ascii: global.ascii || !utf8,
             quiet: global.quiet,
+            verbose: global.verbose,
             yes: global.yes,
             message_format: global.message_format,
             color_out: colored(stdout_tty) && !global.json,
@@ -225,6 +228,15 @@ impl Ui {
             for line in lines {
                 eprintln!("  {line}");
             }
+        }
+    }
+
+    /// Writes a warning with a diagnostic code to standard error, unless
+    /// output is JSON.
+    pub(crate) fn warn_code(&self, code: &str, text: impl AsRef<str>) {
+        if !self.json {
+            let head = self.paint_err(Paint::BoldYellow, &format!("warning[{code}]"));
+            eprintln!("{head}: {}", text.as_ref());
         }
     }
 
@@ -407,8 +419,16 @@ fn page(text: &str) -> bool {
 /// Aligns `rows` in columns under `header`, two spaces apart, and returns
 /// the lines. The last column is not padded.
 pub(crate) fn table(header: &[&str], rows: &[Vec<String>]) -> String {
-    let columns = header.len();
-    let mut widths: Vec<usize> = header.iter().map(|h| width(h)).collect();
+    let columns = rows
+        .iter()
+        .map(Vec::len)
+        .max()
+        .unwrap_or(0)
+        .max(header.len());
+    let mut widths = vec![0; columns];
+    for (i, h) in header.iter().enumerate() {
+        widths[i] = width(h);
+    }
     for row in rows {
         for (i, cell) in row.iter().enumerate().take(columns) {
             widths[i] = widths[i].max(width(cell));
@@ -450,6 +470,18 @@ pub(crate) fn width(text: &str) -> usize {
         }
     }
     count
+}
+
+/// `text` cut to `max` characters, ending with an ellipsis when cut.
+pub(crate) fn truncate(text: &str, max: usize, ascii: bool) -> String {
+    if width(text) <= max {
+        return text.to_owned();
+    }
+    let ellipsis = if ascii { "..." } else { "\u{2026}" };
+    let keep = max.saturating_sub(ellipsis.chars().count());
+    let mut out: String = text.chars().take(keep).collect();
+    out.push_str(ellipsis);
+    out
 }
 
 /// A size in binary units with one decimal, such as `84.2 MiB`.
