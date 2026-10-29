@@ -106,10 +106,7 @@ pub(crate) fn scripts(build: &Build, input: &StyleInput<'_>) -> Scripts {
                     .chain(words(args)),
             );
             Scripts {
-                prepare: Some(format!(
-                    "if {}; then autoreconf -fi; fi",
-                    boolean(*autoreconf)
-                )),
+                prepare: autoreconf.then(|| "autoreconf -fi".to_owned()),
                 configure: Some(format!("{enter}{configure}")),
                 build: Some(format!(
                     "{enter}{}",

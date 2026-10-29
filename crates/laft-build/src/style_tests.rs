@@ -152,10 +152,17 @@ fn configure_passes_the_standard_arguments_of_the_variant() {
              --build=$CBUILD --host=$CHOST --disable-static --enable-shared '--with-x'"
         )
     );
-    assert_eq!(
-        dynamic.prepare.as_deref(),
-        Some("if true; then autoreconf -fi; fi")
-    );
+    assert_eq!(dynamic.prepare.as_deref(), Some("autoreconf -fi"));
+    let plain = Build::Configure {
+        args: vec![],
+        standard_args: true,
+        autoreconf: false,
+        out_of_tree: false,
+        make_args: vec![],
+        check_target: "check".into(),
+        install_args: vec![],
+    };
+    assert_eq!(scripts(&plain, &input(Variant::Dynamic)).prepare, None);
     assert!(
         dynamic
             .install

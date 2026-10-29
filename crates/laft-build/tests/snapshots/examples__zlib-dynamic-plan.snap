@@ -1,6 +1,5 @@
 ---
 source: crates/laft-build/tests/examples.rs
-assertion_line: 49
 expression: json
 ---
 {
@@ -46,7 +45,7 @@ expression: json
   "link_deps": [],
   "check_deps": [],
   "phases": {
-    "prepare": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then autoreconf -fi; fi\n",
+    "prepare": null,
     "configure": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\n\"$SRC//configure\" '--prefix=/usr' '--libdir=/usr/lib'\n",
     "build": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\nmake\n",
     "check": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\nmake 'check'\n",
@@ -101,7 +100,7 @@ expression: json
     "RANLIB": "ranlib",
     "READELF": "readelf",
     "RECIPE": "/build/recipes/core/zlib",
-    "RUSTFLAGS": "-C target-cpu=x86-64-v3 -C debuginfo=2 -C strip=none --remap-path-prefix=/build=/usr/src/debug/zlib -C link-arg=-Wl,-z,relro,-z,now",
+    "RUSTFLAGS": "-C target-cpu=x86-64-v3 -C debuginfo=2 -C strip=none --remap-path-prefix=/build=/usr/src/debug/zlib -C link-arg=-Wl,-z,relro -C link-arg=-Wl,-z,now",
     "SOURCE_DATE_EPOCH": "315532800",
     "SRC": "/build/src",
     "TMPDIR": "/build/tmp",

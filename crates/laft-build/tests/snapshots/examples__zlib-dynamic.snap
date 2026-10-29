@@ -1,14 +1,7 @@
 ---
 source: crates/laft-build/tests/examples.rs
-assertion_line: 34
 expression: scripts(&recipe)
 ---
-### prepare
-#!/usr/bin/bash
-set -euo pipefail
-umask 022
-cd "$SRC/"
-if false; then autoreconf -fi; fi
 ### configure
 #!/usr/bin/bash
 set -euo pipefail

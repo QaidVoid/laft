@@ -283,9 +283,14 @@ pub(crate) fn environment(input: &EnvInput<'_>) -> BTreeMap<String, String> {
         "-C debuginfo=2".into(),
         "-C strip=none".into(),
         format!("--remap-path-prefix=/build=/usr/src/debug/{name}"),
-        "-C link-arg=-Wl,-z,relro,-z,now".into(),
     ]
     .into();
+    if !input.hardening_disable.contains(&Hardening::Relro) {
+        rustflags.push("-C link-arg=-Wl,-z,relro".into());
+    }
+    if !input.hardening_disable.contains(&Hardening::Now) {
+        rustflags.push("-C link-arg=-Wl,-z,now".into());
+    }
     if !dynamic {
         rustflags.extend([
             "-C target-feature=+crt-static".into(),

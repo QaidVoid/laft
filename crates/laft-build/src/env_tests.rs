@@ -41,6 +41,14 @@ fn disabled_hardening_removes_exactly_its_flags() {
     assert_eq!(removed(Hardening::Relro, "LDFLAGS"), ["-Wl,-z,relro"]);
     assert_eq!(removed(Hardening::Now, "LDFLAGS"), ["-Wl,-z,now"]);
     assert_eq!(
+        removed(Hardening::Relro, "RUSTFLAGS"),
+        ["link-arg=-Wl,-z,relro"]
+    );
+    assert_eq!(
+        removed(Hardening::Now, "RUSTFLAGS"),
+        ["link-arg=-Wl,-z,now"]
+    );
+    assert_eq!(
         removed(Hardening::StackClash, "CXXFLAGS"),
         ["-fstack-clash-protection"]
     );
