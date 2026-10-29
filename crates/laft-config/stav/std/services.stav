@@ -1,10 +1,6 @@
 # std/services: optional daemons. Each function declares one daemon and the
 # packages it needs. Including the part enables it. Scalars use default(...),
 # so a plain assignment in the configuration changes them.
-#
-# A name that is also a function of this module, such as `dbus`, refers to
-# that function inside the module. Packages and references with such names
-# are therefore written as pkg("dbus") and "dbus".
 
 ## OpenSSH server on `port`. Host keys are created on the first start.
 ## Logins use public keys from ~/.ssh/authorized_keys and from the user's
@@ -43,7 +39,7 @@ fn dbus() -> Part<System> = part {
     exec         = default(["/usr/bin/dbus-daemon", "--system", "--nofork", "--nopidfile", "--print-address=3"])
     ready        = default(notify(fd = 3))
     runtime_dirs = [Dir { path = "dbus", owner = messagebus }]
-    packages     = [pkg("dbus")]
+    packages     = [dbus]
   }
 }
 
@@ -53,7 +49,7 @@ fn seatd() -> Part<System> = part {
     description = default("Seat management daemon")
     exec        = default(["/usr/bin/seatd", "-n", "3", "-g", "video"])
     ready       = default(notify(fd = 3))
-    packages    = [pkg("seatd")]
+    packages    = [seatd]
   }
 }
 
@@ -65,8 +61,8 @@ fn elogind() -> Part<System> = part {
   service elogind {
     description = default("Login and seat manager")
     exec        = default(["/usr/lib/elogind/elogind"])
-    after       = ["dbus"]
-    packages    = [pkg("elogind")]
+    after       = [dbus]
+    packages    = [elogind]
   }
 
   session { rundir = default(RundirOwner.elogind) }
@@ -77,7 +73,7 @@ fn dhcpcd() -> Part<System> = part {
   service dhcpcd {
     description = default("DHCP client")
     exec        = default(["/usr/bin/dhcpcd", "-B"])
-    packages    = [pkg("dhcpcd")]
+    packages    = [dhcpcd]
   }
 }
 
@@ -88,9 +84,9 @@ fn iwd() -> Part<System> = part {
   service iwd {
     description = default("Wireless daemon")
     exec        = default(["/usr/lib/iwd/iwd"])
-    after       = ["dbus"]
+    after       = [dbus]
     state_dirs  = [Dir { path = "iwd", mode = 0o700 }]
-    packages    = [pkg("iwd")]
+    packages    = [iwd]
   }
 }
 
@@ -112,6 +108,6 @@ fn nftables() -> Part<System> = part {
     kind        = default(oneshot)
     up          = default(["/usr/bin/nft", "-f", "/etc/nftables.conf"])
     down        = default(["/usr/bin/nft", "flush", "ruleset"])
-    packages    = [pkg("nftables")]
+    packages    = [nftables]
   }
 }

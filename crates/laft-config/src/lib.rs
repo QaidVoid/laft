@@ -256,7 +256,9 @@ pub fn load(
         import_roots: vec![stav::ImportRoot::new(root_dir)],
     };
     let checked = stav::check(&host, &root)?;
-    let evaluated = checked.eval(&stav::Limits::default())?;
+    let evaluated = checked.eval(&stav::Limits::default()).map_err(|errors| {
+        checked.diagnostics(errors.iter().chain(checked.warnings().iter()).cloned())
+    })?;
     let cx = convert::Cx::new(&checked, &evaluated);
     let mut found = checked.warnings().iter().cloned().collect::<Vec<_>>();
     let config = validate::validate(&cx, packages, &mut found);

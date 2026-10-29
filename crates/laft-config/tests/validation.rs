@@ -116,7 +116,7 @@ fn malformed_sysctl_keys_are_rejected() {
 #[test]
 fn a_module_cannot_be_loaded_and_blacklisted() {
     let body = r#"kernel { modules = ["pcspkr"], blacklist = ["pcspkr"] }"#;
-    assert_rejected(rejected(body), "C0433", r#"["pcspkr"]"#);
+    assert_rejected(rejected(body), "C0433", r#""pcspkr""#);
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn a_view_cannot_be_named_system() {
 #[test]
 fn view_members_must_be_declared() {
     let body = r#"view dev { users = ["bob"] }"#;
-    assert_rejected(rejected(body), "C0904", r#"["bob"]"#);
+    assert_rejected(rejected(body), "C0904", r#""bob""#);
 }
 
 #[test]
@@ -377,7 +377,7 @@ fn a_getty_terminal_is_listed_once() {
     assert_rejected(
         rejected(r#"getty { ttys = ["tty1", "tty1"] }"#),
         "C1202",
-        r#"["tty1", "tty1"]"#,
+        r#""tty1""#,
     );
 }
 
@@ -391,7 +391,7 @@ fn commands_must_be_absolute() {
     assert_rejected(
         rejected(r#"service foo { exec = ["foo"] }"#),
         "C1204",
-        r#"["foo"]"#,
+        r#""foo""#,
     );
 }
 
@@ -399,7 +399,7 @@ fn commands_must_be_absolute() {
 fn dependencies_must_be_enabled() {
     let body = r#"service foo { exec = ["/usr/bin/foo"], after = [bar] }
       service bar { exec = ["/usr/bin/bar"], enable = false }"#;
-    assert_rejected(rejected(body), "C1205", "[bar]");
+    assert_rejected(rejected(body), "C1205", "bar");
 }
 
 #[test]

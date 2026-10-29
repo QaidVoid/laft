@@ -33,9 +33,10 @@ pub(crate) struct Cx<'a> {
 impl<'a> Cx<'a> {
     /// Returns the context of `evaluated`, the evaluation of `checked`.
     pub(crate) fn new(checked: &'a Checked, evaluated: &'a Evaluated) -> Self {
-        let mut pkgs = BTreeMap::new();
-        let mut spans = evaluated.symbols("Pkg").map(|(_, span)| span);
-        collect_pkgs(evaluated.value(), &mut Vec::new(), &mut spans, &mut pkgs);
+        let pkgs = evaluated
+            .symbol_paths("Pkg")
+            .map(|(_, path, span)| (path.keys().to_vec(), span))
+            .collect();
         let host_files = checked
             .files()
             .filter(|&(_, name)| name == host::PRELUDE_NAME || name == host::BASE_NAME)
@@ -79,6 +80,39 @@ impl<'a> Cx<'a> {
             let own = spans.iter().find(|s| !self.host_files.contains(&s.file));
             own.or(spans.first()).copied()
         })
+    }
+
+    /// Returns where the last element of the list or set at `path` whose
+    /// text is `text` was written, or else where the list was.
+    pub(crate) fn element_span(&self, path: &[&str], text: &str) -> Option<SourceSpan> {
+        let items = match self.value(path) {
+            Some(Value::List(items) | Value::Set(items)) => items.as_slice(),
+            _ => &[],
+        };
+        let found = items.iter().rposition(|item| match item {
+            Value::Str(s) | Value::Ref(s) => s == text,
+            Value::Symbol { text: t, .. } => t == text,
+            _ => false,
+        });
+        let Some(index) = found else {
+            return self.span(path);
+        };
+        let index = index.to_string();
+        let mut at = path.to_vec();
+        at.push(&index);
+        self.span(&at)
+    }
+
+    /// Returns an error about the element `text` of the list or set at
+    /// `path`.
+    pub(crate) fn element_error(
+        &self,
+        code: &'static str,
+        path: &[&str],
+        text: &str,
+        message: impl Into<String>,
+    ) -> FileDiagnostic {
+        error_at(code, self.element_span(path, text), message)
     }
 
     /// Returns every `Pkg` value with the place that wrote it.
@@ -143,44 +177,6 @@ pub(crate) fn error_at(
 pub(crate) fn helped(mut d: FileDiagnostic, help: impl Into<String>) -> FileDiagnostic {
     d.diagnostic.help = Some(help.into());
     d
-}
-
-/// Pairs every `Pkg` value inside `value` with the next span of `spans`,
-/// which lists the places of the `Pkg` values in the order of the value.
-fn collect_pkgs(
-    value: &Value,
-    path: &mut Vec<String>,
-    spans: &mut impl Iterator<Item = SourceSpan>,
-    out: &mut BTreeMap<Vec<String>, SourceSpan>,
-) {
-    let mut visit = |key: String, value: &Value, spans: &mut _, out: &mut _| {
-        path.push(key);
-        collect_pkgs(value, path, spans, out);
-        path.pop();
-    };
-    match value {
-        Value::Symbol { ty, .. } if ty == "Pkg" => {
-            if let Some(span) = spans.next() {
-                out.insert(path.clone(), span);
-            }
-        }
-        Value::List(items) | Value::Set(items) => {
-            for (i, item) in items.iter().enumerate() {
-                visit(i.to_string(), item, spans, out);
-            }
-        }
-        Value::Map(fields)
-        | Value::Struct { fields, .. }
-        | Value::Variant {
-            fields: Some(fields),
-            ..
-        } => {
-            for (key, item) in fields {
-                visit(key.clone(), item, spans, out);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// Returns the entries of the map at `path`, or none.

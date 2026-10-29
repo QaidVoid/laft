@@ -77,3 +77,14 @@ fn a_misspelled_catalog_part_suggests_the_known_one() {
         "{report}"
     );
 }
+
+#[test]
+fn warnings_are_reported_with_the_errors_of_a_failed_evaluation() {
+    let text = format!(
+        "let s6: Init = Init.runit\nsystem {{\n{}\n  init = s6\n  gc {{ keep_days = 1 / 0 }}\n}}\n",
+        support::DISKS
+    );
+    let dir = config_dir(&[("system.stav", &text)]);
+    let report = load(dir.path()).expect_err("dividing by zero fails");
+    assert_eq!(codes(&report), ["E0603", "W0302"], "{report}");
+}

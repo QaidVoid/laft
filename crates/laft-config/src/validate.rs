@@ -3,7 +3,7 @@
 use laft_activate::{BootConfig, ConfigError as EtcError, EtcConfig, Setting, check_config};
 use laft_core::{PkgRef, system_gid, system_uid};
 use laft_svc::{ConfigError as ServiceError, ServiceConfig, ServiceSet, Warning};
-use stav::{Diagnostic, FileDiagnostic, Value};
+use stav::{Diagnostic, FileDiagnostic, SourceSpan, Value};
 
 use crate::convert::{self, Cx, entries, error_at, helped};
 use crate::{PkgError, SystemConfig};
@@ -61,8 +61,13 @@ fn account<'a>(kind: &str, name: &'a str) -> [&'a str; 4] {
 }
 
 /// Returns `d` with a secondary location at `path`, when it has a source.
-fn labeled(cx: &Cx<'_>, mut d: FileDiagnostic, path: &[&str], message: &str) -> FileDiagnostic {
-    if let Some(span) = cx.span(path) {
+fn labeled(cx: &Cx<'_>, d: FileDiagnostic, path: &[&str], message: &str) -> FileDiagnostic {
+    labeled_at(d, cx.span(path), message)
+}
+
+/// Returns `d` with a secondary location at `span`, when there is one.
+fn labeled_at(mut d: FileDiagnostic, span: Option<SourceSpan>, message: &str) -> FileDiagnostic {
+    if let Some(span) = span {
         d.diagnostic = d.diagnostic.with_label(Some(span.file), span.span, message);
     }
     d
@@ -178,12 +183,11 @@ fn etc_error(cx: &Cx<'_>, error: &EtcError) -> Option<FileDiagnostic> {
         EtcError::SysctlKey(key) | EtcError::SysctlValue(key) => {
             cx.error(code, &["system", "sysctl", key], message)
         }
-        EtcError::BlacklistedModule(_) => {
-            let d = cx.error(code, &["system", "kernel", "blacklist"], message);
-            labeled(
-                cx,
+        EtcError::BlacklistedModule(module) => {
+            let d = cx.element_error(code, &["system", "kernel", "blacklist"], module, message);
+            labeled_at(
                 d,
-                &["system", "kernel", "modules"],
+                cx.element_span(&["system", "kernel", "modules"], module),
                 "the module is loaded here",
             )
         }
@@ -203,14 +207,8 @@ fn etc_error(cx: &Cx<'_>, error: &EtcError) -> Option<FileDiagnostic> {
             let path = match setting {
                 Setting::System(field) => vec!["system", field],
                 Setting::User { name, field } => vec!["system", "users", "accounts", name, field],
-                Setting::KernelOptions(module) => vec!["system", "kernel", "options", module],
-                Setting::KernelModule(module) => {
-                    let options = ["system", "kernel", "options", module];
-                    if cx.value(&options).is_some() {
-                        options.to_vec()
-                    } else {
-                        vec!["system", "kernel"]
-                    }
+                Setting::KernelOptions(module) | Setting::KernelModule(module) => {
+                    vec!["system", "kernel", "options", module]
                 }
                 Setting::File(path) => vec!["system", "files", path],
                 Setting::Privileged(path) => vec!["system", "security", "privileged", path],
@@ -235,8 +233,8 @@ fn check_services(cx: &Cx<'_>, services: &ServiceConfig, found: &mut Vec<FileDia
                     ServiceError::InvalidName { service: s, .. } => {
                         cx.error("C1201", &["system", "services", s], message)
                     }
-                    ServiceError::InvalidTty { .. } => {
-                        cx.error("C1202", &["system", "getty", "ttys"], message)
+                    ServiceError::InvalidTty { tty, .. } => {
+                        cx.element_error("C1202", &["system", "getty", "ttys"], tty, message)
                     }
                     ServiceError::MissingCommand { service: s, .. }
                     | ServiceError::WrongKind { service: s, .. }
@@ -259,40 +257,48 @@ fn check_services(cx: &Cx<'_>, services: &ServiceConfig, found: &mut Vec<FileDia
                     ServiceError::RelativeCommand {
                         service: s,
                         field: f,
-                        ..
-                    }
-                    | ServiceError::RelativePath {
+                        program,
+                    } => cx.element_error("C1204", &["system", "services", s, f], program, message),
+                    ServiceError::RelativePath {
                         service: s,
                         field: f,
                         ..
                     } => cx.error("C1204", &["system", "services", s, f], message),
                     ServiceError::UnknownDependency {
                         service: s,
+                        dep,
                         suggestion,
-                        ..
                     } => {
-                        let mut d = cx.error("C1205", &["system", "services", s, "after"], message);
+                        let mut d = cx.element_error(
+                            "C1205",
+                            &["system", "services", s, "after"],
+                            dep,
+                            message,
+                        );
                         d.diagnostic.help =
                             suggestion.as_ref().map(|s| format!("did you mean `{s}`?"));
                         d
                     }
-                    ServiceError::DisabledDependency { service: s, .. }
-                    | ServiceError::EarlyDependency { service: s, .. } => {
-                        cx.error("C1205", &["system", "services", s, "after"], message)
+                    ServiceError::DisabledDependency { service: s, dep }
+                    | ServiceError::EarlyDependency { service: s, dep } => {
+                        cx.element_error("C1205", &["system", "services", s, "after"], dep, message)
                     }
                     ServiceError::Cycle(cycle) => {
                         let message =
                             format!("dependency cycle between services: {}", cycle.join(" -> "));
-                        let first = cycle.first().map_or("", String::as_str);
-                        let mut d =
-                            cx.error("C1206", &["system", "services", first, "after"], message);
-                        for name in cycle.iter().skip(1).take(cycle.len().saturating_sub(2)) {
-                            d = labeled(
-                                cx,
-                                d,
-                                &["system", "services", name, "after"],
-                                &format!("`{name}` continues the cycle"),
-                            );
+                        let after = |i: usize| {
+                            let name = cycle.get(i).map_or("", String::as_str);
+                            let next = cycle.get(i + 1).map_or("", String::as_str);
+                            cx.element_span(&["system", "services", name, "after"], next)
+                        };
+                        let mut d = error_at("C1206", after(0), message);
+                        for (i, name) in cycle
+                            .iter()
+                            .enumerate()
+                            .skip(1)
+                            .take(cycle.len().saturating_sub(2))
+                        {
+                            d = labeled_at(d, after(i), &format!("`{name}` continues the cycle"));
                         }
                         d
                     }
@@ -493,18 +499,20 @@ fn check_view_members(cx: &Cx<'_>, etc: &EtcConfig, found: &mut Vec<FileDiagnost
         };
         for user in names("users") {
             if !etc.users.accounts.contains_key(user) && system_uid(user).is_none() {
-                found.push(cx.error(
+                found.push(cx.element_error(
                     "C0904",
                     &["system", "views", view, "users"],
+                    user,
                     format!("view {view}: user {user:?} is not declared"),
                 ));
             }
         }
         for group in names("groups") {
             if !etc.users.groups.contains_key(group) && system_gid(group).is_none() {
-                found.push(cx.error(
+                found.push(cx.element_error(
                     "C0904",
                     &["system", "views", view, "groups"],
+                    group,
                     format!("view {view}: group {group:?} is not declared"),
                 ));
             }

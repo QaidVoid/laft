@@ -111,3 +111,22 @@ fn the_desktop_user_must_be_declared() {
     let report = with_catalog("include desktop.wayland(user = alice)").expect_err("no alice");
     assert!(codes(&report).iter().all(|&c| c == "E0802"), "{report}");
 }
+
+#[test]
+fn parts_that_include_the_system_bus_declare_it_once() {
+    let config =
+        with_catalog("include services.elogind()\ninclude services.iwd()\ninclude services.dbus()")
+            .expect("valid")
+            .config;
+    let dbus = &config.services.services["dbus"];
+    assert_eq!(dbus.runtime_dirs.len(), 1, "{:?}", dbus.runtime_dirs);
+    let packages: Vec<&str> = dbus.packages.iter().map(|p| p.as_str()).collect();
+    assert_eq!(packages, ["dbus"]);
+    for service in ["elogind", "iwd"] {
+        let after = &config.services.services[service].after;
+        assert_eq!(
+            after.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["dbus"]
+        );
+    }
+}
