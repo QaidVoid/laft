@@ -465,7 +465,8 @@ impl<'a> Builder<'a> {
         let mut session = self.session(recipe, &key)?;
         session.exec = Executor::direct(root, &session.build, dest, session.exec.logs())
             .search_first(self.search.clone())
-            .timeout(self.timeout);
+            .timeout(self.timeout)
+            .shell(recipe.shell);
         session.env = env::install(recipe.environment(self.jobs));
         self.phases(&session, recipe, None)?;
         let record = dest.join(INSTALLED).join(item_dir(&Item::of(recipe)));
@@ -576,7 +577,7 @@ impl<'a> Builder<'a> {
                 Executor::direct(root, build, out, logs).search_first(self.search.clone())
             }
         };
-        exec.timeout(self.timeout)
+        exec.timeout(self.timeout).shell(recipe.shell)
     }
 
     /// Copies the recipe directory and the `common/` directory of every
@@ -637,7 +638,7 @@ impl<'a> Builder<'a> {
     ) -> Result<(), BuildError> {
         let mut steps: Vec<(&str, String)> = Vec::new();
         if !recipe.patches.is_empty() {
-            let mut script = String::from("set -euo pipefail\ncd \"$SRC\"\n");
+            let mut script = format!("{}cd \"$SRC\"\n", recipe.shell.header());
             for patch in &recipe.patches {
                 script.push_str(&format!(
                     "patch -p{} -N --no-backup-if-mismatch -i {}\n",

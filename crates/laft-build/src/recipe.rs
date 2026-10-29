@@ -48,6 +48,8 @@ pub struct Recipe {
     pub link_deps: Vec<PkgRef>,
     /// Packages present only when the check phase runs.
     pub check_deps: Vec<PkgRef>,
+    /// The shell that runs the phase scripts.
+    pub shell: Shell,
     /// The rendered phase scripts.
     pub phases: Phases,
     /// The environment of every phase, except `JOBS` and `MAKEFLAGS`, which
@@ -270,11 +272,43 @@ pub struct FileRef {
     pub blake3: Blake3Hash,
 }
 
-/// The rendered phase scripts. Each is a complete `bash` script, or `None`
-/// when the phase has nothing to run.
+/// The shell that runs the phase scripts of a recipe.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Shell {
+    /// A POSIX shell, `/bin/sh`. Every build style renders POSIX scripts.
+    #[default]
+    Sh,
+    /// GNU bash, `/usr/bin/bash`, for a build that needs it. It adds `bash`
+    /// to the build dependencies.
+    Bash,
+}
+
+impl Shell {
+    /// The program that runs the scripts, as the build sees it.
+    pub fn program(self) -> &'static str {
+        match self {
+            Self::Sh => "/bin/sh",
+            Self::Bash => "/usr/bin/bash",
+        }
+    }
+
+    /// The first lines of every script: the interpreter line, and options
+    /// that stop the script at the first failing command or unset
+    /// variable. bash also fails a pipeline when any of its commands fails.
+    pub fn header(self) -> &'static str {
+        match self {
+            Self::Sh => "#!/bin/sh\nset -eu\n",
+            Self::Bash => "#!/usr/bin/bash\nset -euo pipefail\n",
+        }
+    }
+}
+
+/// The rendered phase scripts. Each is a complete script for the recipe's
+/// [`Shell`], or `None` when the phase has nothing to run.
 ///
 /// The style's script and the recipe's hooks are folded in: every script
-/// starts with `set -euo pipefail`, `umask 022` and a `cd` into
+/// starts with [`Shell::header`], `umask 022` and a `cd` into
 /// `$SRC/<subdir>`, then runs the `pre_` hook, the phase script and the
 /// `post_` hook in one shell.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

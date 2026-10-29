@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use laft_core::{PkgRef, Variant, Version};
 use serde::Deserialize;
 
-use crate::recipe::{Ci, Split, Update, VendorKind};
+use crate::recipe::{Ci, Shell, Split, Update, VendorKind};
 
 /// A `recipe_repo` block.
 #[derive(Debug, Clone, Deserialize)]
@@ -50,6 +50,7 @@ pub(crate) struct Package {
     pub(crate) ignore_deps: Vec<String>,
 
     pub(crate) build: Build,
+    pub(crate) shell: Shell,
     pub(crate) phases: Phases,
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) cflags: Vec<String>,

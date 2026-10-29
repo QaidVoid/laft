@@ -42,6 +42,8 @@ type Runner     = standard | big
 type Feature    = enabled | disabled | auto
 ## The build tool cmake generates files for.
 type Generator  = ninja | make
+## The shell that runs the phase scripts.
+type Shell      = sh | bash
 
 ## How a package is built. The variant is chosen by the label of a `build`
 ## block, and the block body sets its fields.
@@ -115,6 +117,10 @@ struct Package {
 
   ## The build style.
   build:         Build
+  ## The shell of the phase scripts: POSIX `sh`, or `bash` for a build
+  ## that needs it, which adds `bash` to `build_deps`. Say why in a comment.
+  ## The `kernel` style always uses `bash`.
+  shell:         Shell = sh
   ## Phase replacements, hooks and the start directory.
   phases:        Phases = Phases {}
   ## Extra environment variables for every phase.

@@ -149,7 +149,7 @@ pub use plan::{
 };
 pub use recipe::{
     Alternative, BuildOptions, Ci, Fetch, FileRef, Metadata, Operations, Outputs, Phases, Recipe,
-    Runner, Source, Split, Subpackage, Update, Vendor, VendorKind,
+    Runner, Shell, Source, Split, Subpackage, Update, Vendor, VendorKind,
 };
 pub use repo::{Evaluation, RecipeRepo, Repos};
 pub use repro::{DifferingFile, ReproReport, check_repro, compare, record_repro};

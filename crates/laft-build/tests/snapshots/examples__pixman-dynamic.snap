@@ -4,8 +4,8 @@ assertion_line: 34
 expression: scripts(&recipe)
 ---
 ### configure
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 meson setup "$BUILDDIR" "$SRC/" \
@@ -15,20 +15,20 @@ meson setup "$BUILDDIR" "$SRC/" \
   --default-library=shared \
   '-Dtests=enabled' '-Ddemos=disabled' '-Dgtk=disabled' '-Dlibpng=disabled' '-Dopenmp=disabled'
 ### build
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 meson compile -C "$BUILDDIR" -j "$JOBS"
 ### check
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 meson test -C "$BUILDDIR" --print-errorlogs --num-processes "$JOBS"
 ### install
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 meson install -C "$BUILDDIR" --destdir "$DESTDIR" --no-rebuild

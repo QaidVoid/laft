@@ -44,12 +44,13 @@ expression: json
   "build_deps": [],
   "link_deps": [],
   "check_deps": [],
+  "shell": "sh",
   "phases": {
     "prepare": null,
-    "configure": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\n\"$SRC//configure\" '--prefix=/usr' '--libdir=/usr/lib'\n",
-    "build": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\nmake\n",
-    "check": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\nmake 'check'\n",
-    "install": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\nmake DESTDIR=\"$DESTDIR\" install\n",
+    "configure": "#!/bin/sh\nset -eu\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\n\"$SRC//configure\" '--prefix=/usr' '--libdir=/usr/lib'\n",
+    "build": "#!/bin/sh\nset -eu\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\nmake\n",
+    "check": "#!/bin/sh\nset -eu\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\nmake 'check'\n",
+    "install": "#!/bin/sh\nset -eu\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\nmake DESTDIR=\"$DESTDIR\" install\n",
     "post_install": null
   },
   "env": {

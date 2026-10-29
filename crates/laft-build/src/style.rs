@@ -1,4 +1,5 @@
-//! Rendering build styles and phase hooks into `bash` scripts.
+//! Rendering build styles and phase hooks into shell scripts. Every style
+//! renders POSIX shell, so a recipe needs `bash` only for its own scripts.
 //!
 //! The templates here are the definition of each style. Changing what one
 //! renders changes the plan hash of every recipe using the style, which
@@ -6,7 +7,7 @@
 
 use laft_core::Variant;
 
-use crate::recipe::Phases;
+use crate::recipe::{Phases, Shell};
 use crate::schema::{self, Build, Feature, Generator};
 
 /// The style's own scripts for each phase, before hooks are added.
@@ -371,11 +372,13 @@ EOF";
 
 /// Folds the recipe's replacements and hooks into the style's scripts and
 /// adds the common header to every phase that runs anything.
-pub(crate) fn phases(style: Scripts, recipe: &schema::Phases, subdir: &str) -> Phases {
-    let header = format!(
-        "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/{}\"\n",
-        dq(subdir)
-    );
+pub(crate) fn phases(
+    style: Scripts,
+    recipe: &schema::Phases,
+    subdir: &str,
+    shell: Shell,
+) -> Phases {
+    let header = format!("{}umask 022\ncd \"$SRC/{}\"\n", shell.header(), dq(subdir));
     let render = |pre: Option<&String>, script: Option<String>, post: Option<&String>| {
         let parts: Vec<&str> = [
             pre.map(String::as_str),

@@ -10,8 +10,8 @@ use crate::env::{self, EnvInput, RESERVED};
 use crate::fsx;
 use crate::loader::{COMMON, RECIPES};
 use crate::recipe::{
-    Alternative, BuildOptions, Fetch, FileRef, Metadata, Operations, Outputs, Recipe, Source,
-    Split, Subpackage, Update, Vendor, VendorKind,
+    Alternative, BuildOptions, Fetch, FileRef, Metadata, Operations, Outputs, Recipe, Shell,
+    Source, Split, Subpackage, Update, Vendor, VendorKind,
 };
 use crate::repo::RecipeRepo;
 use crate::schema::{self, Build};
@@ -130,7 +130,9 @@ pub(crate) fn convert(cx: &mut Cx<'_>, p: schema::Package) -> Option<Recipe> {
             kernel_config: kernel_config.as_ref().map(|f| f.path.as_str()),
         },
     );
-    let phases = style::phases(style, &p.phases, &subdir);
+    // The kernel's own build scripts need bash.
+    let shell = if kernel { Shell::Bash } else { p.shell };
+    let phases = style::phases(style, &p.phases, &subdir, shell);
 
     let mut env = env::environment(&EnvInput {
         name: &name,
@@ -151,6 +153,9 @@ pub(crate) fn convert(cx: &mut Cx<'_>, p: schema::Package) -> Option<Recipe> {
     env.extend(p.env.clone());
 
     let mut build_deps = p.build_deps.clone();
+    if shell == Shell::Bash {
+        add_dep(&mut build_deps, "bash");
+    }
     let mut deps = p.deps.clone();
     if matches!(p.build, Build::PythonPep517 { .. }) {
         for tool in ["python", "python-build", "python-installer", "python-wheel"] {
@@ -234,6 +239,7 @@ pub(crate) fn convert(cx: &mut Cx<'_>, p: schema::Package) -> Option<Recipe> {
         build_deps,
         link_deps,
         check_deps: p.check_deps,
+        shell,
         phases,
         env,
         options: BuildOptions {

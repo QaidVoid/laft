@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use laft_sandbox::{Network, Sandbox};
 
+use crate::Shell;
 use crate::error::{BuildError, io};
 
 /// How long a phase may run unless the caller chooses otherwise: six hours.
@@ -55,6 +56,7 @@ pub struct Executor {
     logs: PathBuf,
     timeout: Duration,
     search: Vec<PathBuf>,
+    shell: Shell,
 }
 
 impl Executor {
@@ -73,6 +75,7 @@ impl Executor {
             logs: logs.into(),
             timeout: DEFAULT_TIMEOUT,
             search: Vec::new(),
+            shell: Shell::Sh,
         }
     }
 
@@ -92,6 +95,7 @@ impl Executor {
             logs: logs.into(),
             timeout: DEFAULT_TIMEOUT,
             search: Vec::new(),
+            shell: Shell::Sh,
         }
     }
 
@@ -99,6 +103,17 @@ impl Executor {
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// Chooses the shell that runs scripts, POSIX `sh` unless set.
+    pub fn shell(mut self, shell: Shell) -> Self {
+        self.shell = shell;
+        self
+    }
+
+    /// The shell program of a direct executor with the tools of `root`.
+    fn direct_shell(&self, root: &Path) -> PathBuf {
+        root.join(self.shell.program().trim_start_matches('/'))
     }
 
     /// Makes a direct executor look for programs in `dirs`, in order,
@@ -153,7 +168,7 @@ impl Executor {
         }
     }
 
-    /// Runs the `bash` script `script` as the phase `phase` with exactly the
+    /// Runs the shell script `script` as the phase `phase` with exactly the
     /// environment `env`, without network.
     ///
     /// # Errors
@@ -200,25 +215,25 @@ impl Executor {
         self.run(phase, &format!("exec {script}"), &env)
     }
 
-    /// Starts an interactive `bash` in the build's environment `env`, with
+    /// Starts an interactive shell in the build's environment `env`, with
     /// the caller's terminal, and waits for it to exit. It has no time
     /// limit and no log.
     ///
     /// # Errors
     ///
     /// Fails with [`BuildError::Sandbox`] when the sandbox cannot be set up,
-    /// and when `bash` cannot be started.
+    /// and when the shell cannot be started.
     pub fn interactive(&self, env: &BTreeMap<String, String>) -> Result<ExitStatus, BuildError> {
         match &self.place {
             Place::Sandbox(view) => {
                 let command = Sandbox::new(view, &self.build, &self.out)
-                    .command("/usr/bin/bash")
+                    .command(self.shell.program())
                     .arg("-i");
                 Ok(env.iter().fold(command, |c, (k, v)| c.env(k, v)).status()?)
             }
             Place::Direct(root) => {
-                let bash = root.join("usr/bin/bash");
-                std::process::Command::new(&bash)
+                let shell = self.direct_shell(root);
+                std::process::Command::new(&shell)
                     .arg("-i")
                     .env_clear()
                     .envs(
@@ -228,7 +243,7 @@ impl Executor {
                     .env("PATH", self.direct_path(root)?)
                     .current_dir(&self.build)
                     .status()
-                    .map_err(io(&bash))
+                    .map_err(io(&shell))
             }
         }
     }
@@ -252,7 +267,7 @@ impl Executor {
             Place::Sandbox(view) => {
                 let command = Sandbox::new(view, &self.build, &self.out)
                     .network(network)
-                    .command("/usr/bin/bash")
+                    .command(self.shell.program())
                     .arg("-c")
                     .arg(script)
                     .arg(phase);
@@ -269,8 +284,8 @@ impl Executor {
                     .map(|(k, v)| (k.clone(), rebase(v, &self.build, &self.out).into()))
                     .collect();
                 rebased.insert("PATH".to_owned(), self.direct_path(root)?);
-                let bash = root.join("usr/bin/bash");
-                std::process::Command::new(&bash)
+                let shell = self.direct_shell(root);
+                std::process::Command::new(&shell)
                     .arg("-c")
                     .arg(rebase(script, &self.build, &self.out))
                     .arg(phase)
@@ -282,7 +297,7 @@ impl Executor {
                     .stdout(log)
                     .stderr(err)
                     .spawn()
-                    .map_err(io(&bash))?
+                    .map_err(io(&shell))?
             }
         };
         let status = wait(child, self.timeout, &log_path)?;

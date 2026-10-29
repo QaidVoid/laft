@@ -55,8 +55,8 @@ fn hooks_run_around_the_style_script_in_one_shell() {
         post_install: Some("rm -r \"$DESTDIR/usr/share/foo\"\n".into()),
         ..no_phases()
     };
-    let phases = phases(style, &recipe, "src");
-    let header = "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/src\"\n";
+    let phases = phases(style, &recipe, "src", Shell::Sh);
+    let header = "#!/bin/sh\nset -eu\numask 022\ncd \"$SRC/src\"\n";
     assert_eq!(
         phases.build.as_deref(),
         Some(format!("{header}echo before\nmake PREFIX=/usr 'V=1'\necho after\n").as_str())
@@ -85,6 +85,7 @@ fn the_custom_style_runs_only_what_the_recipe_sets() {
         scripts(&Build::Custom, &input(Variant::Dynamic)),
         &recipe,
         "",
+        Shell::Sh,
     );
     let ran: Vec<&str> = phases
         .iter()
@@ -262,4 +263,106 @@ fn python_and_kernel_styles_render_their_defaults() {
          make LOCALVERSION=\"-laft3-lts\" olddefconfig"
     );
     assert!(kernel(Some("-custom"), Some("lts")).contains("LOCALVERSION=\"-custom\""));
+}
+
+#[test]
+fn a_bash_recipe_gets_the_bash_header() {
+    let recipe = RecipePhases {
+        build: Some("make".into()),
+        ..no_phases()
+    };
+    let phases = phases(
+        scripts(&Build::Custom, &input(Variant::Dynamic)),
+        &recipe,
+        "",
+        Shell::Bash,
+    );
+    assert_eq!(
+        phases.build.as_deref(),
+        Some("#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nmake\n")
+    );
+}
+
+/// Every style, with every option that changes what it renders.
+fn every_style() -> Vec<Build> {
+    vec![
+        Build::Custom,
+        Build::Configure {
+            args: vec!["--with-x=it's".into()],
+            standard_args: true,
+            autoreconf: true,
+            out_of_tree: true,
+            make_args: vec!["V=1".into()],
+            check_target: "check".into(),
+            install_args: vec!["install-strip".into()],
+        },
+        Build::Make {
+            make_args: vec!["V=1".into()],
+            check_target: "test".into(),
+            install_args: vec![],
+        },
+        Build::Meson {
+            options: vec!["-Dx=true".into()],
+            auto_features: Feature::Auto,
+        },
+        Build::Cmake {
+            defines: vec!["-DX=ON".into()],
+            generator: Generator::Make,
+        },
+        Build::Cargo {
+            features: vec!["a".into(), "b".into()],
+            default_features: false,
+            package: Some("p".into()),
+            bins: Some(vec!["x".into()]),
+            args: vec!["--locked".into()],
+        },
+        Build::Go {
+            packages: vec!["./cmd/x".into()],
+            ldflags: vec!["-s -w".into()],
+            tags: vec!["netgo".into()],
+            cgo: true,
+        },
+        Build::PythonPep517 {
+            check_cmd: Some("python3 -m pytest".into()),
+        },
+        Build::Kernel {
+            config: "files/config".into(),
+            localversion: None,
+            flavor: Some("lts".into()),
+            make_args: vec!["LLVM=1".into()],
+        },
+    ]
+}
+
+#[test]
+fn every_style_renders_posix_shell() {
+    let Some(dash) = ["/usr/bin/dash", "/bin/dash"]
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+    else {
+        println!("skipping: dash, a POSIX shell to parse the scripts with, is missing");
+        return;
+    };
+    for build in every_style() {
+        for variant in [Variant::Dynamic, Variant::Static] {
+            let rendered = phases(
+                scripts(&build, &input(variant)),
+                &no_phases(),
+                "",
+                Shell::Sh,
+            );
+            for (name, script) in rendered.iter() {
+                let Some(script) = script else { continue };
+                let output = std::process::Command::new(dash)
+                    .args(["-n", "-c", script])
+                    .output()
+                    .expect("dash runs");
+                assert!(
+                    output.status.success(),
+                    "{build:?} {variant} {name} is not POSIX shell: {}\n{script}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    }
 }

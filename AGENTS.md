@@ -82,6 +82,11 @@ These dependencies do not meet one of the checks above and were accepted on purp
 - Anything hashed or signed is serialized as canonical JSON. Never hash a pretty-printed or ad hoc serialization.
 - Use ordered collections wherever iteration order can reach a hash, a file, a manifest or user-visible output.
 
+## Shell
+
+- Recipe phases and every script a build style renders are POSIX `sh`: no arrays, `pipefail`, `[[ ]]`, `local`, brace expansion or other extensions. A recipe uses bash only by opting in with `shell = bash` and a comment that says why, and a style only when its upstream build truly needs bash. Either way `bash` becomes a build dependency.
+- Laft's own orchestration, such as building, bootstrapping, entering roots and checking results, is written in Rust, never in shell. A script may at most invoke a Laft binary, without logic of its own.
+
 ## Comments and documentation
 
 - Every public item has a doc comment. That includes modules, structs, enums, variants, fields, traits, functions, methods, constants and type aliases. Say what it is for and how it behaves. Cover `# Errors` and `# Panics` where they apply, and give examples for entry-point APIs.

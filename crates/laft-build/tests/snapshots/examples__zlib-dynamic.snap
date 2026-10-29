@@ -3,29 +3,29 @@ source: crates/laft-build/tests/examples.rs
 expression: scripts(&recipe)
 ---
 ### configure
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 if false; then cd "$BUILDDIR"; fi
 "$SRC//configure" '--prefix=/usr' '--libdir=/usr/lib'
 ### build
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 if false; then cd "$BUILDDIR"; fi
 make
 ### check
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 if false; then cd "$BUILDDIR"; fi
 make 'check'
 ### install
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 if false; then cd "$BUILDDIR"; fi

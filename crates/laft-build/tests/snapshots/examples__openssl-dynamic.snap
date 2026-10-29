@@ -4,34 +4,34 @@ assertion_line: 34
 expression: scripts(&recipe)
 ---
 ### configure
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 ./Configure --prefix=/usr --openssldir=/etc/ssl --libdir=lib \
   shared zlib-dynamic enable-ktls linux-x86_64 \
   $CPPFLAGS $CFLAGS $LDFLAGS
 ### build
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 make
 ### check
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 make HARNESS_JOBS="$JOBS" test
 ### install
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 make DESTDIR="$DESTDIR" MANSUFFIX=ssl install_sw install_ssldirs install_man_docs
 ### post_install
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 rm -f "$DESTDIR"/etc/ssl/*.dist

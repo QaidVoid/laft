@@ -4,8 +4,8 @@ assertion_line: 34
 expression: scripts(&recipe)
 ---
 ### prepare
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 mkdir -p "$CARGO_HOME"
@@ -18,27 +18,27 @@ directory = "/build/vendor/cargo"
 offline = true
 EOF
 ### build
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 cargo build --frozen --release --target "$CARGO_TARGET" \
   --features 'pcre2'
 ### check
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 cargo test --frozen --release --target "$CARGO_TARGET" --features 'pcre2'
 ### install
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 for b in 'rg'; do install -Dm755 "$CARGO_OUT/$b" "$DESTDIR/usr/bin/$b"; done
 ### post_install
-#!/usr/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 umask 022
 cd "$SRC/"
 install -d "$DESTDIR/usr/share/man/man1" \

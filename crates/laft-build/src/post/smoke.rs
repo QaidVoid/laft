@@ -12,7 +12,7 @@ use crate::fsx;
 
 /// Runs the recipe's smoke test `script` in a sandbox whose `/usr` is
 /// `view`, a view that holds only the main package, its runtime dependency
-/// closure, `bash` and `coreutils`. The sandbox's `/build` and `/out` are
+/// closure, `dash` and `coreutils`. The script runs with `/bin/sh`. The sandbox's `/build` and `/out` are
 /// new empty directories below `work`, which is removed afterwards.
 ///
 /// The test catches runtime dependencies that were neither declared nor

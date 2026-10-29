@@ -7,7 +7,7 @@ use laft_core::{PkgRef, Variant};
 use crate::recipe::{
     BuildOptions, Ci, Metadata, Operations, Outputs, Phases, Recipe, Runner, Subpackage,
 };
-use crate::{Item, Split};
+use crate::{Item, Shell, Split};
 
 /// A recipe of `name` at version 1.0 for the variant of `item`, written
 /// like a package reference, with nothing else set.
@@ -34,6 +34,7 @@ pub(crate) fn recipe(item: &str) -> Recipe {
         build_deps: Vec::new(),
         link_deps: Vec::new(),
         check_deps: Vec::new(),
+        shell: Shell::Sh,
         phases: Phases {
             prepare: None,
             configure: None,

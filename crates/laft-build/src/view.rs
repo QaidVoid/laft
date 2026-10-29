@@ -13,14 +13,15 @@ use laft_store::{PackageInput, Store};
 use crate::error::BuildError;
 use crate::{Item, KeyInputs, LinkInput, Recipe, StaticInput, ViewPackage};
 
-/// The packages every build view holds: a shell, the core utilities, the
+/// The packages every build view holds: the POSIX shell that runs the
+/// phases as `/bin/sh`, the core utilities, the
 /// compression tools, `make`, the compiler, the binary tools, the C
 /// library with its headers, the kernel headers and `pkgconf`.
 pub const BUILD_BASE: &[&str] = &[
-    "bash",
     "binutils",
     "bzip2",
     "coreutils",
+    "dash",
     "diffutils",
     "file",
     "findutils",
@@ -46,7 +47,7 @@ pub const STATIC_TOOLCHAIN: &str = "toolchain-musl";
 
 /// The packages that a smoke test's view holds besides the package and its
 /// runtime dependencies.
-pub const SMOKE_BASE: &[&str] = &["bash", "coreutils"];
+pub const SMOKE_BASE: &[&str] = &["coreutils", "dash"];
 
 /// The package references the build view of `recipe` is resolved from:
 ///

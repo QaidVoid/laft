@@ -111,7 +111,7 @@ fn a_direct_phase_finds_programs_in_the_search_directories_first() {
     let tools = dir.path().join("tools/bin");
     fs::create_dir_all(&tools).unwrap();
     let program = tools.join("uname");
-    fs::write(&program, "#!/usr/bin/bash\necho from-tools\n").unwrap();
+    fs::write(&program, "#!/bin/sh\necho from-tools\n").unwrap();
     fs::set_permissions(
         &program,
         std::os::unix::fs::PermissionsExt::from_mode(0o755),

@@ -46,7 +46,7 @@ fn eval_shows_the_rendered_phases() {
         "{text}"
     );
     assert!(text.contains("SOURCE_DATE_EPOCH=315532800"));
-    assert!(text.contains("## configure\n#!/usr/bin/bash"));
+    assert!(text.contains("## configure\n#!/bin/sh\nset -eu\n"));
 }
 
 #[test]

@@ -68,7 +68,7 @@ fn the_view_holds_the_closure_of_the_requests() {
     let view = assemble(&store, &recipe, false, &dir.path().join("view"), None).unwrap();
     assert!(view.usr.join("lib/libz.so.1").is_file());
     assert!(view.usr.join("include/zlib.h").is_file());
-    assert!(view.usr.join("share/bash/file").is_file());
+    assert!(view.usr.join("share/dash/file").is_file());
     assert!(!view.usr.join("share/unrelated").exists());
     let names: Vec<&str> = view.packages.iter().map(|p| p.name.as_str()).collect();
     assert!(names.contains(&"zlib-dev") && !names.contains(&"unrelated"));
@@ -110,7 +110,7 @@ fn a_static_view_records_the_static_libraries_it_links() {
 fn a_view_the_store_cannot_satisfy_fails() {
     let dir = laft_test::tempdir();
     let store = Store::at(dir.path().join("store"));
-    TestPkg::new("bash").add(&store, dir.path());
+    TestPkg::new("dash").add(&store, dir.path());
     let error = assemble(
         &store,
         &recipe("app"),
@@ -126,7 +126,7 @@ fn a_view_the_store_cannot_satisfy_fails() {
 fn a_smoke_view_holds_the_package_and_its_runtime_closure() {
     let dir = laft_test::tempdir();
     let store = Store::at(dir.path().join("store"));
-    for name in ["bash", "coreutils", "zlib", "gcc"] {
+    for name in ["dash", "coreutils", "zlib", "gcc"] {
         TestPkg::new(name).add(&store, dir.path());
     }
     TestPkg {
@@ -140,7 +140,7 @@ fn a_smoke_view_holds_the_package_and_its_runtime_closure() {
         .find(|e| e.meta.name.as_str() == "app")
         .unwrap();
     let usr = assemble_smoke(&store, app, &dir.path().join("smoke")).unwrap();
-    for present in ["app", "zlib", "bash", "coreutils"] {
+    for present in ["app", "zlib", "dash", "coreutils"] {
         assert!(usr.join("share").join(present).exists(), "{present}");
     }
     assert!(!usr.join("share/gcc").exists());
