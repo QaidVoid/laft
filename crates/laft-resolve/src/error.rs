@@ -4,6 +4,9 @@ use laft_core::{Dep, Name, Timestamp, Variant};
 
 use crate::explain::{Chain, Learned, Package, date, list};
 
+/// How many learned constraints an R009 message lists.
+const LEARNED_SHOWN: usize = 10;
+
 /// A resolution that failed, with everything needed to explain why.
 ///
 /// Its [`Display`](fmt::Display) form is the full message, for example:
@@ -122,7 +125,8 @@ pub enum ErrorKind {
         priority: i64,
     },
     /// R009: the search gave up after a bounded number of passes without
-    /// finding a resolution or showing that none exists.
+    /// finding a resolution or meeting a failure. The message lists only
+    /// the first few learned constraints.
     RestartLimit {
         /// The number of passes it made.
         passes: usize,
@@ -410,8 +414,11 @@ impl fmt::Display for Error {
             ErrorKind::RestartLimit { passes, learned } => {
                 head(f)?;
                 writeln!(f, "resolution did not settle after {passes} passes")?;
-                for l in learned {
+                for l in learned.iter().take(LEARNED_SHOWN) {
                     writeln!(f, "  {l}")?;
+                }
+                if learned.len() > LEARNED_SHOWN {
+                    writeln!(f, "  and {} more", learned.len() - LEARNED_SHOWN)?;
                 }
                 write!(
                     f,

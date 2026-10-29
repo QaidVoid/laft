@@ -1047,6 +1047,13 @@ fn learned_constraint_gives_way_to_an_older_imposer() {
     let core = imposer_universe(true);
     let r = resolve_core(&core, &["app"], &[]).unwrap();
     assert_eq!(labels(&r), ["app 1-r1", "lib 2-r1", "mid 1-r1"]);
+    assert_eq!(
+        r.learned
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["learned to avoid mid 2-r1"]
+    );
 }
 
 #[test]
@@ -1145,13 +1152,24 @@ fn dependency_on_a_replaced_name_follows_the_rename() {
 }
 
 #[test]
-fn search_gives_up_after_a_bounded_number_of_passes() {
+fn exhausted_pass_budget_reports_the_first_failure() {
     let mut packages: Vec<Meta> = (1..=1100)
         .map(|v| pkg(&format!("lib {v}")).depends(&["so:libmissing.so.1"]))
         .collect();
     packages.push(pkg("app 1").depends(&["lib"]));
     let core = index("core", packages);
-    assert_eq!(code(resolve_core(&core, &["app"], &[])), "R009");
+    assert_eq!(code(resolve_core(&core, &["app"], &[])), "R003");
+}
+
+#[test]
+fn search_gives_up_after_a_bounded_number_of_passes() {
+    let core = one_bound_per_pass_universe();
+    let e = resolve_core(&core, &["app"], &[]).unwrap_err();
+    let ErrorKind::RestartLimit { passes, learned } = &*e.kind else {
+        panic!("expected R009, got {e}");
+    };
+    assert_eq!(*passes, 1000);
+    assert!(!learned.is_empty());
 }
 
 #[test]

@@ -57,3 +57,25 @@ fn why_follows_dependencies_through_several_packages() {
     );
     assert!(r.why(&name("ripgrep")).is_none());
 }
+
+#[test]
+fn learned_replacement_is_shown_as_replacing_the_name() {
+    let core = index(
+        "core",
+        vec![
+            pkg("bar 1").replaces(&["foo"]),
+            pkg("bar 2"),
+            pkg("x 1").depends(&["foo"]),
+            pkg("app 1").depends(&["bar", "x"]),
+        ],
+    );
+    let r = resolve_core(&core, &["app"], &[]).unwrap();
+    assert_eq!(labels(&r), ["app 1-r1", "bar 1-r1", "x 1-r1"]);
+    assert_eq!(
+        r.learned
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["learned bar replaces foo from x 1-r1"]
+    );
+}

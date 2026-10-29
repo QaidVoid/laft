@@ -303,3 +303,19 @@ fn alternatives_errors_name_the_group_and_members() {
          members present: gcc"
     );
 }
+
+#[test]
+fn r009_lists_only_the_first_learned_constraints() {
+    let core = one_bound_per_pass_universe();
+    let shown: String = (1..=10)
+        .map(|i| format!("  learned lib{i:04}<2 from user{i:04} 1-r1\n"))
+        .collect();
+    assert_eq!(
+        message(&[(&core, 0)], "system", vec![req("app")]),
+        format!(
+            "error[R009]: view \"system\": resolution did not settle after 1000 passes\n\
+             {shown}  and 990 more\n  \
+             hint: request explicit versions of the packages above to narrow the search"
+        )
+    );
+}

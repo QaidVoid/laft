@@ -92,7 +92,8 @@ pub enum Learned {
 
 impl fmt::Display for Learned {
     /// Writes `learned foo<2 from bar 1.0-r1`,
-    /// `learned zlib provides pc:zlib>=1.3 from app 1-r1` or
+    /// `learned zlib provides pc:zlib>=1.3 from app 1-r1`,
+    /// `learned bar replaces foo from app 1-r1` or
     /// `learned to avoid mid 2-r1`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -101,6 +102,11 @@ impl fmt::Display for Learned {
                 dep: dep @ Dep::Pkg(n, _),
                 by,
             } if n == name => write!(f, "learned {dep} from {by}"),
+            Self::Require {
+                name,
+                dep: dep @ Dep::Pkg(..),
+                by,
+            } => write!(f, "learned {name} replaces {dep} from {by}"),
             Self::Require { name, dep, by } => {
                 write!(f, "learned {name} provides {dep} from {by}")
             }

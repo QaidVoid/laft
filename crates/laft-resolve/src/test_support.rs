@@ -233,3 +233,20 @@ impl Seeded {
         }
     }
 }
+
+/// A resolution exists, but each pass learns only one of the 1001 bounds
+/// that keep every `libN` below version 2, so the search runs out of passes.
+pub(crate) fn one_bound_per_pass_universe() -> Index {
+    let mut packages = Vec::new();
+    let mut deps = Vec::new();
+    for i in 1..=1001 {
+        let (lib, user) = (format!("lib{i:04}"), format!("user{i:04}"));
+        packages.push(pkg(&format!("{lib} 1")));
+        packages.push(pkg(&format!("{lib} 2")));
+        packages.push(pkg(&format!("{user} 1")).depends(&[&format!("{lib}<2")]));
+        deps.extend([lib, user]);
+    }
+    let deps: Vec<&str> = deps.iter().map(String::as_str).collect();
+    packages.push(pkg("app 1").depends(&deps));
+    index("core", packages)
+}

@@ -149,9 +149,10 @@ impl<'a> Universe<'a> {
     /// other failure avoids the package whose dependency or conflict failed.
     /// The search backtracks over these choices depth first, in a fixed
     /// order, so it finds a resolution whenever one exists that does not
-    /// depend on choosing between several provider names. It gives up with
-    /// R009 after a bounded number of passes. When no resolution exists, the
-    /// error is the first failure the search met.
+    /// depend on choosing between several provider names. When no
+    /// resolution exists, the error is the first failure the search met.
+    /// The search makes a bounded number of passes. When they run out, it
+    /// reports the first failure it met, or R009 if it met none.
     ///
     /// The result depends only on the universe's contents and on `input`,
     /// never on the order of repositories, index entries or requests.
@@ -231,6 +232,10 @@ impl<'a> Universe<'a> {
             choices.push((path.len(), options.into_iter()));
             loop {
                 let Some((len, options)) = choices.last_mut() else {
+                    // Every conflict without an error offers options, the
+                    // search tries each of them, and no option repeats a fact
+                    // already on the path, so an exhausted tree has recorded
+                    // at least one failure.
                     let error = first.expect("every exhausted branch ends in a failure");
                     return Err(fail(error));
                 };
@@ -242,9 +247,11 @@ impl<'a> Universe<'a> {
                 choices.pop();
             }
         }
-        Err(fail(Box::new(ErrorKind::RestartLimit {
-            passes: MAX_PASSES,
-            learned: path.iter().map(Fact::learned).collect(),
+        Err(fail(first.unwrap_or_else(|| {
+            Box::new(ErrorKind::RestartLimit {
+                passes: MAX_PASSES,
+                learned: path.iter().map(Fact::learned).collect(),
+            })
         })))
     }
 }
