@@ -18,6 +18,30 @@ const BENEATH: ResolveFlags = ResolveFlags::BENEATH.union(ResolveFlags::NO_SYMLI
 const BOTH_EMPTY: MoveMountFlags =
     MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH.union(MoveMountFlags::MOVE_MOUNT_T_EMPTY_PATH);
 
+/// Moves the calling process into a mount namespace of its own, in which
+/// mounts of the original namespace still appear but from which no mount
+/// propagates back.
+///
+/// This is how the store worker gets a place to make `/laft` writable
+/// while it stays read-only everywhere else. The process must have a single
+/// thread, because `unshare(CLONE_NEWNS)` fails in a process whose threads
+/// share their filesystem information.
+///
+/// # Errors
+///
+/// Fails when the namespace cannot be created, which needs
+/// `CAP_SYS_ADMIN`, or when the mounts cannot be made slaves of the
+/// original namespace. The process stays in the original namespace when
+/// the first step fails.
+pub fn private_mount_namespace() -> Result<(), Error> {
+    sys::unshare(UnshareFlags::NEWNS).map_err(|e| Error::new(Step::Unshare, e))?;
+    rustix::mount::mount_change(
+        c"/",
+        MountPropagationFlags::DOWNSTREAM | MountPropagationFlags::REC,
+    )
+    .map_err(|e| Error::new(Step::Propagation, e))
+}
+
 /// Moves the calling process into a private mount namespace in which the
 /// `usr` directory of the system generation `generation` shows the view tree
 /// `view`, with the generation's `privileged` files bound on top.

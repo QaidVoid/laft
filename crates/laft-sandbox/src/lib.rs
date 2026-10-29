@@ -21,6 +21,9 @@
 //!   [`close_inherited_on_exec`] and [`reset_signal_dispositions`], and
 //!   after dropping privileges it checks them with [`user_ids`] and
 //!   [`group_ids`].
+//! - The store worker of a live transaction calls
+//!   [`private_mount_namespace`] before it makes `/laft` writable, so that
+//!   the writable mount never appears outside.
 //!
 //! Every mount uses the descriptor based mount API (`open_tree`,
 //! `move_mount`, `fsmount` and `mount_setattr`), so Linux 5.12 or newer is
@@ -41,7 +44,7 @@ mod sys;
 #[cfg(test)]
 mod test_support;
 
-pub use enter::enter_view;
+pub use enter::{enter_view, private_mount_namespace};
 pub use error::Error;
 pub use fixed::{FixedSandbox, NOBODY};
 pub use process::{close_inherited_on_exec, group_ids, reset_signal_dispositions, user_ids};

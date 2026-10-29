@@ -8,9 +8,9 @@ use rustix::io::Errno;
 use rustix::mount::{MountFlags, MountPropagationFlags};
 use rustix::thread::LinkNameSpaceType;
 
-use crate::enter_view;
 use crate::error::Step;
 use crate::test_support::in_user_namespace;
+use crate::{enter_view, private_mount_namespace};
 
 /// Turns a failed expectation into the test's failure message.
 macro_rules! ensure {
@@ -237,6 +237,42 @@ fn privileged_paths_that_are_links_or_directories_in_the_view_are_skipped() {
         ensure!(
             usr.join("passwd").is_dir(),
             "the directory in the view was replaced"
+        );
+        Ok(())
+    });
+}
+
+#[test]
+fn a_private_namespace_receives_mounts_but_never_sends_them() {
+    let dir = laft_test::tempdir();
+    let base = dir.path();
+    in_user_namespace(|| {
+        rustix::mount::mount(c"tmpfs", base, c"tmpfs", MountFlags::empty(), None).map_err(text)?;
+        rustix::mount::mount_change(base, MountPropagationFlags::SHARED).map_err(text)?;
+        let (inner_dir, outer_dir) = (base.join("inner"), base.join("outer"));
+        fs::create_dir_all(&inner_dir).map_err(text)?;
+        fs::create_dir_all(&outer_dir).map_err(text)?;
+        let outer = File::open("/proc/self/ns/mnt").map_err(text)?;
+        private_mount_namespace().map_err(text)?;
+        let inner = File::open("/proc/self/ns/mnt").map_err(text)?;
+        rustix::mount::mount(c"tmpfs", &inner_dir, c"tmpfs", MountFlags::empty(), None)
+            .map_err(text)?;
+
+        rustix::thread::move_into_link_name_space(outer.as_fd(), Some(LinkNameSpaceType::Mount))
+            .map_err(text)?;
+        let parent = fs::metadata(base).map_err(text)?.dev();
+        ensure!(
+            fs::metadata(&inner_dir).map_err(text)?.dev() == parent,
+            "a mount of the private namespace appeared outside"
+        );
+        rustix::mount::mount(c"tmpfs", &outer_dir, c"tmpfs", MountFlags::empty(), None)
+            .map_err(text)?;
+
+        rustix::thread::move_into_link_name_space(inner.as_fd(), Some(LinkNameSpaceType::Mount))
+            .map_err(text)?;
+        ensure!(
+            fs::metadata(&outer_dir).map_err(text)?.dev() != parent,
+            "a mount made outside did not appear in the private namespace"
         );
         Ok(())
     });
