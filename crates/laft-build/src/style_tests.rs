@@ -362,6 +362,11 @@ fn every_style_renders_posix_shell() {
                     "{build:?} {variant} {name} is not POSIX shell: {}\n{script}",
                     String::from_utf8_lossy(&output.stderr)
                 );
+                let found = laft_test::bashisms(script);
+                assert!(
+                    found.is_empty(),
+                    "{build:?} {variant} {name} uses {found:?}:\n{script}"
+                );
             }
         }
     }

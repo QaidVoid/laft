@@ -153,6 +153,10 @@ fn the_example_and_machine_test_recipes_parse_as_their_shell() {
                         "{name} {phase} does not parse: {}",
                         String::from_utf8_lossy(&output.stderr)
                     );
+                    if recipe.shell == laft_build::Shell::Sh {
+                        let found = laft_test::bashisms(script);
+                        assert!(found.is_empty(), "{name} {phase} uses {found:?}");
+                    }
                 }
             }
         }

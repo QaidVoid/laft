@@ -21,6 +21,9 @@
 //! ```
 //!
 //! [`write_program`] writes a stand-in program that a test can execute.
+//!
+//! [`bashisms`] finds the common shell extensions in a script that must be
+//! POSIX `sh`.
 
 #![forbid(unsafe_code)]
 
@@ -103,6 +106,30 @@ pub fn write_program(path: &Path, content: &[u8]) {
     let status = child.wait().expect("the shell can be waited for");
     assert!(status.success(), "/bin/sh cannot write {}", path.display());
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("the mode can be set");
+}
+
+/// The words of `script` that only extended shells such as bash
+/// understand: `local`, `source`, `declare`, `typeset`, `function`,
+/// `shopt`, `pushd`, `popd`, `[[`, `]]`, `==` and `pipefail`, in order.
+///
+/// A word is a run of characters between blanks and the shell operators
+/// `;`, `|`, `&`, `(` and `)`. Quotes are not parsed, so a quoted word
+/// counts too. The scan finds the common extensions that a POSIX shell
+/// parses but cannot run, not every one.
+///
+/// ```
+/// assert_eq!(laft_test::bashisms("local x; [ \"$x\" == y ]"), ["local", "=="]);
+/// assert!(laft_test::bashisms("x=1; [ \"$x\" = 1 ]").is_empty());
+/// ```
+pub fn bashisms(script: &str) -> Vec<&str> {
+    const EXTENSIONS: [&str; 12] = [
+        "local", "source", "declare", "typeset", "function", "shopt", "pushd", "popd", "[[", "]]",
+        "==", "pipefail",
+    ];
+    script
+        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')'))
+        .filter(|word| EXTENSIONS.contains(word))
+        .collect()
 }
 
 /// Adds the owner write bit to `dir` and every directory below it,
