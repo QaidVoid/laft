@@ -381,8 +381,9 @@ fn kept<'a>(
 /// current databases give the same name, then preferred ids, then the
 /// lowest free id of each account's range.
 ///
-/// An explicit id that an account in `kept` holds is refused, because both
-/// accounts would remain. Declared holders are refused by the later passes.
+/// An explicit or recorded id that an account in `kept` holds is refused,
+/// because both accounts would remain. Declared holders are refused by the
+/// later passes.
 fn assign<'a>(
     kind: &'static str,
     wants: &[Want<'a>],
@@ -437,8 +438,16 @@ fn assign<'a>(
                 .iter()
                 .any(|(other, &recorded)| recorded == id && other != want.name)
         });
-        if let Some(&id) = recorded.get(want.name).or(existing) {
-            taken.claim(want.name, id, errors);
+        let Some(&id) = recorded.get(want.name).or(existing) else {
+            continue;
+        };
+        match kept.get(&id) {
+            Some(&holder) if holder != want.name => errors.push(ConfigError::DuplicateId {
+                kind,
+                id,
+                names: [holder.to_owned(), want.name.to_owned()],
+            }),
+            _ => taken.claim(want.name, id, errors),
         }
     }
     let recorded_ids: BTreeSet<u32> = recorded.values().copied().collect();

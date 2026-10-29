@@ -62,12 +62,13 @@ impl Databases {
     /// Reads the databases in the directory `etc`. A missing database is
     /// empty. A line with fewer fields than its database has, as other
     /// tools may write, reads the missing trailing fields as empty and adds
-    /// a warning.
+    /// a warning. A missing password field of `shadow` or `gshadow` reads
+    /// as `!`, a locked password, because an empty one needs no password.
     pub(crate) fn read(etc: &Path) -> Result<Self> {
         let mut warnings = Vec::new();
         let w = &mut warnings;
         Ok(Self {
-            passwd: parse(&etc.join("passwd"), 7, w, |f| {
+            passwd: parse(&etc.join("passwd"), 7, "", w, |f| {
                 Ok(Passwd {
                     name: f[0].to_owned(),
                     password: f[1].to_owned(),
@@ -78,7 +79,7 @@ impl Databases {
                     shell: f[6].to_owned(),
                 })
             })?,
-            group: parse(&etc.join("group"), 4, w, |f| {
+            group: parse(&etc.join("group"), 4, "", w, |f| {
                 Ok(GroupLine {
                     name: f[0].to_owned(),
                     password: f[1].to_owned(),
@@ -86,14 +87,14 @@ impl Databases {
                     members: list(f[3]),
                 })
             })?,
-            shadow: parse(&etc.join("shadow"), 9, w, |f| {
+            shadow: parse(&etc.join("shadow"), 9, LOCKED, w, |f| {
                 Ok(Shadow {
                     name: f[0].to_owned(),
                     hash: f[1].to_owned(),
                     aging: f[2..].iter().map(|s| (*s).to_owned()).collect(),
                 })
             })?,
-            gshadow: parse(&etc.join("gshadow"), 4, w, |f| {
+            gshadow: parse(&etc.join("gshadow"), 4, LOCKED, w, |f| {
                 Ok(Gshadow {
                     name: f[0].to_owned(),
                     password: f[1].to_owned(),
@@ -160,13 +161,18 @@ fn line(out: &mut String, fields: &[&String]) {
     out.push('\n');
 }
 
+/// A password field that matches no password.
+const LOCKED: &str = "!";
+
 /// Parses every non-empty line of the database `path` into `fields` fields.
-/// Missing trailing fields are empty, and each such line adds a warning to
-/// `warnings`. A line without a name, with too many fields, a bad value or
-/// a name seen before is malformed.
+/// A missing password field, the second one, reads as `password`. Other
+/// missing trailing fields are empty. Each line with missing fields adds a
+/// warning to `warnings`. A line without a name, with too many fields, a
+/// bad value or a name seen before is malformed.
 fn parse<T>(
     path: &Path,
     fields: usize,
+    password: &'static str,
     warnings: &mut Vec<Warning>,
     build: impl Fn(&[&str]) -> Result<T, &'static str>,
 ) -> Result<Vec<T>> {
@@ -197,6 +203,9 @@ fn parse<T>(
             )));
         }
         if parts.len() < fields {
+            if parts.len() == 1 {
+                parts.push(password);
+            }
             parts.resize(fields, "");
             warnings.push(Warning::ShortLine {
                 path: path.to_path_buf(),

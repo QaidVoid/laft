@@ -415,6 +415,32 @@ fn a_declared_group_keeps_its_administrators_and_password_when_mutable() {
 }
 
 #[test]
+fn a_removed_user_is_no_longer_a_group_administrator() {
+    let env = Env::new();
+    env.write("etc/group", "wheel:x:10:alice,carol\nmedia:x:1500:carol\n");
+    env.write(
+        "etc/gshadow",
+        "wheel:!:alice,carol:alice,carol\nmedia:!:carol:carol\n",
+    );
+    apply(
+        &env,
+        1,
+        &users_with(&[("alice", alice()), ("carol", alice())]),
+    );
+    let report = apply(&env, 2, &users_with(&[("alice", alice())]));
+    assert_eq!(report.removed_users, ["carol"]);
+    let gshadow = env.read("etc/gshadow");
+    let line = |name: &str| {
+        gshadow
+            .lines()
+            .find(|l| l.starts_with(&format!("{name}:")))
+            .map(str::to_owned)
+    };
+    assert_eq!(line("wheel").as_deref(), Some("wheel:!:alice:"));
+    assert_eq!(line("media").as_deref(), Some("media:!::"));
+}
+
+#[test]
 fn a_kept_user_with_its_hash_in_passwd_is_not_locked() {
     let env = Env::new();
     env.write(
@@ -515,6 +541,20 @@ fn short_lines_from_other_tools_read_missing_fields_as_empty() {
         shadow.lines().any(|l| l == "bob:$6$salt$bobhash:::::::"),
         "{shadow}"
     );
+}
+
+#[test]
+fn a_shadow_line_without_a_password_field_locks_the_account() {
+    let env = Env::new();
+    with_bob(&env);
+    env.write("etc/shadow", "bob\n");
+    env.write("etc/gshadow", "bob\n");
+    let report = apply(&env, 1, &users_with(&[]));
+    assert_eq!(report.warnings.len(), 2, "{:?}", report.warnings);
+    let shadow = env.read("etc/shadow");
+    assert!(shadow.lines().any(|l| l == "bob:!:::::::"), "{shadow}");
+    let gshadow = env.read("etc/gshadow");
+    assert!(gshadow.lines().any(|l| l == "bob:!::"), "{gshadow}");
 }
 
 #[test]

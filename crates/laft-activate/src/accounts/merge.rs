@@ -196,12 +196,14 @@ pub(crate) fn merge(
             match old_gshadow.remove(&g.name) {
                 Some(entry) if declared.groups.contains_key(&g.name) && declared.mutable => {
                     Gshadow {
+                        admins: without(&entry.admins, &gone),
                         members: g.members.clone(),
                         ..entry
                     }
                 }
                 Some(_) if declared.groups.contains_key(&g.name) => fresh(),
                 Some(mut entry) => {
+                    entry.admins = without(&entry.admins, &gone);
                     entry.members.retain(|m| !gone.contains(m.as_str()));
                     entry
                 }
@@ -222,6 +224,15 @@ pub(crate) fn merge(
         removed_groups,
         warnings,
     })
+}
+
+/// The comma-separated `names` without those in `gone`.
+fn without(names: &str, gone: &BTreeSet<&str>) -> String {
+    names
+        .split(',')
+        .filter(|n| !n.is_empty() && !gone.contains(n))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// A new shadow entry with `hash` and empty aging fields.

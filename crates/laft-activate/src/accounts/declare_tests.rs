@@ -308,3 +308,23 @@ fn an_explicit_id_held_by_an_account_that_stays_is_refused() {
     let declared = declare(&env.lock(), &users).expect("carol is removed by this activation");
     assert_eq!(declared.users["bob"].uid, 1000);
 }
+
+#[test]
+fn a_recorded_id_that_an_account_that_stays_now_holds_is_refused() {
+    let env = Env::new();
+    let users = users_with(&[("bob", User::default())]);
+    let first = declare(&env.lock(), &users).expect("valid");
+    assert_eq!(first.users["bob"].uid, 1000);
+    env.write("etc/passwd", "carol:x:1000:1000::/home/carol:/bin/sh\n");
+    env.write("etc/group", "carol:x:1000:\n");
+    let Err(Error::Config(errors)) = declare(&env.lock(), &users) else {
+        panic!("carol keeps uid 1000, which bob has recorded");
+    };
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigError::DuplicateId { id: 1000, names, .. } if names.contains(&"carol".to_owned())
+        )),
+        "{errors:?}"
+    );
+}
