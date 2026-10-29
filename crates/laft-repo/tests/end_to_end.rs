@@ -80,6 +80,8 @@ fn published_repository_is_accepted_and_served_over_file_urls() {
         s(&repo),
         "--min-soak",
         "24h",
+        "--root-key",
+        s(&root.with_extension("pub")),
         "--check-report",
         s(&report_file),
         "--key",

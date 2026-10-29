@@ -554,12 +554,15 @@ fn promote_honors_its_gates_and_copies_the_packages() {
     let out = dir.path().join("out");
     pkg("hello", "1.0").write(&out);
     let repo = dir.path().join("repo");
+    let root = keygen(dir.path(), "root");
+    let root_pub = root.with_extension("pub");
     let now = at(0);
     let mut args = index_args(&repo, "testing", &now);
-    args.push(s(&out));
+    args.extend(["--key", s(&root), s(&out)]);
     ok(&args);
     let promote = |extra: &[&str]| {
         let mut args = vec!["promote", "--repo", s(&repo), "--min-soak", "24h"];
+        args.extend(["--root-key", s(&root_pub)]);
         args.extend(extra);
         run(&args)
     };
@@ -602,6 +605,140 @@ fn promote_honors_its_gates_and_copies_the_packages() {
     assert_eq!(current.generation, T0 + DAY);
     assert_eq!(current.packages, testing.packages);
     assert_eq!(current.channel.as_str(), "current");
+}
+
+#[test]
+fn the_soak_gate_counts_only_a_verified_source() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    pkg("hello", "1.0").write(&out);
+    let repo = dir.path().join("repo");
+    let root = keygen(dir.path(), "root");
+    let other = keygen(dir.path(), "other");
+    let online = keygen(dir.path(), "online");
+    let promote = |root_pub: &Path| {
+        run(&[
+            "promote",
+            "--repo",
+            s(&repo),
+            "--min-soak",
+            "1h",
+            "--root-key",
+            s(root_pub),
+            "--now",
+            &at(DAY),
+        ])
+    };
+    let index = |key: Option<&Path>, offset: u64| {
+        let now = at(offset);
+        let mut args = index_args(&repo, "testing", &now);
+        if let Some(key) = key {
+            args.extend(["--key", s(key)]);
+        }
+        args.push(s(&out));
+        ok(&args);
+    };
+    let stderr = |output: std::process::Output| {
+        assert_eq!(output.status.code(), Some(1));
+        String::from_utf8(output.stderr).unwrap()
+    };
+
+    let output = run(&["promote", "--repo", s(&repo), "--min-soak", "1h"]);
+    assert_eq!(output.status.code(), Some(2), "--min-soak needs --root-key");
+
+    index(None, 0);
+    let error = stderr(promote(&root.with_extension("pub")));
+    assert!(error.contains("is not signed"), "{error}");
+    index(Some(&other), HOUR);
+    let error = stderr(promote(&root.with_extension("pub")));
+    assert!(error.contains("does not verify"), "{error}");
+
+    ok(&[
+        "keys",
+        "add",
+        "--repo",
+        s(&repo),
+        "--name",
+        "core",
+        "--public",
+        s(&online.with_extension("pub")),
+        "--not-before",
+        &at(0),
+        "--not-after",
+        &at(365 * DAY),
+    ]);
+    index(Some(&online), 2 * HOUR);
+    let error = stderr(promote(&root.with_extension("pub")));
+    assert!(error.contains("keys.json is not signed"), "{error}");
+    ok(&["sign", "--repo", s(&repo), "--keys", "--key", s(&other)]);
+    let error = stderr(promote(&root.with_extension("pub")));
+    assert!(error.contains("keys.json does not verify"), "{error}");
+    ok(&["sign", "--repo", s(&repo), "--keys", "--key", s(&root)]);
+    let output = promote(&root.with_extension("pub"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn signing_with_a_key_keys_json_does_not_list_needs_an_explicit_flag() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    pkg("hello", "1.0").write(&out);
+    let repo = dir.path().join("repo");
+    let online = keygen(dir.path(), "online");
+    let unlisted = keygen(dir.path(), "unlisted");
+    ok(&[
+        "keys",
+        "add",
+        "--repo",
+        s(&repo),
+        "--name",
+        "core",
+        "--public",
+        s(&online.with_extension("pub")),
+        "--not-before",
+        &at(0),
+        "--not-after",
+        &at(365 * DAY),
+    ]);
+    let now = at(0);
+    let mut args = index_args(&repo, "current", &now);
+    args.extend(["--key", s(&unlisted), s(&out)]);
+    let (_, stderr) = fails(&args);
+    assert!(stderr.contains("is not listed in keys.json"), "{stderr}");
+    assert!(!repo.join("pool").exists());
+
+    args.push("--allow-unlisted-key");
+    let output = run(&args);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("warning") && stderr.contains("until keys.json lists"),
+        "{stderr}"
+    );
+
+    let sign = |extra: &[&str]| {
+        let mut args = vec!["sign", "--repo", s(&repo), "--channel", "current"];
+        args.extend(["--key", s(&unlisted)]);
+        args.extend(extra);
+        run(&args)
+    };
+    assert_eq!(sign(&[]).status.code(), Some(1));
+    let output = sign(&["--allow-unlisted-key"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("warning"));
+    ok(&[
+        "sign",
+        "--repo",
+        s(&repo),
+        "--channel",
+        "current",
+        "--key",
+        s(&online),
+    ]);
 }
 
 #[test]

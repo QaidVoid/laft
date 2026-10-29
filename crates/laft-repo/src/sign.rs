@@ -22,6 +22,9 @@ pub(crate) struct Signer {
     pk: minisign::PublicKey,
     sk: SecretKey,
     public: PublicKey,
+    /// Whether it may sign indexes although the repository's `keys.json`
+    /// does not list it. Off when loaded.
+    pub(crate) allow_unlisted: bool,
 }
 
 impl Signer {
@@ -38,7 +41,12 @@ impl Signer {
         };
         let pk = minisign::PublicKey::from_secret_key(&sk)?;
         let public = pk.to_base64().parse()?;
-        Ok(Self { pk, sk, public })
+        Ok(Self {
+            pk,
+            sk,
+            public,
+            allow_unlisted: false,
+        })
     }
 
     /// The id of the key.

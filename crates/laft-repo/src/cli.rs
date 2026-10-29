@@ -92,6 +92,10 @@ pub(crate) enum Command {
         /// The environment variable that holds the key's password.
         #[arg(long, value_name = "VAR", default_value = PASSWORD_ENV)]
         password_env: String,
+        /// Sign the index with a key that keys.json does not list. Clients
+        /// reject the result until keys.json lists the key.
+        #[arg(long, conflicts_with = "keys")]
+        allow_unlisted_key: bool,
     },
     /// Run the repository-wide checks over a channel's index.
     ///
@@ -148,10 +152,15 @@ pub(crate) enum Command {
         /// The architecture.
         #[arg(long, default_value = "x86_64-v3")]
         arch: Arch,
-        /// Gate: the source generation was written at least this long ago,
-        /// for example 24h, whether or not it is signed.
-        #[arg(long, value_name = "DURATION", value_parser = parse_duration)]
+        /// Gate: the source generation was signed at least this long ago,
+        /// for example 24h. Its signature must verify against keys.json,
+        /// or against the root key in direct mode.
+        #[arg(long, value_name = "DURATION", value_parser = parse_duration, requires = "root_key")]
         min_soak: Option<u64>,
+        /// The root public key file that `--min-soak` verifies the source
+        /// generation with.
+        #[arg(long, value_name = "FILE")]
+        root_key: Option<PathBuf>,
         /// Gate: a report of `laft-repo check --json` on the source
         /// generation without errors.
         #[arg(long, value_name = "FILE")]
@@ -278,6 +287,10 @@ pub(crate) struct SignArgs {
     /// The environment variable that holds the key's password.
     #[arg(long, value_name = "VAR", default_value = PASSWORD_ENV)]
     pub(crate) password_env: String,
+    /// Sign with a key that keys.json does not list. Clients reject the
+    /// result until keys.json lists the key.
+    #[arg(long, requires = "key")]
+    pub(crate) allow_unlisted_key: bool,
 }
 
 /// How long a new generation is valid and what is kept.

@@ -12,14 +12,16 @@
 //! laft-repo keygen --out keys/online --unencrypted
 //! laft-repo index --repo repo --name core --channel testing --key keys/online.key out/
 //! laft-repo check --repo repo --channel testing --json > report.json
-//! laft-repo promote --repo repo --min-soak 24h --check-report report.json --key keys/online.key
+//! laft-repo promote --repo repo --min-soak 24h --root-key keys/root.pub --check-report report.json --key keys/online.key
 //! laft-repo yank --repo repo --channel current zlib 1.3.1 --reason "breaks gzip" --key keys/online.key
 //! laft-repo keys add --repo repo --public keys/next.pub --not-after 2027-10-01T00:00:00Z --key keys/root.key
 //! laft-repo publish repo /srv/www/laft
 //! ```
 //!
 //! Commands that write a new index generation sign it when `--key` is
-//! given, and leave it unsigned for `laft-repo sign` otherwise. Encrypted
+//! given, and leave it unsigned for `laft-repo sign` otherwise. Once a
+//! repository has a `keys.json`, a key it does not list signs an index
+//! only with `--allow-unlisted-key`, and a warning follows. Encrypted
 //! secret keys are decrypted with the password in the environment
 //! variable `LAFT_SIGNING_KEY_PASSWORD`, or the one `--password-env`
 //! names, and with a password typed at the terminal when it is unset.
@@ -137,6 +139,7 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
                             unsigned(signer.is_none())
                         ),
                     )?;
+                    warn_unlisted(&repo, signer.as_ref())?;
                     Ok(true)
                 }
                 Outcome::Refused(report) => refused(&mut out, &report),
@@ -149,9 +152,11 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
             keys,
             key,
             password_env,
+            allow_unlisted_key,
         } => {
             let repo = Repository::new(repo);
-            let signer = Signer::load(&key, std::env::var(&password_env).ok())?;
+            let mut signer = Signer::load(&key, std::env::var(&password_env).ok())?;
+            signer.allow_unlisted = allow_unlisted_key;
             if keys {
                 let keys = keys::sign(&repo, &signer)?;
                 say(
@@ -169,6 +174,7 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
                     &mut out,
                     format!("signed \"{comment}\" with key {}", signer.id()),
                 )?;
+                warn_unlisted(&repo, Some(&signer))?;
             }
             Ok(true)
         }
@@ -236,6 +242,7 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
                     unsigned(signer.is_none())
                 ),
             )?;
+            warn_unlisted(&repo, signer.as_ref())?;
             Ok(true)
         }
         Command::Promote {
@@ -244,6 +251,7 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
             to,
             arch,
             min_soak,
+            root_key,
             check_report,
             with_index,
             sign,
@@ -254,8 +262,9 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
             let to = Channel { name: to, arch };
             let signer = signer(&sign)?;
             let bases = read_indexes(&with_index)?;
+            let root = root_key.as_deref().map(sign::read_public).transpose()?;
             let gates = promote::Gates {
-                min_soak,
+                min_soak: min_soak.zip(root.as_ref()),
                 check_report: check_report.as_deref(),
             };
             let options = options(&generation, now);
@@ -272,6 +281,7 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
                             unsigned(signer.is_none())
                         ),
                     )?;
+                    warn_unlisted(&repo, signer.as_ref())?;
                     Ok(true)
                 }
                 Outcome::Refused(report) => refused(&mut out, &report),
@@ -311,6 +321,7 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
             let signer = signer(&SignArgs {
                 key: common.key,
                 password_env: common.password_env,
+                allow_unlisted_key: false,
             })?;
             let keys = keys::run(&repo, name.as_ref(), change, signer.as_ref())?;
             say(
@@ -388,10 +399,27 @@ fn read_indexes(paths: &[PathBuf]) -> Result<Vec<Index>> {
 }
 
 fn signer(args: &SignArgs) -> Result<Option<Signer>> {
-    args.key
-        .as_ref()
-        .map(|key| Signer::load(key, std::env::var(&args.password_env).ok()))
-        .transpose()
+    let Some(key) = &args.key else {
+        return Ok(None);
+    };
+    let mut signer = Signer::load(key, std::env::var(&args.password_env).ok())?;
+    signer.allow_unlisted = args.allow_unlisted_key;
+    Ok(Some(signer))
+}
+
+/// Warns when `signer` signed an index although the repository's
+/// `keys.json` does not list it.
+fn warn_unlisted(repo: &Repository, signer: Option<&Signer>) -> Result<()> {
+    if let Some(signer) = signer
+        && generation::unlisted(repo, signer.id())?
+    {
+        eprintln!(
+            "laft-repo: warning: key {} is not listed in keys.json, so clients reject \
+             what it signed until keys.json lists it",
+            signer.id()
+        );
+    }
+    Ok(())
 }
 
 fn options(args: &GenerationArgs, now: Timestamp) -> Options {

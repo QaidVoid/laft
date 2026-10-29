@@ -4,21 +4,22 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use laft_core::StoreId;
-use laft_index::Index;
+use laft_index::{Index, IndexComment, Keys, KeysComment, PublicKey, Signature};
 
 use crate::check::{self, Report};
 use crate::error::{Error, Result, io};
+use crate::fsx;
 use crate::generation::{self, Options};
 use crate::index::{Outcome, empty};
-use crate::layout::{Channel, Repository};
+use crate::layout::{Channel, KEYS, Repository, sig};
 use crate::sign::Signer;
 
 /// The conditions the source generation must meet.
 #[derive(Debug, Default)]
 pub(crate) struct Gates<'a> {
-    /// The least time, in seconds, since the source generation was written,
-    /// signed or not.
-    pub(crate) min_soak: Option<u64>,
+    /// The least time, in seconds, since the source generation was signed,
+    /// and the root key its signature is verified with.
+    pub(crate) min_soak: Option<(u64, &'a PublicKey)>,
     /// The JSON report of `laft-repo check --json` for the source
     /// generation, which must have no errors.
     pub(crate) check_report: Option<&'a Path>,
@@ -43,7 +44,8 @@ pub(crate) fn run(
     let source = repo
         .read_index(from)?
         .ok_or_else(|| Error::new(format!("channel {from} has no index")))?;
-    if let Some(min_soak) = gates.min_soak {
+    if let Some((min_soak, root)) = gates.min_soak {
+        verify_source(repo, from, &source, root)?;
         let age = options
             .now
             .as_secs()
@@ -102,6 +104,74 @@ pub(crate) fn run(
             report,
         },
     ))
+}
+
+/// Verifies the signature of the entry point of `from`, whose index is
+/// `source`, as a client would: with an online key that the root-signed
+/// `keys.json` lists for the signing time, or with `root` in direct mode
+/// and for an emergency index. Only then does its timestamp count.
+fn verify_source(
+    repo: &Repository,
+    from: &Channel,
+    source: &Index,
+    root: &PublicKey,
+) -> Result<()> {
+    let refuse = |why: String| {
+        Error::new(format!(
+            "gate failed: {from} generation {} {why}, so its soak time cannot be trusted",
+            source.generation
+        ))
+    };
+    let bytes = fsx::read_optional(&repo.path(&from.index()))?
+        .ok_or_else(|| Error::new(format!("channel {from} has no index")))?;
+    let signature = fsx::read_optional(&repo.path(&sig(&from.index())))?
+        .ok_or_else(|| refuse("is not signed".into()))?;
+    let signature = Signature::decode(&signature).map_err(|e| refuse(e.to_string()))?;
+    let comment: Option<IndexComment> = signature.trusted_comment().parse().ok();
+    if comment != Some(source.comment()) {
+        return Err(refuse("carries the signature of another index".into()));
+    }
+    let id = signature.key_id();
+    let keys = read_keys(repo, root)?;
+    if keys.as_ref().is_some_and(|k| k.is_revoked(id)) {
+        return Err(refuse(format!("is signed by revoked key {id}")));
+    }
+    let online = keys.as_ref().and_then(|k| k.key(id));
+    if let Some(online) = online
+        && !(online.not_before <= source.timestamp && source.timestamp <= online.not_after)
+    {
+        return Err(refuse(format!("is signed outside the window of key {id}")));
+    }
+    let key = online.map_or(root, |o| &o.public);
+    if !key.verifies(&bytes, &signature) {
+        return Err(refuse(format!(
+            "does not verify with {KEYS} or the root key {}",
+            root.id()
+        )));
+    }
+    Ok(())
+}
+
+/// The repository's `keys.json` once its signature verifies with `root`,
+/// or `None` in direct mode.
+fn read_keys(repo: &Repository, root: &PublicKey) -> Result<Option<Keys>> {
+    let Some(bytes) = fsx::read_optional(&repo.path(KEYS))? else {
+        return Ok(None);
+    };
+    let keys = Keys::from_json(&bytes).map_err(|e| Error::new(format!("{KEYS}: {e}")))?;
+    let Some(signature) = fsx::read_optional(&repo.path(&sig(KEYS)))? else {
+        return Err(Error::new(format!("gate failed: {KEYS} is not signed")));
+    };
+    let signature =
+        Signature::decode(&signature).map_err(|e| Error::new(format!("{KEYS}: {e}")))?;
+    let comment: Option<KeysComment> = signature.trusted_comment().parse().ok();
+    if comment != Some(keys.comment()) || !root.verifies(&bytes, &signature) {
+        return Err(Error::new(format!(
+            "gate failed: {KEYS} does not verify with the root key {}",
+            root.id()
+        )));
+    }
+    Ok(Some(keys))
 }
 
 /// Accepts the check report at `path` only when it is a report of exactly

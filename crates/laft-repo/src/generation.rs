@@ -8,7 +8,7 @@
 use std::cmp::Reverse;
 
 use laft_core::Timestamp;
-use laft_index::{Index, IndexComment, Keys, Yank, next_generation};
+use laft_index::{Index, IndexComment, KeyId, Keys, Yank, next_generation};
 
 use crate::error::{Error, Result};
 use crate::fsx::{self, FILE_MODE};
@@ -165,10 +165,10 @@ pub(crate) fn sign(repo: &Repository, channel: &Channel, signer: &Signer) -> Res
 }
 
 /// Refuses a key that clients would refuse for `index`: a key the
-/// repository's `keys.json` revokes, or a listed online key whose validity
-/// window does not contain the signing time. A key that `keys.json` does
-/// not list passes, because clients accept it when they trust it as a root
-/// key, which this check cannot know.
+/// repository's `keys.json` revokes, a listed online key whose validity
+/// window does not contain the signing time, or a key that `keys.json` does
+/// not list unless the signer allows that. Any key passes in direct mode,
+/// without a `keys.json`.
 pub(crate) fn check_signer(repo: &Repository, signer: &Signer, index: &Index) -> Result<()> {
     let path = repo.path(KEYS);
     let Some(bytes) = fsx::read_optional(&path)? else {
@@ -180,13 +180,31 @@ pub(crate) fn check_signer(repo: &Repository, signer: &Signer, index: &Index) ->
     if keys.is_revoked(id) {
         return Err(Error::new(format!("key {id} is revoked in {KEYS}")));
     }
-    if let Some(online) = keys.key(id)
-        && !(online.not_before <= index.timestamp && index.timestamp <= online.not_after)
-    {
-        return Err(Error::new(format!(
-            "key {id} is valid from {} to {}, which does not contain the signing time {}",
-            online.not_before, online.not_after, index.timestamp
-        )));
+    match keys.key(id) {
+        Some(online)
+            if !(online.not_before <= index.timestamp && index.timestamp <= online.not_after) =>
+        {
+            Err(Error::new(format!(
+                "key {id} is valid from {} to {}, which does not contain the signing time {}",
+                online.not_before, online.not_after, index.timestamp
+            )))
+        }
+        None if !signer.allow_unlisted => Err(Error::new(format!(
+            "key {id} is not listed in {KEYS}, so clients reject what it signs until \
+             {KEYS} lists it (add it with laft-repo keys add, or pass --allow-unlisted-key)"
+        ))),
+        _ => Ok(()),
     }
-    Ok(())
+}
+
+/// Whether the repository has a `keys.json` that does not list the key
+/// `id`.
+pub(crate) fn unlisted(repo: &Repository, id: KeyId) -> Result<bool> {
+    let path = repo.path(KEYS);
+    let Some(bytes) = fsx::read_optional(&path)? else {
+        return Ok(false);
+    };
+    let keys =
+        Keys::from_json(&bytes).map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
+    Ok(keys.key(id).is_none())
 }
