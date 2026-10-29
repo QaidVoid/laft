@@ -190,10 +190,15 @@ pub(crate) fn loopback_up() -> Result<(), Errno> {
         *to = *from as libc::c_char;
     }
     request.ifr_ifru.ifru_flags = (libc::IFF_UP | libc::IFF_RUNNING) as libc::c_short;
+    #[allow(
+        clippy::unnecessary_cast,
+        reason = "the request is a c_ulong with glibc and a c_int with musl"
+    )]
+    let set_flags = libc::SIOCSIFFLAGS as libc::Ioctl;
     // SAFETY: `fd` is the socket opened above, and `request` is an
     // initialized `ifreq` with a NUL-terminated name, which `SIOCSIFFLAGS`
     // only reads.
-    let ret = unsafe { libc::ioctl(fd, libc::SIOCSIFFLAGS, &raw mut request) };
+    let ret = unsafe { libc::ioctl(fd, set_flags, &raw mut request) };
     let result = if ret == -1 { Err(last_errno()) } else { Ok(()) };
     // SAFETY: `fd` is open and owned here, and nothing uses it afterwards.
     unsafe { libc::close(fd) };
