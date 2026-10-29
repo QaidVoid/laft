@@ -230,6 +230,51 @@ fn relative_bootstrap_directories_mean_the_working_directory() {
 }
 
 #[test]
+fn a_relative_build_root_from_the_environment_means_the_working_directory() {
+    if !Path::new("/usr/bin/sh").exists() {
+        println!("skipping: the host has no /usr/bin/sh");
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let install = "  empty = true\n  build custom {}\n  phases {\n    \
+                   install = \"echo \\\"$HOME\\\" > \\\"$DESTDIR/home\\\"\"\n  }";
+    support::write_repo(
+        &dir.path().join("repo"),
+        "t",
+        "",
+        &[(
+            "recipes/greet/package.stav",
+            &support::recipe("greet", install),
+        )],
+    );
+    std::fs::create_dir(dir.path().join("host")).unwrap();
+    std::os::unix::fs::symlink("/usr", dir.path().join("host/usr")).unwrap();
+    for (var, value, root) in [
+        ("LAFT_BUILD_ROOT", "env-root", "env-root"),
+        ("XDG_DATA_HOME", "data", "data/laft-build"),
+        ("HOME", "home", "home/.local/share/laft-build"),
+    ] {
+        let sys = format!("sys-{var}");
+        let output = Command::new(env!("CARGO_BIN_EXE_laft-build"))
+            .env_remove("LAFT_RECIPES")
+            .env_remove("LAFT_BUILD_ROOT")
+            .env_remove("XDG_DATA_HOME")
+            .env(var, value)
+            .current_dir(dir.path())
+            .args(["--recipes", "repo", "bootstrap", "--root", "host"])
+            .args(["--install", &sys, "greet"])
+            .output()
+            .expect("the binary runs");
+        assert!(output.status.success(), "{var}: {output:?}");
+        let home = std::fs::read_to_string(dir.path().join(&sys).join("home")).unwrap();
+        assert!(
+            home.starts_with(&format!("{}/work/", dir.path().join(root).display())),
+            "{var}: {home}"
+        );
+    }
+}
+
+#[test]
 fn a_stage_dry_run_lists_its_steps_without_touching_the_root() {
     let dir = laft_test::tempdir();
     let file = stage_file(dir.path(), "zlib");

@@ -217,21 +217,22 @@ fn run(cli: Cli) -> Result<(), Failure> {
 }
 
 /// The build root: the flag, `$LAFT_BUILD_ROOT`, or `laft-build` in the
-/// user's data directory.
+/// user's data directory, made absolute against the working directory.
 fn build_root(flag: Option<PathBuf>) -> Result<PathBuf, Failure> {
     if let Some(path) = flag {
         return absolute(&path);
     }
     let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
-    if let Some(path) = var("LAFT_BUILD_ROOT") {
-        return Ok(path.into());
-    }
-    if let Some(data) = var("XDG_DATA_HOME") {
-        return Ok(PathBuf::from(data).join("laft-build"));
-    }
-    var("HOME")
-        .map(|home| PathBuf::from(home).join(".local/share/laft-build"))
-        .ok_or_else(|| Failure::Usage("no build root: pass --root DIR".into()))
+    let path = if let Some(path) = var("LAFT_BUILD_ROOT") {
+        PathBuf::from(path)
+    } else if let Some(data) = var("XDG_DATA_HOME") {
+        PathBuf::from(data).join("laft-build")
+    } else if let Some(home) = var("HOME") {
+        PathBuf::from(home).join(".local/share/laft-build")
+    } else {
+        return Err(Failure::Usage("no build root: pass --root DIR".into()));
+    };
+    absolute(&path)
 }
 
 /// The recipes `texts` name, each `<name>` for every variant it builds or
