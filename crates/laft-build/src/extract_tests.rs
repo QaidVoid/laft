@@ -516,3 +516,30 @@ fn an_oversized_zip_link_target_is_refused() {
         .expect_err("too long");
     assert_eq!(error.code(), "B024");
 }
+
+#[test]
+fn files_keep_the_modification_times_of_the_archive() {
+    let mut builder = tar::Builder::new(Vec::new());
+    for (name, mtime) in [
+        ("foo-1.0/configure", 2_000_000),
+        ("foo-1.0/configure.ac", 1_000_000),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(1);
+        header.set_mode(0o644);
+        header.set_mtime(mtime);
+        header.set_cksum();
+        builder.append_data(&mut header, name, &b"x"[..]).unwrap();
+    }
+    let archive = builder.into_inner().unwrap();
+    let tree = Tree::new();
+    tree.unpack(&source("foo-1.0.tar", "", None), &archive)
+        .expect("a safe archive");
+    let mtime = |name: &str| {
+        fs::metadata(tree.dir.path().join("src").join(name))
+            .unwrap()
+            .mtime()
+    };
+    assert_eq!(mtime("configure"), 2_000_000);
+    assert_eq!(mtime("configure.ac"), 1_000_000);
+}

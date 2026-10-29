@@ -347,6 +347,7 @@ impl Extractor {
             let raw = raw.to_string_lossy().into_owned();
             let kind = entry.header().entry_type();
             let mode = entry.header().mode().map_err(|e| self.unreadable(e))?;
+            let mtime = entry.header().mtime().ok();
             let link = entry
                 .link_name()
                 .map_err(|e| self.unreadable(e))?
@@ -362,7 +363,7 @@ impl Extractor {
                 | tar::EntryType::Continuous
                 | tar::EntryType::GNUSparse => {
                     if let Some(rel) = self.target(&raw)? {
-                        self.file(&raw, &rel, mode, &mut entry)?;
+                        self.file(&raw, &rel, mode, mtime, &mut entry)?;
                     }
                 }
                 tar::EntryType::Symlink => {
@@ -408,7 +409,7 @@ impl Extractor {
                 }
                 self.symlink(&raw, &rel, &target)?;
             } else if mode & 0o170_000 == 0 || mode & 0o170_000 == 0o100_000 {
-                self.file(&raw, &rel, mode, &mut entry)?;
+                self.file(&raw, &rel, mode, None, &mut entry)?;
             } else {
                 self.warnings.push(format!(
                     "skipped {raw}, which is not a file, directory or link"
@@ -509,11 +510,16 @@ impl Extractor {
         }
     }
 
+    /// Writes a regular file with the executable bits of `mode` and, when
+    /// the archive records one, its modification time. Build systems such as
+    /// make compare those times, so a generated file must stay newer than
+    /// its inputs, as it is in the archive.
     fn file(
         &mut self,
         raw: &str,
         rel: &Path,
         mode: u32,
+        mtime: Option<u64>,
         content: &mut dyn Read,
     ) -> Result<(), SourceError> {
         let (dir, name) = self.parent(raw, rel)?;
@@ -530,6 +536,17 @@ impl Extractor {
         io::copy(content, &mut file).map_err(|e| self.unreadable(e))?;
         rustix::fs::fchmod(&file, Mode::from_raw_mode(0o644 | (mode & EXEC_BITS)))
             .map_err(self.io(rel))?;
+        if let Some(seconds) = mtime.and_then(|s| i64::try_from(s).ok()) {
+            let time = rustix::fs::Timespec {
+                tv_sec: seconds,
+                tv_nsec: 0,
+            };
+            let times = rustix::fs::Timestamps {
+                last_access: time,
+                last_modification: time,
+            };
+            rustix::fs::futimens(&file, &times).map_err(self.io(rel))?;
+        }
         self.files.insert(rel.to_path_buf());
         Ok(())
     }
