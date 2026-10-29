@@ -85,3 +85,10 @@ fn files_open_beneath_their_root_only() {
         assert!(open_beneath(&root, rel).is_err(), "{rel}");
     }
 }
+
+#[test]
+fn a_bare_file_name_lives_in_the_working_directory() {
+    assert_eq!(dir_of(Path::new("record")), Path::new("."));
+    assert_eq!(dir_of(Path::new("stages/record")), Path::new("stages"));
+    assert_eq!(dir_of(Path::new("/build/record")), Path::new("/build"));
+}

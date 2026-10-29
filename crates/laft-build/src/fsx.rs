@@ -13,7 +13,7 @@ use crate::error::{BuildError, io};
 /// the complete new one: a temporary file in the same directory is written,
 /// synced and renamed into place, then the directory is synced.
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), BuildError> {
-    let dir = path.parent().unwrap_or(Path::new("."));
+    let dir = dir_of(path);
     fs::create_dir_all(dir).map_err(io(dir))?;
     let name = path
         .file_name()
@@ -37,12 +37,21 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), B
 /// Moves the finished file `tmp` to `path` like [`write_atomic`]: syncs it,
 /// renames it into place and syncs the directory.
 pub(crate) fn publish(tmp: &Path, path: &Path) -> Result<(), BuildError> {
-    let dir = path.parent().unwrap_or(Path::new("."));
+    let dir = dir_of(path);
     File::open(tmp)
         .and_then(|f| f.sync_all())
         .and_then(|()| fs::rename(tmp, path))
         .and_then(|()| File::open(dir)?.sync_all())
         .map_err(io(path))
+}
+
+/// The directory that holds `path`. A bare file name, whose parent is
+/// empty, is in the working directory.
+pub(crate) fn dir_of(path: &Path) -> &Path {
+    match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    }
 }
 
 /// Flushes every write to the filesystem that holds `path`.

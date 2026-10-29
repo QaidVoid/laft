@@ -907,7 +907,7 @@ pub(crate) fn forget_key(path: &Path) -> Result<(), BuildError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(io(path)(e)),
     }
-    let dir = path.parent().unwrap_or(Path::new("."));
+    let dir = fsx::dir_of(path);
     fs::File::open(dir)
         .and_then(|d| d.sync_all())
         .map_err(io(dir))
