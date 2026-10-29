@@ -1183,8 +1183,6 @@ checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 [[package]]
 name = "stav"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c9eb41db48f39647b4e3ad9a0a2f793960bb0ff2af794220147080d169a779d"
 dependencies = [
  "regex",
  "regex-syntax",

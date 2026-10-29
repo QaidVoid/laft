@@ -24,7 +24,7 @@ These properties define Laft. A change that breaks one is a bug, even when every
 - The setuid helper `laft-enter` depends only on `laft-core` and `laft-sandbox`, and its own code stays small enough to audit in one sitting. The initramfs init `laft-boot` depends only on `laft-core` and crates.io crates.
 - Client crates never depend on build-side crates.
 - Every binary builds for `x86_64-unknown-linux-musl` as a static executable with mimalloc as the global allocator.
-- Laft uses Stav only through releases of the `stav` crate on crates.io. Never patch it, vendor it or point a path dependency at a local checkout. When Laft needs a language change, make it in the Stav repository, release it, then update the dependency here.
+- During development, Laft depends on the sibling Stav checkout by path (`../stav/crates/stav`), with a version requirement that matches its crate version. Never patch or vendor Stav. When Laft needs a language change, make it in the Stav repository and push it to Stav before the Laft changes that use it. A Stav release that contains every change Laft uses must exist on crates.io before any Laft release.
 - Every crate manifest inherits the workspace package fields and lints, and has a one-line `description`, which crates.io requires.
 - Everything targets Rust edition 2024 on the stable toolchain pinned in `rust-toolchain.toml`.
 
@@ -49,7 +49,7 @@ These properties define Laft. A change that breaks one is a bug, even when every
 
 ## Dependencies
 
-- Only crates.io dependencies. No git dependencies, no path dependencies outside this workspace, and no `[patch]` sections. This holds for transitive dependencies too.
+- Only crates.io dependencies, except the Stav checkout described under Workspace. No git dependencies, no other path dependencies outside this workspace, and no `[patch]` sections. This holds for transitive dependencies too.
 - Declare every dependency once, in `[workspace.dependencies]` of the root `Cargo.toml`, with its version and the smallest feature set that every user of it needs. Use `default-features = false` when the defaults are not needed. This covers dev-dependencies and the workspace's own crates too, which are listed with both `path` and `version`. The fuzz crate is outside the workspace and declares its own.
 - Crates inherit dependencies with `name.workspace = true` and add only the extra features they need with `features = [...]`. Crate manifests never carry their own versions.
 - To add a dependency, add its entry to `[workspace.dependencies]` (cargo has no command for that table), then run `cargo add -p <crate> <name>` (with `--dev` for dev-dependencies), which writes the inheriting entry. To upgrade, change the version once in the root table and run `cargo update -p <name>`. To remove one, run `cargo remove -p <crate> <name>` and delete the root entry once no crate uses it.

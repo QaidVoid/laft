@@ -105,7 +105,7 @@ fn toml_content_must_be_a_table() {
 #[test]
 fn env_keys_must_be_variable_names() {
     let body = r#"file "/etc/x.env" { env = { "1A" = "x" } }"#;
-    assert_rejected(rejected(body), "C0427", r#"{ "1A" = "x" }"#);
+    assert_rejected(rejected(body), "C0427", r#""1A" = "x""#);
 }
 
 #[test]
@@ -150,12 +150,9 @@ fn values_that_cannot_be_written_are_rejected_where_they_are_set() {
         ),
         (
             r#"kernel { options = { snd = "a\nb" } }"#,
-            r#"{ snd = "a\nb" }"#,
+            r#"snd = "a\nb""#,
         ),
-        (
-            r#"kernel { options = { "a b" = "x" } }"#,
-            r#"{ "a b" = "x" }"#,
-        ),
+        (r#"kernel { options = { "a b" = "x" } }"#, r#""a b" = "x""#),
         (
             r#"file "/etc/x" { link = "/y", copy = true }"#,
             r#"file "/etc/x" { link = "/y", copy = true }"#,
@@ -419,7 +416,7 @@ fn dependency_cycles_are_rejected() {
 #[test]
 fn environment_variables_must_be_passable() {
     let body = r#"service foo { exec = ["/usr/bin/foo"], env = { "A=B" = "x" } }"#;
-    assert_rejected(rejected(body), "C1207", r#"{ "A=B" = "x" }"#);
+    assert_rejected(rejected(body), "C1207", r#""A=B" = "x""#);
 }
 
 #[test]

@@ -16,10 +16,21 @@ jobs:
     name: Validation gates
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: laft
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          path: laft
+          persist-credentials: false
+      # Laft depends on the Stav checkout next to it during development.
+      - name: Checkout Stav
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: QaidVoid/stav
+          path: stav
           persist-credentials: false
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@ff7f6a3374ce205788da40198ec918bd5d67aea7 # 1.99.0
