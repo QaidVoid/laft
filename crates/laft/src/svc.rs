@@ -90,11 +90,19 @@ fn specs(env: &Env, names: &[String]) -> Result<Vec<Spec>, Failure> {
         }
         wanted.sort();
     }
+    let mut seen = std::collections::BTreeSet::new();
+    wanted.retain(|name| seen.insert(name.clone()));
     wanted
         .iter()
         .map(|name| {
-            Spec::read(&dir.join(format!("{name}.json")))
-                .map_err(|_| Failure::new(exit::USAGE, format!("no service {name} is enabled")))
+            let path = dir.join(format!("{name}.json"));
+            if name.contains('/') || name.starts_with('.') || !path.exists() {
+                return Err(Failure::new(
+                    exit::USAGE,
+                    format!("no service {name} is enabled"),
+                ));
+            }
+            Spec::read(&path).map_err(|e| Failure::general(format!("service {name}: {e}")))
         })
         .collect()
 }
@@ -255,9 +263,12 @@ fn sv(env: &Env, command: &str, specs: &[Spec]) -> Result<(), Failure> {
         .iter()
         .map(|s| env.path(SERVICE_DIR).join(&s.name))
         .collect();
+    // Its messages go to standard error, which keeps a JSON event stream
+    // on standard output intact.
     let status = Command::new(env.path("/usr/bin/sv"))
         .arg(command)
         .args(&dirs)
+        .stdout(std::process::Stdio::from(std::io::stderr()))
         .status()
         .map_err(|e| Failure::general(format!("sv: {e}")))?;
     if status.success() {
@@ -267,22 +278,20 @@ fn sv(env: &Env, command: &str, specs: &[Spec]) -> Result<(), Failure> {
     }
 }
 
-/// Waits until every service of `specs` is ready or its readiness times
-/// out, and returns those that did not become ready.
-fn wait_ready(env: &Env, specs: &[Spec]) -> Vec<String> {
-    let started = Instant::now();
-    let mut failed = Vec::new();
-    for spec in specs {
-        let timeout = Duration::from_millis(spec.ready_timeout_ms());
-        let marker = env.path("/run/runit/ready").join(&spec.name);
-        while !marker.exists() && started.elapsed() < timeout {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        if !marker.exists() && !matches!(spec.ready, SpecReady::Immediate) {
-            failed.push(spec.name.clone());
-        }
-    }
-    failed
+/// Waits until every service of `specs`, which were all started at
+/// `started`, is ready or its own readiness timeout after that start
+/// passed, and returns those that did not become ready.
+fn wait_ready(env: &Env, specs: &[Spec], started: Instant) -> Vec<String> {
+    let ready = env.path("/run/runit/ready");
+    specs
+        .iter()
+        .filter(|spec| {
+            let deadline = started + Duration::from_millis(spec.ready_timeout_ms());
+            !laft_svc::reconcile::wait_ready(&ready, &spec.name, deadline)
+                && !matches!(spec.ready, SpecReady::Immediate)
+        })
+        .map(|spec| spec.name.clone())
+        .collect()
 }
 
 /// `laft svc start`, `stop` and `restart`.
@@ -301,6 +310,7 @@ fn control(env: &Env, command: &str, names: &[String]) -> Result<u8, Failure> {
             early.name
         )));
     }
+    let started = Instant::now();
     match command {
         "stop" => sv(env, "down", &specs)?,
         "start" => sv(env, "up", &specs)?,
@@ -309,7 +319,7 @@ fn control(env: &Env, command: &str, names: &[String]) -> Result<u8, Failure> {
     let failed = if command == "stop" {
         Vec::new()
     } else {
-        wait_ready(env, &specs)
+        wait_ready(env, &specs, started)
     };
     env.ui
         .event(json!({"event": "result", "services": names, "failed": failed}));
