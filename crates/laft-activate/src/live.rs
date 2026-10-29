@@ -345,7 +345,8 @@ fn generation_link(link: &Path) -> Option<u64> {
         .ok()
 }
 
-/// Points the symlink `link` at `target` with one rename.
+/// Points the symlink `link` at `target` with one rename, and syncs its
+/// directory so that the new link survives a crash.
 fn replace_link(link: &Path, target: &str) -> std::io::Result<()> {
     let name = link.file_name().and_then(|n| n.to_str()).unwrap_or("link");
     let tmp = link.with_file_name(format!(".{name}.new"));
@@ -354,7 +355,8 @@ fn replace_link(link: &Path, target: &str) -> std::io::Result<()> {
         _ => {}
     }
     symlink(target, &tmp)?;
-    fs::rename(&tmp, link)
+    fs::rename(&tmp, link)?;
+    fs::File::open(link.parent().unwrap_or(Path::new("/")))?.sync_all()
 }
 
 #[cfg(test)]
