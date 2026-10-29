@@ -175,3 +175,30 @@ fn a_published_file_that_changed_stops_publishing_before_any_copy() {
     );
     assert!(!target.join(channel().index()).exists());
 }
+
+#[test]
+fn a_keys_signature_for_another_version_stops_publishing() {
+    let dir = laft_test::tempdir();
+    keygen(&dir.path().join("online"), false, None).unwrap();
+    keygen(&dir.path().join("root"), false, None).unwrap();
+    let signer = Signer::load(&dir.path().join("online.key"), None).unwrap();
+    let root = Signer::load(&dir.path().join("root.key"), None).unwrap();
+    let repo = Repository::new(dir.path().join("repo"));
+    let hello = package(&repo, "hello", b"hello");
+    generation(&repo, &signer, 0, vec![hello]);
+    let add = |id| crate::keys::Change::Add {
+        public: crate::sign::read_public(&dir.path().join(format!("{id}.pub"))).unwrap(),
+        not_before: Timestamp::from_secs(0),
+        not_after: Timestamp::from_secs(T0 * 2),
+    };
+    let name: Name = "core".parse().unwrap();
+    crate::keys::run(&repo, Some(&name), add("online"), Some(&root)).unwrap();
+    let stale = fs::read(repo.path(&sig(KEYS))).unwrap();
+    keygen(&dir.path().join("next"), false, None).unwrap();
+    crate::keys::run(&repo, None, add("next"), None).unwrap();
+    fs::write(repo.path(&sig(KEYS)), stale).unwrap();
+    let target = dir.path().join("target");
+    let error = run(&repo, &target, None).unwrap_err();
+    assert!(error.to_string().contains("is signed as"), "{error}");
+    assert!(!target.exists());
+}

@@ -65,17 +65,18 @@ impl Package {
     }
 }
 
-/// The fields of a buildinfo file that publishing depends on. Every other
-/// field is carried over untouched.
+/// The fields of a buildinfo file that publishing depends on. The file
+/// itself is copied into the repository byte for byte.
 #[derive(Debug, Deserialize)]
 pub(crate) struct Buildinfo {
+    /// The buildinfo format version, which must be [`Buildinfo::FORMAT`].
+    pub(crate) format: u32,
     /// The packages the build produced.
     pub(crate) outputs: Vec<Output>,
     /// The recipe repositories the build used.
-    #[serde(default)]
     pub(crate) recipe_repos: Vec<RecipeRepo>,
     /// Whether the package came from a bootstrap build, which is never
-    /// published to a normal channel.
+    /// published to a normal channel. Only bootstrap builds record it.
     #[serde(default)]
     pub(crate) bootstrap: bool,
 }
@@ -91,16 +92,28 @@ pub(crate) struct Output {
 #[derive(Debug, Deserialize)]
 pub(crate) struct RecipeRepo {
     /// Whether it had uncommitted changes.
-    #[serde(default)]
     pub(crate) dirty: bool,
 }
 
 impl Buildinfo {
-    /// Parses the buildinfo file `path`.
+    /// The buildinfo format version this tool reads.
+    pub(crate) const FORMAT: u32 = 1;
+
+    /// Parses the buildinfo file `path`, which must have format
+    /// [`Self::FORMAT`].
     pub(crate) fn read(path: &Path) -> Result<Self> {
         let bytes = std::fs::read(path).map_err(io(path))?;
-        serde_json::from_slice(&bytes)
-            .map_err(|e| Error::new(format!("{}: not a buildinfo file: {e}", path.display())))
+        let info: Self = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::new(format!("{}: not a buildinfo file: {e}", path.display())))?;
+        if info.format != Self::FORMAT {
+            return Err(Error::new(format!(
+                "{}: buildinfo format {} is not supported, only {}",
+                path.display(),
+                info.format,
+                Self::FORMAT
+            )));
+        }
+        Ok(info)
     }
 
     /// Whether the build used a recipe repository with uncommitted changes.

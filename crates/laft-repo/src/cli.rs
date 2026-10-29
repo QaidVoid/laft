@@ -148,8 +148,8 @@ pub(crate) enum Command {
         /// The architecture.
         #[arg(long, default_value = "x86_64-v3")]
         arch: Arch,
-        /// Gate: the source generation was signed at least this long ago,
-        /// for example 24h.
+        /// Gate: the source generation was written at least this long ago,
+        /// for example 24h, whether or not it is signed.
         #[arg(long, value_name = "DURATION", value_parser = parse_duration)]
         min_soak: Option<u64>,
         /// Gate: a report of `laft-repo check --json` on the source

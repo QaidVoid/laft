@@ -13,7 +13,7 @@
 //! | KR004 | error | An alternatives group without a valid default, whose members ship different paths, or that lists a path its member does not ship. |
 //! | KR005 | error | A package whose name, version, revision and variant are already published with another store id. |
 //! | KR006 | warning | The newest version of a name is older than the newest one previously published. |
-//! | KR007 | error | Packages of several names that can share a view provide the same `so:` or `virtual:` value, and no provider default chooses one. |
+//! | KR007 | error | Packages of several names that can share a view provide the same `so:` or `virtual:` value, and no provider default chooses one of them. |
 //! | KR008 | error | A package file whose metadata or manifest is invalid. |
 //! | KR009 | error | A package file that is missing or differs in size or hash from its entry. |
 //! | KR010 | error | An entry whose metadata or store id differs from its package file. |
@@ -218,12 +218,9 @@ fn load<'a>(input: &Input<'a>, findings: &mut Vec<Finding>) -> Vec<Loaded<'a>> {
     let mut loaded = Vec::new();
     for entry in &input.index.packages {
         let meta = &entry.meta;
-        let path = input
-            .staged
-            .get(&entry.id)
-            .cloned()
-            .unwrap_or_else(|| input.repo.pool(entry.id));
-        let shown = path.display().to_string();
+        let staged = input.staged.get(&entry.id);
+        let path = staged.cloned().unwrap_or_else(|| input.repo.pool(entry.id));
+        let shown = staged.map_or_else(|| entry.file.clone(), |p| p.display().to_string());
         let kr009 = |message: String| {
             finding("KR009", Level::Error, message)
                 .packages([meta])
@@ -233,8 +230,7 @@ fn load<'a>(input: &Input<'a>, findings: &mut Vec<Finding>) -> Vec<Loaded<'a>> {
             Ok(Some(_)) => {}
             Ok(None) => {
                 findings.push(kr009(format!(
-                    "missing package file: {} ({})",
-                    entry.file,
+                    "missing package file: {shown} ({})",
                     label(meta)
                 )));
                 continue;
@@ -249,8 +245,7 @@ fn load<'a>(input: &Input<'a>, findings: &mut Vec<Finding>) -> Vec<Loaded<'a>> {
             Ok((size, blake3)) => {
                 findings.push(
                     kr009(format!(
-                        "package file differs from its entry: {} ({})",
-                        entry.file,
+                        "package file differs from its entry: {shown} ({})",
                         label(meta)
                     ))
                     .detail(format!("file: {size} bytes, {blake3}"))
@@ -273,11 +268,11 @@ fn load<'a>(input: &Input<'a>, findings: &mut Vec<Finding>) -> Vec<Loaded<'a>> {
                     finding(
                         "KR008",
                         Level::Error,
-                        format!("invalid package file: {} ({})", entry.file, label(meta)),
+                        format!("invalid package file: {shown} ({})", label(meta)),
                     )
                     .detail(e)
                     .packages([meta])
-                    .paths([shown]),
+                    .paths([entry.file.clone()]),
                 );
                 continue;
             }
@@ -726,7 +721,7 @@ fn newest(index: &Index) -> BTreeMap<&Name, &IndexEntry> {
 }
 
 /// KR007: a shared library or virtual capability has one provider per
-/// view unless a default chooses.
+/// view unless a default chooses one of its providers.
 fn ambiguous_providers(index: &Index, findings: &mut Vec<Finding>) {
     let mut providers: BTreeMap<String, Vec<&Meta>> = BTreeMap::new();
     for entry in &index.packages {
@@ -740,7 +735,8 @@ fn ambiguous_providers(index: &Index, findings: &mut Vec<Finding>) {
         }
     }
     for (key, metas) in providers {
-        if index.defaults.providers.contains_key(&key) {
+        let default = index.defaults.providers.get(&key);
+        if default.is_some_and(|d| metas.iter().any(|m| m.name == *d)) {
             continue;
         }
         let mut involved: BTreeSet<usize> = BTreeSet::new();
@@ -756,9 +752,12 @@ fn ambiguous_providers(index: &Index, findings: &mut Vec<Finding>) {
             continue;
         }
         let labels: Vec<String> = involved.iter().map(|&i| label(metas[i])).collect();
+        let mut f = finding("KR007", Level::Error, format!("ambiguous provider: {key}"));
+        if let Some(default) = default {
+            f = f.detail(format!("the default {default} does not provide {key}"));
+        }
         findings.push(
-            finding("KR007", Level::Error, format!("ambiguous provider: {key}"))
-                .detail(format!("provided by: {}", labels.join(", ")))
+            f.detail(format!("provided by: {}", labels.join(", ")))
                 .detail(format!(
                     "fix: choose one with --provider {key}=<name>, or make them conflict"
                 ))

@@ -229,6 +229,30 @@ fn kr004_members_with_different_paths() {
 }
 
 #[test]
+fn kr004_a_member_that_does_not_ship_a_listed_path() {
+    let dir = laft_test::tempdir();
+    let packages = [pkg("vim", "9.1.0800")
+        .file("usr/bin/vim", "vim")
+        .alternative("vi", &["usr/bin/vi"])
+        .write(&dir.path().join("out"))];
+    let repo = dir.path().join("repo");
+    fixture(&repo, "current", 0, &packages, |index| {
+        index
+            .defaults
+            .alternatives
+            .insert("vi".parse().unwrap(), "vim".parse().unwrap());
+    });
+    let (codes, report, _) = check(&repo, &[]);
+    assert_eq!(codes, ["KR004"], "{report}");
+    let finding = &report["findings"][0];
+    assert_eq!(
+        finding["message"],
+        "alternatives group vi of vim 9.1.0800-r1 lists usr/bin/vi, which the package does not ship"
+    );
+    assert_eq!(finding["paths"], serde_json::json!(["usr/bin/vi"]));
+}
+
+#[test]
 fn kr005_a_rebuild_without_a_revision_bump() {
     let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
@@ -300,6 +324,33 @@ fn kr007_two_providers_without_a_default() {
 }
 
 #[test]
+fn kr007_a_default_that_names_no_provider_does_not_choose() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let packages = [
+        pkg("libjpeg-turbo", "3.1.2")
+            .provides("so:libjpeg.so.8")
+            .write(&out),
+        pkg("mozjpeg", "4.1.5")
+            .provides("so:libjpeg.so.8")
+            .write(&out),
+    ];
+    let repo = dir.path().join("repo");
+    fixture(&repo, "current", 0, &packages, |index| {
+        index
+            .defaults
+            .providers
+            .insert("so:libjpeg.so.8".into(), "libjpegturbo".parse().unwrap());
+    });
+    let (codes, report, _) = check(&repo, &[]);
+    assert_eq!(codes, ["KR007"], "{report}");
+    assert_eq!(
+        report["findings"][0]["details"][0],
+        "the default libjpegturbo does not provide so:libjpeg.so.8"
+    );
+}
+
+#[test]
 fn kr008_a_package_file_that_is_not_a_package() {
     let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
@@ -313,9 +364,10 @@ fn kr008_a_package_file_that_is_not_a_package() {
     let file = support::read_index(&repo, "current").packages[0]
         .file
         .clone();
-    fs::write(repo.join(file), garbage).unwrap();
+    fs::write(repo.join(&file), garbage).unwrap();
     let (codes, report, _) = check(&repo, &[]);
     assert_eq!(codes, ["KR008"], "{report}");
+    assert_eq!(report["findings"][0]["paths"], serde_json::json!([file]));
 }
 
 #[test]
@@ -333,6 +385,33 @@ fn kr009_a_missing_package_file() {
     let (codes, report, _) = check(&repo, &[]);
     assert_eq!(codes, ["KR009"], "{report}");
     assert_eq!(report["findings"][0]["paths"][0], index.packages[0].file);
+}
+
+#[test]
+fn kr009_a_package_file_that_differs_from_its_entry() {
+    let dir = laft_test::tempdir();
+    let repo = dir.path().join("repo");
+    let index = fixture(
+        &repo,
+        "current",
+        0,
+        &[pkg("hello", "1.0").write(&dir.path().join("out"))],
+        |index| index.packages[0].size += 1,
+    );
+    let (codes, report, _) = check(&repo, &[]);
+    assert_eq!(codes, ["KR009"], "{report}");
+    let finding = &report["findings"][0];
+    assert_eq!(
+        finding["paths"],
+        serde_json::json!([index.packages[0].file])
+    );
+    assert!(
+        finding["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("package file differs from its entry"),
+        "{report}"
+    );
 }
 
 #[test]
@@ -398,6 +477,31 @@ fn ci003_a_package_without_buildinfo() {
     fixture(&repo, "current", 0, &packages, |_| {});
     let (codes, report, _) = check(&repo, &[]);
     assert_eq!(codes, ["CI003"], "{report}");
+}
+
+#[test]
+fn ci003_buildinfo_of_another_format_or_without_recipe_state() {
+    let dir = laft_test::tempdir();
+    let repo = dir.path().join("repo");
+    let index = fixture(
+        &repo,
+        "current",
+        0,
+        &[pkg("hello", "1.0").write(&dir.path().join("out"))],
+        |_| {},
+    );
+    let id = index.packages[0].id;
+    let output = serde_json::json!([{"id": id}]);
+    let buildinfo = repo.join(format!("buildinfo/{id}.json"));
+    for written in [
+        serde_json::json!({"format": 2, "recipe_repos": [{"dirty": false}], "outputs": output}),
+        serde_json::json!({"format": 1, "outputs": output}),
+        serde_json::json!({"format": 1, "recipe_repos": [{"name": "core"}], "outputs": output}),
+    ] {
+        fs::write(&buildinfo, written.to_string()).unwrap();
+        let (codes, report, _) = check(&repo, &[]);
+        assert_eq!(codes, ["CI003"], "{written}: {report}");
+    }
 }
 
 #[test]

@@ -25,9 +25,9 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use laft_core::Name;
-use laft_index::{Index, IndexComment, Signature};
+use laft_index::{Index, IndexComment, Keys, KeysComment, Signature};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, io};
 use crate::fsx;
 use crate::layout::{Channel, KEYS, MIRRORS, Repository, SIG, sig};
 
@@ -63,8 +63,9 @@ pub(crate) struct Summary {
     pub(crate) channels: Vec<(Channel, u64)>,
 }
 
-/// Publishes the signed channels of `repo`, or only those named `only`,
-/// to the directory `target`.
+/// Publishes the channels of `repo`, or only those named `only`, to the
+/// directory `target`. Every published channel must be signed, so a
+/// single unsigned channel fails the whole publication.
 pub(crate) fn run(repo: &Repository, target: &Path, only: Option<&Name>) -> Result<Summary> {
     let plan = plan(repo, target, only)?;
     let mut summary = Summary {
@@ -148,6 +149,9 @@ pub(crate) fn plan(repo: &Repository, target: &Path, only: Option<&Name>) -> Res
         }
         if fsx::size(&repo.path(&sig(document)))?.is_none() {
             return Err(Error::new(format!("{document} is not signed")));
+        }
+        if document == KEYS {
+            check_keys_signature(repo)?;
         }
         changed(repo, target, document, &mut steps)?;
         changed(repo, target, &sig(document), &mut steps)?;
@@ -234,6 +238,28 @@ fn signed_index(repo: &Repository, channel: &Channel) -> Result<Index> {
         )));
     }
     Ok(index)
+}
+
+/// Refuses the repository's `keys.json` unless its signature names exactly
+/// this document in its trusted comment.
+fn check_keys_signature(repo: &Repository) -> Result<()> {
+    let path = repo.path(KEYS);
+    let sig_path = repo.path(&sig(KEYS));
+    let keys = Keys::from_json(&std::fs::read(&path).map_err(io(&path))?)
+        .map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
+    let comment: KeysComment = Signature::decode(&std::fs::read(&sig_path).map_err(io(&sig_path))?)
+        .map_err(|e| Error::new(format!("{}: {e}", sig_path.display())))?
+        .trusted_comment()
+        .parse()
+        .map_err(|e| Error::new(format!("{}: {e}", sig_path.display())))?;
+    if comment != keys.comment() {
+        return Err(Error::new(format!(
+            "{} is signed as \"{comment}\", but the document is \"{}\"",
+            path.display(),
+            keys.comment()
+        )));
+    }
+    Ok(())
 }
 
 /// Adds a copy of a file that never changes once published, unless the

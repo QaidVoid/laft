@@ -16,7 +16,8 @@ use crate::sign::Signer;
 /// The conditions the source generation must meet.
 #[derive(Debug, Default)]
 pub(crate) struct Gates<'a> {
-    /// The least time, in seconds, since the source generation was signed.
+    /// The least time, in seconds, since the source generation was written,
+    /// signed or not.
     pub(crate) min_soak: Option<u64>,
     /// The JSON report of `laft-repo check --json` for the source
     /// generation, which must have no errors.

@@ -83,7 +83,12 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
     let inputs = Inputs::read(request.inputs)?;
     let mut index = previous.clone().unwrap_or_else(|| empty(name, channel));
     let listed: HashSet<StoreId> = index.packages.iter().map(|e| e.id).collect();
-    let yanked: HashSet<StoreId> = index.yanked.iter().map(|y| y.id).collect();
+    let yanked: HashSet<_> = index
+        .yanked
+        .iter()
+        .filter(|y| generation::retained(y, request.options.now))
+        .map(|y| (&y.name, &y.version, y.rev, y.variant))
+        .collect();
     let mut staged = BTreeMap::new();
     let mut added = 0;
     for (id, package) in &inputs.packages {
@@ -97,7 +102,7 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
                 channel.arch
             )));
         }
-        if yanked.contains(id) {
+        if yanked.contains(&(&meta.name, &meta.version, meta.rev, meta.variant)) {
             return Err(Error::new(format!(
                 "{} was yanked from {channel}, so publish a new revision instead",
                 label(meta)

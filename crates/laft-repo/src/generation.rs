@@ -8,7 +8,7 @@
 use std::cmp::Reverse;
 
 use laft_core::Timestamp;
-use laft_index::{Index, IndexComment, Keys, next_generation};
+use laft_index::{Index, IndexComment, Keys, Yank, next_generation};
 
 use crate::error::{Error, Result};
 use crate::fsx::{self, FILE_MODE};
@@ -50,12 +50,16 @@ pub(crate) fn prepare(
     index.expires = Timestamp::from_secs(now.as_secs().saturating_add(options.expires_in));
     index.channel = channel.name.clone();
     index.arch = channel.arch;
-    index
-        .yanked
-        .retain(|y| now.as_secs().saturating_sub(y.time.as_secs()) <= YANK_RETENTION);
+    index.yanked.retain(|y| retained(y, now));
     sort(&mut index);
     index.validate()?;
     Ok(index)
+}
+
+/// Whether a generation written at `now` still lists `yank`, because it
+/// is no older than [`YANK_RETENTION`].
+pub(crate) fn retained(yank: &Yank, now: Timestamp) -> bool {
+    now.as_secs().saturating_sub(yank.time.as_secs()) <= YANK_RETENTION
 }
 
 /// The highest generation of `channel` in the repository, if any.
@@ -163,7 +167,8 @@ pub(crate) fn sign(repo: &Repository, channel: &Channel, signer: &Signer) -> Res
 /// Refuses a key that clients would refuse for `index`: a key the
 /// repository's `keys.json` revokes, or a listed online key whose validity
 /// window does not contain the signing time. A key that `keys.json` does
-/// not list is taken as a root key, which clients always accept.
+/// not list passes, because clients accept it when they trust it as a root
+/// key, which this check cannot know.
 pub(crate) fn check_signer(repo: &Repository, signer: &Signer, index: &Index) -> Result<()> {
     let path = repo.path(KEYS);
     let Some(bytes) = fsx::read_optional(&path)? else {

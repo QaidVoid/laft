@@ -346,6 +346,35 @@ fn keys_json_is_versioned_and_signed_by_the_root_key() {
 }
 
 #[test]
+fn a_removed_key_is_no_longer_listed_but_not_revoked() {
+    let dir = laft_test::tempdir();
+    let repo = dir.path().join("repo");
+    let online = keygen(dir.path(), "online");
+    ok(&[
+        "keys",
+        "add",
+        "--repo",
+        s(&repo),
+        "--name",
+        "core",
+        "--public",
+        s(&online.with_extension("pub")),
+        "--not-before",
+        &at(0),
+        "--not-after",
+        &at(365 * DAY),
+    ]);
+    let id = public(&online).id().to_string();
+    ok(&["keys", "remove", "--repo", s(&repo), &id]);
+    let keys = Keys::from_json(&fs::read(repo.join("keys.json")).unwrap()).unwrap();
+    assert_eq!(keys.version, 2);
+    assert!(keys.keys.is_empty());
+    assert!(keys.revoked.is_empty());
+    let (_, stderr) = fails(&["keys", "remove", "--repo", s(&repo), &id]);
+    assert!(stderr.contains("is not listed"), "{stderr}");
+}
+
+#[test]
 fn an_online_key_signs_only_within_its_window() {
     let dir = laft_test::tempdir();
     let out = dir.path().join("out");
@@ -437,6 +466,46 @@ fn yank_moves_the_package_to_yanked_in_a_new_generation() {
     args.push(s(&file));
     let (_, stderr) = fails(&args);
     assert!(stderr.contains("was yanked"), "{stderr}");
+}
+
+#[test]
+fn a_yanked_revision_is_refused_until_its_yank_expires() {
+    let dir = laft_test::tempdir();
+    let (first, rebuild) = (dir.path().join("a"), dir.path().join("b"));
+    pkg("zlib", "1.3.1")
+        .file("usr/lib/libz.so.1", "one")
+        .write(&first);
+    pkg("zlib", "1.3.1")
+        .file("usr/lib/libz.so.1", "two")
+        .write(&rebuild);
+    let repo = dir.path().join("repo");
+    let add = |file: &Path, offset: u64| {
+        let now = at(offset);
+        let mut args = index_args(&repo, "current", &now);
+        args.push(s(file));
+        run(&args)
+    };
+    assert!(add(&first, 0).status.success());
+    ok(&[
+        "yank",
+        "--repo",
+        s(&repo),
+        "--channel",
+        "current",
+        "zlib",
+        "1.3.1",
+        "--reason",
+        "bad",
+        "--now",
+        &at(HOUR),
+    ]);
+    let output = add(&rebuild, 2 * HOUR);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("was yanked"), "{stderr}");
+    assert!(add(&first, 91 * DAY).status.success());
+    let index = read_index(&repo, "current");
+    assert_eq!(index.packages.len(), 1);
+    assert!(index.yanked.is_empty());
 }
 
 #[test]
