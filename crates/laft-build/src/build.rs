@@ -238,6 +238,10 @@ pub struct Builder<'a> {
     /// [`view::assemble`] describes. A reproducibility check pins the view
     /// of the build it repeats.
     pub pinned_view: Option<BTreeSet<StoreId>>,
+    /// Directories that [`Mode::Bootstrap`] phases search for programs
+    /// before the root's `usr/bin`, as [`Executor::search_first`]
+    /// describes.
+    pub search: Vec<PathBuf>,
 }
 
 impl<'a> Builder<'a> {
@@ -262,6 +266,7 @@ impl<'a> Builder<'a> {
             compression: Compression::DEVELOPMENT,
             add_to_store: true,
             pinned_view: None,
+            search: Vec::new(),
         }
     }
 
@@ -520,7 +525,9 @@ impl<'a> Builder<'a> {
         let exec = match &self.mode {
             Mode::Store => Executor::sandboxed(dir.join("root/usr"), build, out, logs),
             Mode::View(usr) => Executor::sandboxed(usr, build, out, logs),
-            Mode::Bootstrap(root) => Executor::direct(root, build, out, logs),
+            Mode::Bootstrap(root) => {
+                Executor::direct(root, build, out, logs).search_first(self.search.clone())
+            }
         };
         exec.timeout(self.timeout)
     }

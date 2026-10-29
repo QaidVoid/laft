@@ -171,10 +171,11 @@ fn run(cli: Cli) -> Result<(), Failure> {
         Command::Lint { packages } => lint(&cx, &packages),
         Command::Bootstrap {
             root,
+            search,
             dry_run,
             options,
             packages,
-        } => bootstrap(&cx, &root, dry_run, &options, &packages),
+        } => bootstrap(&cx, &root, search, dry_run, &options, &packages),
         Command::Gc { .. } => Ok(()),
     }
 }
@@ -575,6 +576,7 @@ fn lint(cx: &Context, packages: &[String]) -> Result<(), Failure> {
 fn bootstrap(
     cx: &Context,
     root: &Path,
+    search: Vec<PathBuf>,
     dry_run: bool,
     options: &BuildOptions,
     packages: &[String],
@@ -582,8 +584,15 @@ fn bootstrap(
     if !dry_run {
         check_space(cx.root.path())?;
     }
+    if let Some(dir) = search.iter().find(|d| d.to_string_lossy().contains(':')) {
+        return Err(Failure::Usage(format!(
+            "{} contains a colon, which PATH cannot hold",
+            dir.display()
+        )));
+    }
     let mut builder = builder(cx, Mode::Bootstrap(root.to_path_buf()), Some(options));
     builder.check = false;
+    builder.search = search;
     let db = cx.root.db();
     let mut report = Vec::new();
     for text in packages {

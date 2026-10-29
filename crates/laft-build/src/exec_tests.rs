@@ -104,3 +104,44 @@ fn a_direct_phase_that_times_out_leaves_no_process_behind() {
     std::thread::sleep(Duration::from_millis(1500));
     assert!(!marker.exists(), "a process of the phase outlived it");
 }
+
+#[test]
+fn a_direct_phase_finds_programs_in_the_search_directories_first() {
+    let dir = laft_test::tempdir();
+    let tools = dir.path().join("tools/bin");
+    fs::create_dir_all(&tools).unwrap();
+    let program = tools.join("uname");
+    fs::write(&program, "#!/usr/bin/bash\necho from-tools\n").unwrap();
+    fs::set_permissions(
+        &program,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let exec = Executor::direct("/", dir.path(), dir.path(), dir.path().join("logs"))
+        .search_first(vec![tools.clone()]);
+    exec.run(
+        "build",
+        "uname > found; printf %s \"$PATH\" > path",
+        &BTreeMap::new(),
+    )
+    .expect("the script succeeds");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("found")).unwrap(),
+        "from-tools\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("path")).unwrap(),
+        format!("{}:/usr/bin", tools.display())
+    );
+}
+
+#[test]
+fn a_search_directory_with_a_colon_is_refused() {
+    let dir = laft_test::tempdir();
+    let exec = Executor::direct("/", dir.path(), dir.path(), dir.path().join("logs"))
+        .search_first(vec![dir.path().join("a:b")]);
+    let error = exec
+        .run("build", "true", &BTreeMap::new())
+        .expect_err("PATH cannot hold the directory");
+    assert!(error.to_string().contains("a:b"), "{error}");
+}

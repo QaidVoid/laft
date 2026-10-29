@@ -101,6 +101,11 @@ pub(crate) enum Command {
         /// tools. Inside a chroot of that system, this is `/`.
         #[arg(long, value_name = "DIR")]
         root: PathBuf,
+        /// A directory to search for programs before the root's
+        /// `usr/bin`, such as the `bin` directory of a cross toolchain that
+        /// the bootstrap builds. Repeat for more, searched in order.
+        #[arg(long = "path", value_name = "DIR")]
+        search: Vec<PathBuf>,
         /// Print what is up to date and what would be built, without
         /// building.
         #[arg(long)]

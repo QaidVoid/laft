@@ -2,7 +2,9 @@
 //! directly on the host.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
+use std::io;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Stdio};
@@ -35,8 +37,9 @@ enum Place {
 ///
 /// A direct executor is for bootstrap mode, which builds inside an
 /// existing system before any build view exists. It runs commands as
-/// ordinary host processes with `<root>/usr/bin` as `PATH` and the build
-/// directory as the working directory. Nothing isolates them, so a build
+/// ordinary host processes with `<root>/usr/bin` as `PATH`, after the
+/// directories of [`Executor::search_first`], and the build directory as
+/// the working directory. Nothing isolates them, so a build
 /// made this way is not hermetic. Every `/build` and `/out` path in the
 /// environment and the scripts is rewritten to the real directories, which
 /// keeps recipes working unchanged.
@@ -51,6 +54,7 @@ pub struct Executor {
     out: PathBuf,
     logs: PathBuf,
     timeout: Duration,
+    search: Vec<PathBuf>,
 }
 
 impl Executor {
@@ -68,6 +72,7 @@ impl Executor {
             out: out.into(),
             logs: logs.into(),
             timeout: DEFAULT_TIMEOUT,
+            search: Vec::new(),
         }
     }
 
@@ -86,6 +91,7 @@ impl Executor {
             out: out.into(),
             logs: logs.into(),
             timeout: DEFAULT_TIMEOUT,
+            search: Vec::new(),
         }
     }
 
@@ -93,6 +99,31 @@ impl Executor {
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// Makes a direct executor look for programs in `dirs`, in order,
+    /// before `<root>/usr/bin`, for tools that a bootstrap installs outside
+    /// the root's `usr`, such as a cross toolchain. A sandboxed executor
+    /// ignores them, because its `PATH` belongs to the build view.
+    pub fn search_first(mut self, dirs: Vec<PathBuf>) -> Self {
+        self.search = dirs;
+        self
+    }
+
+    /// The `PATH` of a direct executor with the tools of `root`, which
+    /// fails for a directory whose name contains `:`.
+    fn direct_path(&self, root: &Path) -> Result<OsString, BuildError> {
+        let dirs = self.search.iter().cloned().chain([root.join("usr/bin")]);
+        std::env::join_paths(dirs).map_err(|e| {
+            let bad = self
+                .search
+                .iter()
+                .find(|d| d.to_string_lossy().contains(':'));
+            BuildError::Io {
+                path: bad.cloned().unwrap_or_default(),
+                error: io::Error::new(io::ErrorKind::InvalidInput, e),
+            }
+        })
     }
 
     /// Whether commands run in a sandbox.
@@ -194,7 +225,7 @@ impl Executor {
                         env.iter()
                             .map(|(k, v)| (k, rebase(v, &self.build, &self.out))),
                     )
-                    .env("PATH", root.join("usr/bin"))
+                    .env("PATH", self.direct_path(root)?)
                     .current_dir(&self.build)
                     .status()
                     .map_err(io(&bash))
@@ -233,14 +264,11 @@ impl Executor {
                     .spawn()?
             }
             Place::Direct(root) => {
-                let rebased: BTreeMap<String, String> = env
+                let mut rebased: BTreeMap<String, OsString> = env
                     .iter()
-                    .map(|(k, v)| (k.clone(), rebase(v, &self.build, &self.out)))
-                    .chain([(
-                        "PATH".to_owned(),
-                        root.join("usr/bin").display().to_string(),
-                    )])
+                    .map(|(k, v)| (k.clone(), rebase(v, &self.build, &self.out).into()))
                     .collect();
+                rebased.insert("PATH".to_owned(), self.direct_path(root)?);
                 let bash = root.join("usr/bin/bash");
                 std::process::Command::new(&bash)
                     .arg("-c")
