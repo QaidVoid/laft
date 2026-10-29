@@ -756,13 +756,26 @@ impl StageRun<'_> {
                 ));
             }
             Place::Root => {
+                let flag = match self.stage.install {
+                    Install::Direct => "--install",
+                    Install::Packages => "--unpack",
+                    Install::Store => {
+                        return Err(BuildError::problem(
+                            "R060",
+                            format!(
+                                "step {} builds inside the root of a stage that has none",
+                                step.name
+                            ),
+                        ));
+                    }
+                };
                 let root = self.root()?;
                 // The build inside skips a package whose record shows its
                 // key, so the record goes first to make it build again.
                 forget_key(&installed_record(root, &item))?;
                 self.builder.fetch(recipe)?;
                 let log = self.logs.join(format!("{tag}-{}.log", recipe.name));
-                self.build_inside(&what, &log)?;
+                self.build_inside(&what, flag, &log)?;
                 if installed(root, &item)? != Some(inputs.build_key()) {
                     return Err(BuildError::problem(
                         "B040",
@@ -783,8 +796,9 @@ impl StageRun<'_> {
         Ok(())
     }
 
-    /// Runs `laft-build bootstrap` for `package` inside the root.
-    fn build_inside(&self, package: &str, log: &Path) -> Result<(), BuildError> {
+    /// Runs `laft-build bootstrap` for `package` inside the root, with
+    /// `flag`, `--install` or `--unpack`, for how it reaches the root.
+    fn build_inside(&self, package: &str, flag: &str, log: &Path) -> Result<(), BuildError> {
         let hours = self.options.timeout.as_secs().div_ceil(3600).max(1);
         let jobs = self.options.jobs.to_string();
         let hours = hours.to_string();
@@ -797,10 +811,7 @@ impl StageRun<'_> {
             "bootstrap",
             "--root",
             "/",
-            match self.stage.install {
-                Install::Direct => "--install",
-                Install::Packages | Install::Store => "--unpack",
-            },
+            flag,
             "/",
             "--jobs",
             &jobs,

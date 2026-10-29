@@ -1211,3 +1211,26 @@ fn a_view_step_runs_again_when_its_packages_resolve_to_other_entries() {
     let log = fs::read_to_string(dir.path().join("build/logs/stage/demo/01-check.log")).unwrap();
     assert!(log.contains(&built.to_string()), "{log}");
 }
+
+#[test]
+fn a_stage_made_in_code_cannot_build_where_its_kind_has_no_place() {
+    let dir = laft_test::tempdir();
+    let loaded = Stage::load(&write_store_stage(
+        dir.path(),
+        r#"    { name = "build", packages = [greet] },"#,
+    ))
+    .unwrap();
+    for (place, why) in [
+        (Place::View, "builds packages in a view"),
+        (
+            Place::Root,
+            "builds inside the root of a stage that has none",
+        ),
+    ] {
+        let mut stage = loaded.clone();
+        stage.steps[0].place = place;
+        let error = states(dir.path(), &stage, &store_options(dir.path()), false).unwrap_err();
+        assert_eq!(error.code(), Some("R060"), "{error}");
+        assert!(error.to_string().contains(why), "{error}");
+    }
+}
