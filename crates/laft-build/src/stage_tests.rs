@@ -1100,3 +1100,80 @@ fn a_view_the_store_cannot_satisfy_stops_the_stage() {
     assert_eq!(error.code(), Some("B050"), "{error}");
     assert!(!dir.path().join("build/stages/demo/check").exists());
 }
+
+/// The recipe of `base`, which `greet` links against in
+/// [`linked_stage`].
+const BASE: &str = r#"package base {
+  version = "1"
+  summary = "Lies beneath"
+  license = [MIT]
+  empty   = true
+  build custom {}
+  env = { LD_LIBRARY_PATH = "/usr/lib" }
+  phases {
+    install = """
+      mkdir -p "$DESTDIR/usr/share"
+      echo base > "$DESTDIR/usr/share/base"
+      """
+  }
+}
+"#;
+
+/// The store stage with `steps` below `dir` like [`host_tools_stage`],
+/// whose `greet` links against `base`.
+fn linked_stage(dir: &Path, steps: &str) -> Stage {
+    let stage = host_tools_stage(dir, steps);
+    let greet = stage.recipes.join("recipes/greet/package.stav");
+    let text = fs::read_to_string(&greet).unwrap().replace(
+        "  build custom {}",
+        "  build custom {}\n  link_deps = [base]",
+    );
+    fs::write(&greet, text).unwrap();
+    fs::create_dir_all(stage.recipes.join("recipes/base")).unwrap();
+    fs::write(stage.recipes.join("recipes/base/package.stav"), BASE).unwrap();
+    stage
+}
+
+#[test]
+fn a_package_built_after_its_link_dependency_in_one_step_is_up_to_date_next_time() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = linked_stage(
+        dir.path(),
+        r#"    { name = "build", packages = [base, greet] },"#,
+    );
+    store_with_host_tools(dir.path());
+    let result = run_with(dir.path(), &stage, &store_options(dir.path()));
+    if refused(&result) {
+        return;
+    }
+    let first = result.unwrap();
+    assert!(
+        first.iter().all(|(_, s)| *s == StageState::Done),
+        "{first:?}"
+    );
+    let greet = BuildRoot::new(dir.path().join("build"))
+        .db()
+        .latest(&Item::new(
+            "greet".parse().unwrap(),
+            laft_core::Variant::Dynamic,
+        ))
+        .unwrap()
+        .expect("the database records the build");
+    let links: Vec<&str> = greet
+        .record
+        .inputs
+        .links
+        .iter()
+        .map(|l| l.name.as_str())
+        .collect();
+    assert_eq!(links, ["base"], "the key covers the base it built with");
+
+    let second = run_with(dir.path(), &stage, &store_options(dir.path())).unwrap();
+    assert!(
+        second.iter().all(|(_, s)| *s == StageState::UpToDate),
+        "{second:?}"
+    );
+}

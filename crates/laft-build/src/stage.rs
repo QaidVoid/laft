@@ -376,7 +376,9 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// set, so a changed step runs again together with every step after it.
 /// Each package of a step is recorded too, with the key the step would
 /// have if it ended with that package, so a failed run continues with the
-/// package that failed. A record goes before the script or package it
+/// package that failed. The build key of a package is taken right before
+/// it builds, so that it covers the packages that the step built before
+/// it. A record goes before the script or package it
 /// stands for runs, so work that fails partway never counts as done, even
 /// when a later run brings back the key it had before.
 ///
@@ -653,11 +655,10 @@ impl StageRun<'_> {
         previous: Option<Blake3Hash>,
         progress: &mut dyn FnMut(StageEvent<'_>),
     ) -> Result<Blake3Hash, BuildError> {
-        let mut inputs = Vec::new();
+        let mut keys = Vec::new();
         for recipe in recipes {
-            inputs.push(self.builder.key_inputs(recipe)?);
+            keys.push(self.builder.key_inputs(recipe)?.build_key().to_string());
         }
-        let keys: Vec<String> = inputs.iter().map(|i| i.build_key().to_string()).collect();
         let work = |keys: &[String]| match self.stage.install {
             Install::Direct => serde_json::json!({ "packages": keys }),
             Install::Packages => serde_json::json!({ "packages": keys, "install": "packages" }),
@@ -679,7 +680,11 @@ impl StageRun<'_> {
         if !self.options.dry_run {
             forget_key(&self.record(step))?;
         }
-        for (index, (recipe, inputs)) in recipes.iter().zip(&inputs).enumerate() {
+        for (index, recipe) in recipes.iter().enumerate() {
+            // A package that this step built before may have changed what
+            // the store holds for this one.
+            let inputs = self.builder.key_inputs(recipe)?;
+            keys[index] = inputs.build_key().to_string();
             let done = step_key(step, previous, &self.stage.path, work(&keys[..=index]))?;
             let record = self.package_record(step, recipe);
             let state = if !self.options.rebuild && read_key(&record)? == Some(done) {
@@ -695,9 +700,10 @@ impl StageRun<'_> {
                 continue;
             }
             forget_key(&record)?;
-            self.package(step, tag, recipe, inputs, progress)?;
+            self.package(step, tag, recipe, &inputs, progress)?;
             write_key(&record, &done)?;
         }
+        let key = step_key(step, previous, &self.stage.path, work(&keys))?;
         if !self.options.dry_run {
             write_key(&self.record(step), &key)?;
         }
