@@ -101,6 +101,11 @@ pub(crate) enum Command {
         /// tools. Inside a chroot of that system, this is `/`.
         #[arg(long, value_name = "DIR")]
         root: PathBuf,
+        /// Install every build straight into this directory, a system
+        /// under construction, instead of making packages. A package is up
+        /// to date when its build key matches the one installed there.
+        #[arg(long, value_name = "DIR")]
+        install: Option<PathBuf>,
         /// A directory to search for programs before the root's
         /// `usr/bin`, such as the `bin` directory of a cross toolchain that
         /// the bootstrap builds. Repeat for more, searched in order.

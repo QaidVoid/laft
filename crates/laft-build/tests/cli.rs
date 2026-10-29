@@ -93,6 +93,40 @@ fn bootstrap_dry_run_lists_what_it_would_build() {
 }
 
 #[test]
+fn an_installing_dry_run_lists_what_it_would_install() {
+    let dir = laft_test::tempdir();
+    let dest = dir.path().join("system");
+    let dest = dest.to_str().expect("a UTF-8 path");
+    let output = laft_build(
+        dir.path(),
+        &[
+            "bootstrap",
+            "--root",
+            "/",
+            "--install",
+            dest,
+            "--dry-run",
+            "zlib:static",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(stdout(&output), "zlib:static: would install\n");
+    let output = laft_build(
+        dir.path(),
+        &[
+            "bootstrap",
+            "--root",
+            "/",
+            "--path",
+            "/a:b",
+            "--dry-run",
+            "zlib",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
 fn usage_errors_exit_with_2() {
     let dir = laft_test::tempdir();
     let output = Command::new(env!("CARGO_BIN_EXE_laft-build"))

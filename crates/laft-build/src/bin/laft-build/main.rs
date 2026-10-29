@@ -5,6 +5,8 @@
 //! laft-build --recipes ~/src/laft-recipes build zlib --shell-on-failure
 //! laft-build --recipes ~/src/laft-recipes check-repro zlib
 //! laft-build --recipes ~/src/laft-recipes bootstrap --root / zlib bzip2
+//! laft-build --recipes ~/src/stage0 bootstrap --root / --install ~/sys \
+//!     --path ~/sys/tools/bin binutils-pass1 gcc-pass1
 //! ```
 //!
 //! Everything lives in the build root: the build-side store, the source
@@ -171,11 +173,20 @@ fn run(cli: Cli) -> Result<(), Failure> {
         Command::Lint { packages } => lint(&cx, &packages),
         Command::Bootstrap {
             root,
+            install,
             search,
             dry_run,
             options,
             packages,
-        } => bootstrap(&cx, &root, search, dry_run, &options, &packages),
+        } => bootstrap(
+            &cx,
+            &root,
+            install.as_deref(),
+            search,
+            dry_run,
+            &options,
+            &packages,
+        ),
         Command::Gc { .. } => Ok(()),
     }
 }
@@ -576,6 +587,7 @@ fn lint(cx: &Context, packages: &[String]) -> Result<(), Failure> {
 fn bootstrap(
     cx: &Context,
     root: &Path,
+    install: Option<&Path>,
     search: Vec<PathBuf>,
     dry_run: bool,
     options: &BuildOptions,
@@ -599,7 +611,17 @@ fn bootstrap(
         for recipe in recipes(cx, std::slice::from_ref(text))? {
             let item = Item::of(&recipe);
             let inputs = builder.key_inputs(&recipe)?;
-            let state = if db.find(&inputs.build_key())?.is_some() {
+            let state = if let Some(dest) = install {
+                if laft_build::installed(dest, &item)? == Some(inputs.build_key()) {
+                    "up to date"
+                } else if dry_run {
+                    "would install"
+                } else {
+                    eprintln!("installing {item} into {}", dest.display());
+                    builder.install(&recipe, &inputs, dest)?;
+                    "installed"
+                }
+            } else if db.find(&inputs.build_key())?.is_some() {
                 "up to date"
             } else if dry_run {
                 "would build"

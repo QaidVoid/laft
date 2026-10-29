@@ -132,3 +132,25 @@ fn every_variable_the_builder_sets_is_reserved() {
         }
     }
 }
+
+#[test]
+fn an_install_environment_names_no_toolchain() {
+    for variant in [Variant::Dynamic, Variant::Static] {
+        let env = install(environment(&input(variant, &[])));
+        for key in [
+            "CC",
+            "CXX",
+            "LD",
+            "AR",
+            "CFLAGS",
+            "LDFLAGS",
+            "CHOST",
+            "PKG_CONFIG",
+        ] {
+            assert!(!env.contains_key(key), "{variant}: {key} is set");
+        }
+        assert_eq!(env["DESTDIR"], "/out");
+        assert_eq!(env["SRC"], "/build/src");
+        assert_eq!(env["SOURCE_DATE_EPOCH"], SOURCE_DATE_EPOCH.to_string());
+    }
+}

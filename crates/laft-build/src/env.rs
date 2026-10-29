@@ -83,6 +83,36 @@ pub(crate) const RESERVED: &[&str] = &[
     "TZ",
 ];
 
+/// The variables that name a compiler, the binutils, pkg-config, a
+/// sysroot or the flags of Laft's toolchain.
+const TOOLCHAIN: &[&str] = &[
+    "AR",
+    "AS",
+    "CBUILD",
+    "CC",
+    "CFLAGS",
+    "CGO_CFLAGS",
+    "CGO_CXXFLAGS",
+    "CGO_LDFLAGS",
+    "CHOST",
+    "CPP",
+    "CPPFLAGS",
+    "CXX",
+    "CXXFLAGS",
+    "LD",
+    "LDFLAGS",
+    "NM",
+    "OBJCOPY",
+    "OBJDUMP",
+    "PKG_CONFIG",
+    "PKG_CONFIG_LIBDIR",
+    "PKG_CONFIG_SYSROOT_DIR",
+    "RANLIB",
+    "READELF",
+    "RUSTFLAGS",
+    "SYSROOT",
+];
+
 /// The binutils tools, by variable name.
 const BINUTILS: &[(&str, &str)] = &[
     ("AR", "ar"),
@@ -339,6 +369,17 @@ pub(crate) fn environment(input: &EnvInput<'_>) -> BTreeMap<String, String> {
     set("GOPROXY", "off".into());
     set("GOTOOLCHAIN", "local".into());
     set("CGO_ENABLED", if input.cgo { "1" } else { "0" }.into());
+    env
+}
+
+/// Returns the environment `env` of a build that installs into a system
+/// under construction: without the variables of Laft's toolchain, even
+/// forced ones, and with `DESTDIR` at `/out`. Such a system is built with
+/// tools that are not Laft's toolchain, so its build systems choose their
+/// own compilers and flags, for example from `--host`.
+pub(crate) fn install(mut env: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    env.retain(|key, _| !TOOLCHAIN.contains(&key.as_str()));
+    env.insert("DESTDIR".to_owned(), "/out".to_owned());
     env
 }
 

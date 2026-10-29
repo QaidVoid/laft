@@ -20,7 +20,7 @@ use crate::post::{self, Package};
 use crate::view::{self, BuildView, StoreEntry};
 use crate::{
     BuildGraph, BuildRecord, Buildinfo, BuildinfoHost, Built, Cutoff, Fetch, Item, KeyInputs,
-    Output, Problem, Recipe, Repos, Schedule, Source, SourceCache, Trigger, unpack,
+    Output, Problem, Recipe, Repos, Schedule, Source, SourceCache, Trigger, env, unpack,
 };
 
 /// The directory a builder keeps everything in, `$LAFT_BUILD_ROOT`:
@@ -429,6 +429,53 @@ impl<'a> Builder<'a> {
         Ok(outcome)
     }
 
+    /// Builds `recipe`, whose build key covers `inputs`, in bootstrap mode
+    /// and installs it straight into `dest`, a system under construction,
+    /// instead of making packages. Once every phase succeeded, the build key
+    /// is recorded in `dest`, where [`installed`] finds it, and the working
+    /// tree is removed unless it is kept.
+    ///
+    /// The phases run like those of a bootstrap build, except that
+    /// `$DESTDIR` and `$OUT` are `dest` and that the environment names no
+    /// compiler, binutils, pkg-config or flags. A system under construction
+    /// is built with tools that are not Laft's toolchain, so its build
+    /// systems choose their own, for example from `--host`. No license
+    /// files are added, nothing is post-processed, and no package or
+    /// buildinfo is written.
+    ///
+    /// # Errors
+    ///
+    /// Fails with `B041` outside [`Mode::Bootstrap`], and otherwise like
+    /// [`Builder::build`] for the steps they share. A failed build keeps its
+    /// working tree and may leave some of its files in `dest`.
+    pub fn install(
+        &self,
+        recipe: &Recipe,
+        inputs: &KeyInputs,
+        dest: &Path,
+    ) -> Result<(), BuildError> {
+        let Mode::Bootstrap(root) = &self.mode else {
+            return Err(BuildError::problem(
+                "B041",
+                "only bootstrap mode installs into a directory",
+            ));
+        };
+        fs::create_dir_all(dest).map_err(io(dest))?;
+        let key = inputs.build_key();
+        let mut session = self.session(recipe, &key)?;
+        session.exec = Executor::direct(root, &session.build, dest, session.exec.logs())
+            .search_first(self.search.clone())
+            .timeout(self.timeout);
+        session.env = env::install(recipe.environment(self.jobs));
+        self.phases(&session, recipe, None)?;
+        let record = dest.join(INSTALLED).join(item_dir(&Item::of(recipe)));
+        fsx::write_atomic(&record, format!("{key}\n").as_bytes(), 0o644)?;
+        if !self.keep_work {
+            fsx::remove_tree(&session.dir)?;
+        }
+        Ok(())
+    }
+
     /// Prepares the build of `recipe` with the build key `key`: the working
     /// tree, the sources, the recipe files, the build view and the vendor
     /// trees. An existing working tree of the same key is replaced.
@@ -741,6 +788,36 @@ impl<'a> Builder<'a> {
         fsx::remove_tree(&tree)?;
         result
     }
+}
+
+/// Where [`Builder::install`] records what it installed, relative to the
+/// destination: one file per item, named `<name>+<variant>`, that holds the
+/// build key.
+const INSTALLED: &str = "var/lib/laft-build/installed";
+
+/// The build key of the latest [`Builder::install`] of `item` into `dest`,
+/// or `None` when nothing was installed for it there.
+///
+/// # Errors
+///
+/// Fails with `B023` when the record exists but cannot be read or holds no
+/// build key.
+pub fn installed(dest: &Path, item: &Item) -> Result<Option<Blake3Hash>, BuildError> {
+    let path = dest.join(INSTALLED).join(item_dir(item));
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(BuildError::problem(
+                "B023",
+                format!("{}: {e}", path.display()),
+            ));
+        }
+    };
+    text.trim_end()
+        .parse()
+        .map(Some)
+        .map_err(|e| BuildError::problem("B023", format!("{}: {e}", path.display())))
 }
 
 /// `<name>+<variant>`, the directory of an item's logs.

@@ -14,8 +14,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use laft_build::{
-    BuildRoot, Builder, Buildinfo, Cutoff, Event, Mode, Recipe, Repos, SourceCache, Trigger,
-    check_repro,
+    BuildRoot, Builder, Buildinfo, Cutoff, Event, Item, Mode, Recipe, Repos, SourceCache, Trigger,
+    check_repro, installed,
 };
 use laft_core::Dep;
 use laft_fetch::{Config, Fetcher};
@@ -92,6 +92,11 @@ fn tarball() -> Vec<u8> {
 /// A recipe repository whose `hello` recipe takes its source from a
 /// `file://` mirror below `dir`.
 fn repos(dir: &Path) -> Repos {
+    repos_with(dir, "  check = false\n  build make {}")
+}
+
+/// Like [`repos`], with `build` as the rest of the `hello` recipe.
+fn repos_with(dir: &Path, build: &str) -> Repos {
     let bytes = tarball();
     let hex: String = Sha256::digest(&bytes)
         .iter()
@@ -102,7 +107,7 @@ fn repos(dir: &Path) -> Repos {
     fs::write(mirror.join("sha256").join(&hex), bytes).expect("the test setup works");
     let body = format!(
         "  source main {{\n    url = [\"https://example.org/hello-1.0.tar.gz\"]\n    \
-         sha256 = \"sha256:{hex}\"\n  }}\n  check = false\n  build make {{}}"
+         sha256 = \"sha256:{hex}\"\n  }}\n{build}"
     );
     let repo = support::write_repo(
         &dir.join("core"),
@@ -346,4 +351,87 @@ fn bootstrap_mode_builds_without_a_sandbox_and_says_so() {
         root.store().list().unwrap().is_empty(),
         "bootstrap builds leave the store alone"
     );
+}
+
+/// A bootstrap builder for `repos` that keeps everything below `dir` and
+/// fetches nothing.
+fn offline_cache(dir: &Path) -> (BuildRoot, SourceCache) {
+    let config = Config {
+        offline: true,
+        ..Config::new(dir.join("cache"))
+    };
+    let root = BuildRoot::new(dir.join("root"));
+    let cache = SourceCache::new(root.sources(), Fetcher::new(config));
+    (root, cache)
+}
+
+#[test]
+fn an_installing_bootstrap_build_fills_the_destination_and_records_its_key() {
+    let dir = laft_test::tempdir();
+    for tool in ["bash", "cc", "make", "install", "ln"] {
+        if !Path::new("/usr/bin").join(tool).exists() {
+            println!("skipping: /usr/bin/{tool} is missing");
+            return;
+        }
+    }
+    let repos = repos(dir.path());
+    let recipe: Recipe = support::evaluate(&repos, "hello").remove(0);
+    let (root, cache) = offline_cache(dir.path());
+    let builder = Builder::new(&repos, &cache, &root, Mode::Bootstrap("/".into()));
+    let inputs = builder.key_inputs(&recipe).unwrap();
+    let dest = dir.path().join("system");
+    let item = Item::of(&recipe);
+    assert_eq!(installed(&dest, &item).unwrap(), None);
+    if let Err(e) = builder.install(&recipe, &inputs, &dest) {
+        panic!("the installing build fails: {e}");
+    }
+    for file in ["usr/bin/hello", "usr/lib/libgreet.so.1.0.0"] {
+        assert!(dest.join(file).is_file(), "{file} is not installed");
+    }
+    assert!(dest.join("usr/include/greet.h").is_file());
+    assert_eq!(installed(&dest, &item).unwrap(), Some(inputs.build_key()));
+    assert!(
+        !root.out().exists() || fs::read_dir(root.out()).unwrap().next().is_none(),
+        "installing writes no package"
+    );
+    assert!(!builder.work_dir(&inputs.build_key()).exists());
+}
+
+#[test]
+fn an_installing_build_sees_the_destination_and_no_toolchain() {
+    let dir = laft_test::tempdir();
+    let repos = repos_with(
+        dir.path(),
+        "  build custom {}\n  phases {\n    install = \"printenv > \\\"$DESTDIR/env\\\"\"\n  }",
+    );
+    let recipe: Recipe = support::evaluate(&repos, "hello").remove(0);
+    let (root, cache) = offline_cache(dir.path());
+    let mut builder = Builder::new(&repos, &cache, &root, Mode::Bootstrap("/".into()));
+    let tools = dir.path().join("system/tools/bin");
+    builder.search = vec![tools.clone()];
+    let inputs = builder.key_inputs(&recipe).unwrap();
+    let dest = dir.path().join("system");
+    builder.install(&recipe, &inputs, &dest).unwrap();
+    let env = fs::read_to_string(dest.join("env")).unwrap();
+    let lines: Vec<&str> = env.lines().collect();
+    assert!(
+        lines.contains(&format!("DESTDIR={}", dest.display()).as_str()),
+        "{env}"
+    );
+    assert!(
+        lines.contains(&format!("PATH={}:/usr/bin", tools.display()).as_str()),
+        "{env}"
+    );
+    for key in ["CC", "CXX", "CFLAGS", "LDFLAGS", "CHOST"] {
+        assert!(
+            !lines.iter().any(|l| l.starts_with(&format!("{key}="))),
+            "{env}"
+        );
+    }
+
+    let other = Builder::new(&repos, &cache, &root, Mode::View("/usr".into()));
+    let error = other
+        .install(&recipe, &inputs, &dest)
+        .expect_err("only bootstrap mode installs");
+    assert_eq!(error.code(), Some("B041"));
 }
