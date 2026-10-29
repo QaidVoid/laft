@@ -21,6 +21,12 @@
 //!    The test logs in, checks the booted system and powers it off, then
 //!    boots it a second time to check that the boot was recorded as good.
 //!
+//! With `--self-built DIR`, the installed system is instead the base system
+//! that the bootstrap of the recipe repository built, taken from the package
+//! files in `DIR`, with the configuration in `system-self-built.stav`. Its
+//! kernel boots the installer too, and only busybox for the installer comes
+//! from `tests/vm/recipes`.
+//!
 //! The console of each machine is saved next to the disk image.
 
 #![forbid(unsafe_code)]
@@ -30,6 +36,7 @@ mod disk;
 mod installer;
 mod packages;
 mod qemu;
+mod system;
 
 use std::fs;
 use std::io::Write;
@@ -38,6 +45,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
 use crate::qemu::{Accel, Boot, Machine};
+use crate::system::System;
 
 /// The result of a step: an error message for the report.
 type Result<T> = std::result::Result<T, String>;
@@ -84,6 +92,11 @@ impl Paths {
     fn www(&self) -> PathBuf {
         self.work.join("www")
     }
+
+    /// The output directory of the build root of `tests/vm/recipes`.
+    fn build_out(&self) -> PathBuf {
+        self.cache.join("build-root/out")
+    }
 }
 
 /// Runs `command` and fails unless it exits successfully.
@@ -123,8 +136,21 @@ fn run_with_input(command: &mut Command, input: &[u8]) -> Result<()> {
 }
 
 fn main() -> ExitCode {
-    let keep = std::env::args().any(|a| a == "--keep");
-    match test(keep) {
+    let mut keep = false;
+    let mut system = System::Minimal;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        let dir = (arg == "--self-built").then(|| args.next()).flatten();
+        match (arg.as_str(), dir) {
+            ("--keep", _) => keep = true,
+            (_, Some(dir)) => system = System::SelfBuilt(PathBuf::from(dir)),
+            _ => {
+                eprintln!("usage: laft-vmtest [--keep] [--self-built DIR]");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    match test(keep, &system) {
         Ok(()) => {
             eprintln!("laft-vmtest: passed");
             ExitCode::SUCCESS
@@ -136,16 +162,16 @@ fn main() -> ExitCode {
     }
 }
 
-fn test(keep: bool) -> Result<()> {
+fn test(keep: bool, system: &System) -> Result<()> {
     let paths = Paths::new()?;
     let accel = Accel::detect();
     if accel == Accel::Tcg {
         eprintln!("laft-vmtest: /dev/kvm is not usable, so the machines are emulated");
     }
-    let key = packages::build(&paths)?;
+    let key = packages::build(&paths, system)?;
     let disk = paths.work.join("disk.img");
     disk::create(&disk)?;
-    install(&paths, accel, &key, &disk)?;
+    install(&paths, accel, &key, &disk, system)?;
     let vars = paths.work.join("vars.fd");
     let _ = fs::remove_file(&vars);
     qemu::prepare_vars(&vars)?;
@@ -160,8 +186,8 @@ fn test(keep: bool) -> Result<()> {
 }
 
 /// Installs the system onto `disk` from the installer machine.
-fn install(paths: &Paths, accel: Accel, key: &str, disk: &Path) -> Result<()> {
-    let (kernel, initrd) = installer::prepare(paths, key)?;
+fn install(paths: &Paths, accel: Accel, key: &str, disk: &Path, system: &System) -> Result<()> {
+    let (kernel, initrd) = installer::prepare(paths, key, system)?;
     let boot = Boot::Kernel {
         kernel,
         initrd: initrd.clone(),
@@ -210,6 +236,9 @@ fn login(machine: &mut Machine) -> Result<()> {
     // login discards what was typed before it turned echo off.
     std::thread::sleep(Duration::from_secs(1));
     machine.send("laft\r")?;
+    // login may discard what is typed before the shell reads, so the first
+    // command waits for the prompt.
+    machine.expect("the shell prompt", "# ")?;
     shell(machine, "true").map(|_| ())
 }
 

@@ -4,17 +4,22 @@
 //! busybox, runit, the kernel and Limine are built from the recipes in
 //! `tests/vm/recipes` by `laft-build` in bootstrap mode, with the host's
 //! tools. Their sources are pinned there by URL and SHA-256, and
-//! `laft-build` verifies every download before it uses it. The Laft
-//! binaries are packaged from the static release build of this workspace.
+//! `laft-build` verifies every download before it uses it. The self-built
+//! system needs only busybox from there, for the installer, and publishes
+//! [`SELF_BUILT_PACKAGES`] from the packages the bootstrap made instead. The
+//! Laft binaries are packaged from the static release build of this
+//! workspace.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use laft_core::Blake3Hash;
-use laft_pkg::{Arch, Compression, Manifest, Meta, scan, write_package};
+use laft_pkg::{Arch, Compression, Manifest, Meta, Reader, scan, write_package};
 
+use crate::system::{SELF_BUILT_PACKAGES, System};
 use crate::{Paths, Result, fail, run};
 
 /// The packages `laft-build` makes, in build order.
@@ -33,15 +38,20 @@ const CROSS_TOOLS: [&str; 12] = [
     "gcc", "g++", "cpp", "ar", "as", "ld", "nm", "objcopy", "objdump", "ranlib", "readelf", "strip",
 ];
 
-/// Builds every package and publishes them as a signed repository in
-/// `www`. Returns the public key line of the repository.
+/// Builds the packages of `system` and publishes them as a signed
+/// repository in `www`. Returns the public key line of the repository.
 ///
 /// # Errors
 ///
-/// Fails when a build, the packaging or the repository tool fails.
-pub(crate) fn build(paths: &Paths) -> Result<String> {
+/// Fails when a build, the packaging or the repository tool fails, or when
+/// a package of the self-built system is missing.
+pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
     let bootstrap = bootstrap_root(&paths.cache)?;
     let build_root = paths.cache.join("build-root");
+    let recipes: &[&str] = match system {
+        System::Minimal => &RECIPES,
+        System::SelfBuilt(_) => &["busybox:static"],
+    };
     let mut command = Command::new(paths.bin.join("laft-build"));
     command
         .arg("--root")
@@ -52,8 +62,12 @@ pub(crate) fn build(paths: &Paths) -> Result<String> {
         .arg("--root")
         .arg(&bootstrap)
         .args(["--jobs", "4"])
-        .args(RECIPES);
+        .args(recipes);
     run(&mut command)?;
+    let published = match system.self_built() {
+        Some(dir) => select(dir, &paths.work.join("self-built"))?,
+        None => paths.build_out(),
+    };
 
     let laft_out = paths.work.join("packages");
     let _ = fs::remove_dir_all(&laft_out);
@@ -87,7 +101,7 @@ pub(crate) fn build(paths: &Paths) -> Result<String> {
             "--key",
         ])
         .arg(key.with_extension("key"))
-        .arg(build_root.join("out"))
+        .arg(&published)
         .arg(&laft_out))?;
     run(repo_tool().arg("publish").arg(&repo).arg(&www))?;
     let public = key.with_extension("pub");
@@ -97,6 +111,81 @@ pub(crate) fn build(paths: &Paths) -> Result<String> {
         .last()
         .map(str::to_owned)
         .ok_or_else(|| fail(format!("{} has no key line", public.display())))
+}
+
+/// Links the package files of [`SELF_BUILT_PACKAGES`] from `dir` into a
+/// new directory `to`, with every buildinfo file of `dir`, which name the
+/// packages they describe, and returns `to`.
+fn select(dir: &Path, to: &Path) -> Result<PathBuf> {
+    let _ = fs::remove_dir_all(to);
+    fs::create_dir_all(to).map_err(|e| fail(format!("{}: {e}", to.display())))?;
+    let files = package_files(dir)?;
+    let mut chosen = Vec::new();
+    for name in SELF_BUILT_PACKAGES {
+        chosen.push(one(dir, &files, name)?.0.clone());
+    }
+    for item in fs::read_dir(dir).map_err(|e| fail(format!("{}: {e}", dir.display())))? {
+        let path = item
+            .map_err(|e| fail(format!("{}: {e}", dir.display())))?
+            .path();
+        if path.to_string_lossy().ends_with(".buildinfo.json") {
+            chosen.push(path);
+        }
+    }
+    for from in chosen {
+        let target = to.join(from.file_name().expect("a listed file has a name"));
+        fs::hard_link(&from, &target).map_err(|e| fail(format!("{}: {e}", from.display())))?;
+    }
+    Ok(to.to_path_buf())
+}
+
+/// Every package file in `dir` with its metadata, by package name.
+fn package_files(dir: &Path) -> Result<BTreeMap<String, Vec<(PathBuf, Meta)>>> {
+    let mut found: BTreeMap<String, Vec<(PathBuf, Meta)>> = BTreeMap::new();
+    for item in fs::read_dir(dir).map_err(|e| fail(format!("{}: {e}", dir.display())))? {
+        let path = item
+            .map_err(|e| fail(format!("{}: {e}", dir.display())))?
+            .path();
+        if path.extension().is_none_or(|e| e != "lpkg") {
+            continue;
+        }
+        let meta = fs::File::open(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|f| Reader::new(f).map_err(|e| e.to_string()))
+            .map(|r| r.meta().clone())
+            .map_err(|e| fail(format!("{}: {e}", path.display())))?;
+        found
+            .entry(meta.name.to_string())
+            .or_default()
+            .push((path, meta));
+    }
+    Ok(found)
+}
+
+/// The one package file named `name` of `files`, which `dir` holds.
+fn one<'a>(
+    dir: &Path,
+    files: &'a BTreeMap<String, Vec<(PathBuf, Meta)>>,
+    name: &str,
+) -> Result<(&'a PathBuf, &'a Meta)> {
+    match files.get(name).map(Vec::as_slice) {
+        Some([(file, meta)]) => Ok((file, meta)),
+        found => Err(fail(format!(
+            "{} has {} packages named {name}, not one",
+            dir.display(),
+            found.map_or(0, <[_]>::len)
+        ))),
+    }
+}
+
+/// The one package file in `dir` whose package is named `name`.
+///
+/// # Errors
+///
+/// Fails when `dir` cannot be read or holds no or several such files.
+pub(crate) fn package_file(dir: &Path, name: &str) -> Result<PathBuf> {
+    let files = package_files(dir)?;
+    one(dir, &files, name).map(|(file, _)| file.clone())
 }
 
 /// A bootstrap system whose `usr/bin` is the host's, with the cross tools

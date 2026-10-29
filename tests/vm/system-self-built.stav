@@ -1,0 +1,49 @@
+# The system the virtual machine test installs and boots with --self-built:
+# the base system that the bootstrap built. The installer replaces
+# @REPO_KEY@ with the public key of the test repository, which it serves
+# from /repo.
+system {
+  include "./hardware.stav"
+
+  hostname = "laft-vm"
+
+  packages = [glibc, dash, bash, coreutils, util-linux, shadow, procps-ng, kmod, kbd,
+              grep, sed, udev, runit, linux, limine, laft]
+
+  repo core {
+    url = "file:///repo"
+    key = "@REPO_KEY@"
+  }
+
+  users {
+    # The password is "laft".
+    user root {
+      shell         = "/usr/bin/sh"
+      password_hash = "$6$laftvmtest$TYgldH8Nq8IA.rapP6rP8nRPwVxtaogYYeskFhzsWeop1a/jLgduKPbwiJkWJBLTVoytkeuCyuB4NCDPgxLiz."
+    }
+  }
+
+  # The root filesystem is not checked, so the initramfs needs no e2fsck,
+  # and the initramfs has no emergency shell, which would need busybox.
+  fs "/" { fsck = false }
+
+  boot {
+    cmdline   = ["console=ttyS0", "quiet", "laft.debug"]
+    timeout   = 1
+    microcode = force(off)
+    initrd { shell = false }
+  }
+
+  # This system has no session tracker.
+  service turnstiled { enable = false }
+
+  service boot-complete { log = console }
+
+  service vmtest-marker {
+    description = "Print a marker line on the console"
+    exec        = ["/usr/bin/sh", "-c", "echo 'laft-vmtest: marker service is running'; exec sleep 2147483647"]
+    log         = console
+  }
+
+  getty { ttys = ["ttyS0"] }
+}

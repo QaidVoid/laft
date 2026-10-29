@@ -13,29 +13,9 @@ use std::path::{Path, PathBuf};
 use laft_pkg::Reader;
 
 use crate::cpio::{Archive, Kind};
+use crate::packages::package_file;
+use crate::system::System;
 use crate::{Paths, Result, fail};
-
-/// The kernel release of the test kernel.
-pub(crate) const RELEASE: &str = "7.2.13_1";
-
-/// The modules the installer loads, in dependency order, below
-/// `usr/lib/modules/<release>/kernel`.
-const MODULES: [&str; 14] = [
-    "drivers/virtio/virtio_ring.ko",
-    "drivers/virtio/virtio.ko",
-    "drivers/virtio/virtio_pci_legacy_dev.ko",
-    "drivers/virtio/virtio_pci_modern_dev.ko",
-    "drivers/virtio/virtio_pci.ko",
-    "drivers/block/virtio_blk.ko",
-    "lib/crc/crc16.ko",
-    "fs/mbcache.ko",
-    "fs/jbd2/jbd2.ko",
-    "fs/ext4/ext4.ko",
-    "fs/fat/fat.ko",
-    "fs/fat/vfat.ko",
-    "fs/nls/nls_cp437.ko",
-    "fs/nls/nls_iso8859-1.ko",
-];
 
 /// The line the installer prints when it is done, followed by the exit
 /// status of `laft install`.
@@ -86,18 +66,18 @@ poweroff -f
 /// Writes the installer's kernel and initramfs into the work directory and
 /// returns their paths. The initramfs carries busybox and the modules from
 /// the packages, `laft`, the published repository at `/repo` and the
-/// system configuration with `key` as the repository key.
+/// configuration of `system` with `key` as the repository key. The kernel
+/// is the one the installed system boots.
 ///
 /// # Errors
 ///
 /// Fails when a package cannot be read or a file cannot be written.
-pub(crate) fn prepare(paths: &Paths, key: &str) -> Result<(PathBuf, PathBuf)> {
+pub(crate) fn prepare(paths: &Paths, key: &str, system: &System) -> Result<(PathBuf, PathBuf)> {
     let unpacked = paths.work.join("unpacked");
     let _ = fs::remove_dir_all(&unpacked);
-    let out = paths.cache.join("build-root/out");
-    let busybox = unpack(&out, "busybox-", &unpacked.join("busybox"))?;
-    let linux = unpack(&out, "linux-", &unpacked.join("linux"))?;
-    let release = linux.join("usr/lib/modules").join(RELEASE);
+    let busybox = unpack(&paths.build_out(), "busybox", &unpacked.join("busybox"))?;
+    let linux = unpack(&system.kernel_dir(paths), "linux", &unpacked.join("linux"))?;
+    let release = linux.join("usr/lib/modules").join(system.release());
 
     let mut archive = Archive::default();
     for dir in [
@@ -130,7 +110,7 @@ pub(crate) fn prepare(paths: &Paths, key: &str) -> Result<(PathBuf, PathBuf)> {
         Kind::File(read(&paths.bin.join("laft"))?),
     );
     let mut list = String::new();
-    for module in MODULES {
+    for module in system.installer_modules() {
         let name = module.rsplit('/').next().unwrap_or(module);
         archive.add(
             &format!("lib/modules/{name}"),
@@ -141,8 +121,8 @@ pub(crate) fn prepare(paths: &Paths, key: &str) -> Result<(PathBuf, PathBuf)> {
         list.push('\n');
     }
     archive.add("modules", 0o644, Kind::File(list.into_bytes()));
-    let config = fs::read_to_string(paths.source.join("system.stav"))
-        .map_err(|e| fail(format!("system.stav: {e}")))?
+    let config = fs::read_to_string(paths.source.join(system.config()))
+        .map_err(|e| fail(format!("{}: {e}", system.config())))?
         .replace("@REPO_KEY@", key);
     archive.add("system.stav", 0o644, Kind::File(config.into_bytes()));
     add_tree(&mut archive, &paths.www(), "repo")?;
@@ -157,30 +137,11 @@ pub(crate) fn prepare(paths: &Paths, key: &str) -> Result<(PathBuf, PathBuf)> {
     Ok((kernel, initrd))
 }
 
-/// Unpacks the one package file of `out` whose name starts with `prefix`
-/// into `to`, with the reader the store uses, and returns `to`.
-fn unpack(out: &Path, prefix: &str, to: &Path) -> Result<PathBuf> {
-    let mut found = Vec::new();
-    for item in fs::read_dir(out).map_err(|e| fail(format!("{}: {e}", out.display())))? {
-        let path = item
-            .map_err(|e| fail(format!("{}: {e}", out.display())))?
-            .path();
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-        if name.starts_with(prefix) && name.ends_with(".lpkg") {
-            found.push(path);
-        }
-    }
-    let [file] = found.as_slice() else {
-        return Err(fail(format!(
-            "{} has {} packages named {prefix}*, not one",
-            out.display(),
-            found.len()
-        )));
-    };
-    let reader = fs::File::open(file)
+/// Unpacks the one package named `name` of `dir` into `to`, with the
+/// reader the store uses, and returns `to`.
+fn unpack(dir: &Path, name: &str, to: &Path) -> Result<PathBuf> {
+    let file = package_file(dir, name)?;
+    let reader = fs::File::open(&file)
         .map_err(|e| e.to_string())
         .and_then(|f| Reader::new(f).map_err(|e| e.to_string()))
         .map_err(|e| fail(format!("{}: {e}", file.display())))?;
