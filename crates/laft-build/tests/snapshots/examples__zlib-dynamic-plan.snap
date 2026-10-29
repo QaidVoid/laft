@@ -1,0 +1,171 @@
+---
+source: crates/laft-build/tests/examples.rs
+assertion_line: 49
+expression: json
+---
+{
+  "name": "zlib",
+  "version": "1.3.1",
+  "rev": 1,
+  "variant": "dynamic",
+  "repos": [
+    "core"
+  ],
+  "meta": {
+    "summary": "Compression library implementing the deflate method",
+    "description": null,
+    "homepage": "https://zlib.net",
+    "license": [
+      "Zlib"
+    ],
+    "license_files": null
+  },
+  "sources": [
+    {
+      "label": "main",
+      "fetch": {
+        "url": {
+          "urls": [
+            "https://zlib.net/zlib-1.3.1.tar.gz",
+            "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+          ],
+          "sha256": "sha256:9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+          "file": "zlib-1.3.1.tar.gz",
+          "extract": true
+        }
+      },
+      "dest": "",
+      "strip_components": null
+    }
+  ],
+  "vendors": [],
+  "patches": [],
+  "patch_strip": 1,
+  "files": [],
+  "build_deps": [],
+  "link_deps": [],
+  "check_deps": [],
+  "phases": {
+    "prepare": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then autoreconf -fi; fi\n",
+    "configure": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\n\"$SRC//configure\" '--prefix=/usr' '--libdir=/usr/lib'\n",
+    "build": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\nmake\n",
+    "check": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\nmake 'check'\n",
+    "install": "#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nif false; then cd \"$BUILDDIR\"; fi\nmake DESTDIR=\"$DESTDIR\" install\n",
+    "post_install": null
+  },
+  "env": {
+    "AR": "ar",
+    "AS": "as",
+    "BUILDDIR": "/build/obj",
+    "CARGO_HOME": "/build/cargo-home",
+    "CARGO_OUT": "/build/obj/target/x86_64-unknown-linux-gnu/release",
+    "CARGO_PROFILE_RELEASE_DEBUG": "2",
+    "CARGO_TARGET": "x86_64-unknown-linux-gnu",
+    "CARGO_TARGET_DIR": "/build/obj/target",
+    "CBUILD": "x86_64-laft-linux-gnu",
+    "CC": "gcc",
+    "CFLAGS": "-march=x86-64-v3 -mtune=generic -O2 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fcf-protection -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -g -ffile-prefix-map=/build/src=/usr/src/debug/zlib -ffile-prefix-map=/build/obj=/usr/src/debug/zlib",
+    "CGO_ENABLED": "0",
+    "CHOST": "x86_64-laft-linux-gnu",
+    "COMMON": "/build/common/core",
+    "CPP": "cpp",
+    "CPPFLAGS": "",
+    "CXX": "g++",
+    "CXXFLAGS": "-march=x86-64-v3 -mtune=generic -O2 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fcf-protection -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -g -ffile-prefix-map=/build/src=/usr/src/debug/zlib -ffile-prefix-map=/build/obj=/usr/src/debug/zlib -Wp,-D_GLIBCXX_ASSERTIONS",
+    "DESTDIR": "/out",
+    "GOAMD64": "v3",
+    "GOCACHE": "/build/go-cache",
+    "GOFLAGS": "-trimpath -mod=vendor -modcacherw -buildvcs=false",
+    "GOPATH": "/build/go",
+    "GOPROXY": "off",
+    "GOTOOLCHAIN": "local",
+    "HOME": "/build/home",
+    "LAFT_ARCH": "x86_64-v3",
+    "LAFT_CROSS_DIR": "/build/cross",
+    "LAFT_NAME": "zlib",
+    "LAFT_REV": "1",
+    "LAFT_VARIANT": "dynamic",
+    "LAFT_VERSION": "1.3.1",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "LD": "ld",
+    "LDFLAGS": "-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs",
+    "NM": "nm",
+    "OBJCOPY": "objcopy",
+    "OBJDUMP": "objdump",
+    "OUT": "/out",
+    "PATH": "/usr/bin",
+    "PKG_CONFIG": "pkgconf",
+    "PREFIX": "/usr",
+    "PYTHONHASHSEED": "0",
+    "RANLIB": "ranlib",
+    "READELF": "readelf",
+    "RECIPE": "/build/recipes/core/zlib",
+    "RUSTFLAGS": "-C target-cpu=x86-64-v3 -C debuginfo=2 -C strip=none --remap-path-prefix=/build=/usr/src/debug/zlib -C link-arg=-Wl,-z,relro,-z,now",
+    "SOURCE_DATE_EPOCH": "315532800",
+    "SRC": "/build/src",
+    "TMPDIR": "/build/tmp",
+    "TZ": "UTC"
+  },
+  "options": {
+    "check": true,
+    "parallel": true,
+    "strip": true,
+    "debug_split": true,
+    "static_pie": true,
+    "keep_archives": false,
+    "lto": false,
+    "empty": false,
+    "keep_dirs": []
+  },
+  "outputs": {
+    "split": [
+      "dbg",
+      "dev",
+      "doc"
+    ],
+    "subpackages": {},
+    "alternatives": {},
+    "deps": [],
+    "provides": [],
+    "conflicts": [],
+    "replaces": [],
+    "ignore_deps": [],
+    "setuid": [],
+    "caps": {},
+    "ownership": {}
+  },
+  "smoke": null,
+  "abi_epoch": 0,
+  "toolchain_epoch": 1,
+  "operations": {
+    "maintainers": [],
+    "update": {
+      "github": "madler/zlib",
+      "gitlab": null,
+      "anitya": null,
+      "url": null,
+      "pattern": null,
+      "tag_prefix": null,
+      "track": null,
+      "ignore": [
+        "alpha",
+        "beta",
+        "rc",
+        "pre",
+        "dev",
+        "snapshot"
+      ],
+      "prerelease": false,
+      "automerge": false,
+      "disabled": null
+    },
+    "cpe": [
+      "cpe:2.3:a:zlib:zlib"
+    ],
+    "ci": {
+      "runner": "standard",
+      "timeout_minutes": 360
+    }
+  }
+}

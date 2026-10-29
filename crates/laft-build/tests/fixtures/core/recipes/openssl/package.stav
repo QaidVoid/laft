@@ -1,0 +1,42 @@
+package openssl {
+  version  = "3.5.4"
+  summary  = "Toolkit for TLS and general purpose cryptography"
+  homepage = "https://www.openssl.org"
+  license  = [Apache-2.0]
+
+  source main {
+    url    = ["https://github.com/openssl/openssl/releases/download/openssl-#{self.version}/openssl-#{self.version}.tar.gz"]
+    sha256 = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+  }
+
+  build_deps = [perl]
+  link_deps  = [zlib]
+
+  build custom {}
+
+  phases {
+    configure = """
+      ./Configure --prefix=/usr --openssldir=/etc/ssl --libdir=lib \
+        shared zlib-dynamic enable-ktls linux-x86_64 \
+        $CPPFLAGS $CFLAGS $LDFLAGS
+      """
+    build   = "make"
+    check   = "make HARNESS_JOBS=\"$JOBS\" test"
+    install = "make DESTDIR=\"$DESTDIR\" MANSUFFIX=ssl install_sw install_ssldirs install_man_docs"
+    post_install = """
+      rm -f "$DESTDIR"/etc/ssl/*.dist
+      """
+  }
+
+  subpackage libs {
+    summary = "OpenSSL shared libraries and default configuration"
+    files   = ["usr/lib/libssl.so.*", "usr/lib/libcrypto.so.*",
+               "usr/lib/engines-3/**", "usr/lib/ossl-modules/**", "etc/ssl/**"]
+  }
+
+  update {
+    github = "openssl/openssl"
+    ignore = ["alpha", "beta"]
+  }
+  cpe = ["cpe:2.3:a:openssl:openssl"]
+}

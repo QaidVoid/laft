@@ -1,0 +1,51 @@
+---
+source: crates/laft-build/tests/examples.rs
+assertion_line: 34
+expression: scripts(&recipe)
+---
+### prepare
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+mkdir -p "$CARGO_HOME"
+cat > "$CARGO_HOME/config.toml" <<'EOF'
+[source.crates-io]
+replace-with = "vendored"
+[source.vendored]
+directory = "/build/vendor/cargo"
+[net]
+offline = true
+EOF
+### build
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+cargo build --frozen --release --target "$CARGO_TARGET" \
+  --features 'pcre2'
+### check
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+cargo test --frozen --release --target "$CARGO_TARGET" --features 'pcre2'
+### install
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+for b in 'rg'; do install -Dm755 "$CARGO_OUT/$b" "$DESTDIR/usr/bin/$b"; done
+### post_install
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+install -d "$DESTDIR/usr/share/man/man1" \
+           "$DESTDIR/usr/share/bash-completion/completions" \
+           "$DESTDIR/usr/share/zsh/site-functions" \
+           "$DESTDIR/usr/share/fish/vendor_completions.d"
+"$CARGO_OUT/rg" --generate man > "$DESTDIR/usr/share/man/man1/rg.1"
+"$CARGO_OUT/rg" --generate complete-bash > "$DESTDIR/usr/share/bash-completion/completions/rg"
+"$CARGO_OUT/rg" --generate complete-zsh  > "$DESTDIR/usr/share/zsh/site-functions/_rg"
+"$CARGO_OUT/rg" --generate complete-fish > "$DESTDIR/usr/share/fish/vendor_completions.d/rg.fish"

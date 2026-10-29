@@ -1,0 +1,31 @@
+---
+source: crates/laft-build/tests/examples.rs
+assertion_line: 34
+expression: scripts(&recipe)
+---
+### configure
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+cp "/build/recipes/core/linux/files/config-x86_64" .config
+make LOCALVERSION="-laft1" olddefconfig
+### build
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+make LOCALVERSION="-laft1" KBUILD_BUILD_TIMESTAMP="@$SOURCE_DATE_EPOCH" \
+  KBUILD_BUILD_USER=laft KBUILD_BUILD_HOST=laft bzImage modules
+### install
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+kver="$(make -s LOCALVERSION="-laft1" kernelrelease)"
+install -Dm644 arch/x86/boot/bzImage "$DESTDIR/usr/lib/modules/$kver/vmlinuz"
+make LOCALVERSION="-laft1" INSTALL_MOD_PATH="$DESTDIR/usr" \
+  INSTALL_MOD_STRIP=1 modules_install
+rm -f "$DESTDIR/usr/lib/modules/$kver/build"
+install -Dm644 .config "$DESTDIR/usr/lib/modules/$kver/config"
+install -Dm644 System.map "$DESTDIR/usr/lib/modules/$kver/System.map"

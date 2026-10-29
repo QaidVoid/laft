@@ -1,0 +1,27 @@
+import "laft/target" as target
+
+package zlib {
+  version  = "1.3.1"
+  summary  = "Compression library implementing the deflate method"
+  homepage = "https://zlib.net"
+  license  = [Zlib]
+  variants = [dynamic, static]
+
+  source main {
+    url    = ["https://zlib.net/zlib-#{self.version}.tar.gz",
+              "https://github.com/madler/zlib/releases/download/v#{self.version}/zlib-#{self.version}.tar.gz"]
+    sha256 = "sha256:9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+  }
+
+  build configure {
+    standard_args = false
+    args          = ["--prefix=/usr", "--libdir=/usr/lib"]
+  }
+
+  if target.variant == static {
+    build configure { args = ["--static"] }
+  }
+
+  update { github = "madler/zlib" }
+  cpe    = ["cpe:2.3:a:zlib:zlib"]
+}

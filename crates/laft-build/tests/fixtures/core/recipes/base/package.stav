@@ -1,0 +1,9 @@
+package base {
+  version = "1"
+  summary = "Minimal bootable Laft system"
+  license = [CC0-1.0]
+  empty   = true
+  deps    = [glibc, bash, dash, coreutils, util-linux, kmod, shadow, linux-pam,
+             e2fsprogs, dosfstools, iproute2, runit, udev, laft]
+  build custom {}
+}

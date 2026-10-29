@@ -1,0 +1,23 @@
+package pixman {
+  version  = "0.46.4"
+  summary  = "Low-level pixel manipulation library"
+  homepage = "https://pixman.org"
+  license  = [MIT]
+
+  source main {
+    url    = ["https://xorg.freedesktop.org/releases/individual/lib/pixman-#{self.version}.tar.xz"]
+    sha256 = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  }
+
+  build_deps = [meson, ninja, pkgconf]
+
+  build meson {
+    options = ["-Dtests=enabled", "-Ddemos=disabled", "-Dgtk=disabled", "-Dlibpng=disabled",
+               "-Dopenmp=disabled"]
+  }
+
+  update {
+    url     = "https://xorg.freedesktop.org/releases/individual/lib/"
+    pattern = r"pixman-([0-9.]+)\.tar\.xz"
+  }
+}

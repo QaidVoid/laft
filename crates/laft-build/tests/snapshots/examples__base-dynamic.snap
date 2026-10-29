@@ -1,0 +1,6 @@
+---
+source: crates/laft-build/tests/examples.rs
+assertion_line: 34
+expression: scripts(&recipe)
+---
+

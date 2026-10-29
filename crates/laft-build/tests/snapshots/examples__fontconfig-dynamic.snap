@@ -1,0 +1,34 @@
+---
+source: crates/laft-build/tests/examples.rs
+assertion_line: 34
+expression: scripts(&recipe)
+---
+### configure
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+meson setup "$BUILDDIR" "$SRC/" \
+  --prefix=/usr --libexecdir=lib --sbindir=bin --sysconfdir=/etc --localstatedir=/var \
+  --buildtype=plain --wrap-mode=nodownload --auto-features=disabled \
+  -Db_pie=true -Db_lto=false -Dpython.bytecompile=1 \
+  --default-library=shared \
+  '-Dcache-dir=/usr/lib/fontconfig/cache' '-Dcache-build=disabled' '-Ddoc=disabled' '-Dtests=enabled' '-Dtools=enabled'
+### build
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+meson compile -C "$BUILDDIR" -j "$JOBS"
+### check
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+meson test -C "$BUILDDIR" --print-errorlogs --num-processes "$JOBS"
+### install
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+meson install -C "$BUILDDIR" --destdir "$DESTDIR" --no-rebuild

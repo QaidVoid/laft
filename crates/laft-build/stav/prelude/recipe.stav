@@ -1,0 +1,310 @@
+# The schema of Laft recipes and recipe repository descriptors. Every
+# declaration here is in scope, unqualified, in every recipe file.
+
+## The root of one package: the recipe and every overlay file for the same
+## package, each contributing to its `package` block.
+struct Recipes {
+  ## The packages. Block label: the package name.
+  packages: Map<Str, Package> = {} block package
+}
+
+## The root of a repository descriptor `recipes.stav`.
+struct RecipeRepos {
+  ## The descriptor. Block label: the repository name.
+  repos: Map<Str, RecipeRepo> = {} block recipe_repo
+}
+
+## The identity of a recipe repository.
+struct RecipeRepo {
+  ## Architectures this repository builds for.
+  arch:            Set<Str> where nonEmpty = ["x86_64-v3"]
+  ## Recipe repositories whose recipes this one overrides or depends on.
+  extends:         List<Str> = []
+  ## Incrementing it forces a rebuild of every package in the repository.
+  toolchain_epoch: Int where 0..=1000000 = 0
+  ## Content addressed source mirrors, tried after a source's own URLs.
+  source_mirrors:  List<Str> = []
+}
+
+## A build configuration of a package.
+type Variant    = dynamic | static
+## A C library.
+type Libc       = glibc | musl
+## An automatic subpackage.
+type Split      = dev | doc | dbg | locale
+## A tool that vendors dependencies.
+type VendorKind = cargo | go
+## A default hardening flag that a recipe can turn off.
+type Hardening  = fortify | pie | relro | now | stack-clash | cf-protection | format | plt
+## The class of machine a package builds on.
+type Runner     = standard | big
+## The meson `auto_features` setting.
+type Feature    = enabled | disabled | auto
+## The build tool cmake generates files for.
+type Generator  = ninja | make
+
+## How a package is built. The variant is chosen by the label of a `build`
+## block, and the block body sets its fields.
+type Build =
+    custom
+  | configure(args: List<Str> = [], standard_args: Bool = true, autoreconf: Bool = false,
+              out_of_tree: Bool = false, make_args: List<Str> = [],
+              check_target: Str = "check", install_args: List<Str> = [])
+  | make(make_args: List<Str> = [], check_target: Str = "check", install_args: List<Str> = [])
+  | meson(options: List<Str> = [], auto_features: Feature = disabled)
+  | cmake(defines: List<Str> = [], generator: Generator = ninja)
+  | cargo(features: List<Str> = [], default_features: Bool = true, package: Option<Str>,
+          bins: Option<List<Str>>, args: List<Str> = [])
+  | go(packages: List<Str> = ["."], ldflags: List<Str> = [], tags: List<Str> = [], cgo: Bool = false)
+  | python-pep517(check_cmd: Option<Str>)
+  | kernel(config: Path, localversion: Option<Str>, flavor: Option<Str>, make_args: List<Str> = [])
+
+## One upstream project built into one or more packages. Block label: the
+## package name.
+struct Package {
+  ## The upstream version.
+  version:       Str where matches(r"^[A-Za-z0-9._~]+$")
+  ## The Laft revision.
+  rev:           Int where 1..=1000000 = 1
+  ## One line of at most 80 characters, without a final period.
+  summary:       Str where matches(r"^[^\n]{0,79}[^.\n]$")
+  ## A longer description.
+  description:   Option<Str>
+  ## The project's web site.
+  homepage:      Option<Str where matches(r"^https://.*")>
+  ## Every SPDX license or exception that applies.
+  license:       List<Spdx> where nonEmpty
+  ## License files relative to $SRC. none: every top level COPYING*,
+  ## LICENSE*, LICENCE*, NOTICE* or COPYRIGHT* file.
+  license_files: Option<List<Str>>
+  ## Free form, usually "Name <email>".
+  maintainers:   List<Str> = []
+  ## The variants this recipe builds.
+  variants:      Set<Variant> where nonEmpty = [dynamic]
+  ## The architectures to build for. none: every architecture of the
+  ## repository.
+  arch:          Option<Set<Str>>
+  ## A meta package without payload.
+  empty:         Bool = false
+
+  ## Sources. Block label: the source name, `main` for the primary one.
+  sources:       Map<Str, Source> = {} block source
+  ## Vendored dependencies. Block label: the vendoring tool.
+  vendors:       Map<VendorKind, Vendor> = {} block vendor
+  ## Patches applied in order in $SRC after extraction.
+  patches:       List<Path> = []
+  ## The -p value for patch.
+  patch_strip:   Int where 0..=10 = 1
+
+  ## Tools that run during the build, always the dynamic variant.
+  build_deps:    Set<Pkg> = []
+  ## Libraries the package compiles and links against.
+  link_deps:     Set<Pkg> = []
+  ## Packages present only when the check phase runs.
+  check_deps:    Set<Pkg> = []
+  ## Runtime dependencies in addition to the detected ones.
+  deps:          Set<Pkg> = []
+  ## Extra virtual capabilities.
+  provides:      Set<Str where matches(r"^virtual:[a-z0-9][a-z0-9._-]*$")> = []
+  ## Packages that cannot be in the same view.
+  conflicts:     Set<Pkg> = []
+  ## Package names this package supersedes.
+  replaces:      Set<Pkg> = []
+  ## Globs of payload paths excluded from dependency detection.
+  ignore_deps:   List<Str> = []
+
+  ## The build style.
+  build:         Build
+  ## Phase replacements, hooks and the start directory.
+  phases:        Phases = Phases {}
+  ## Extra environment variables for every phase.
+  env:           Map<Str, Str> = {}
+  ## Appended to the default CFLAGS.
+  cflags:        List<Str> = []
+  ## Appended to the default CXXFLAGS.
+  cxxflags:      List<Str> = []
+  ## Appended to the default LDFLAGS.
+  ldflags:       List<Str> = []
+  ## Appended to the default RUSTFLAGS.
+  rustflags:     List<Str> = []
+  ## Appended to the default GOFLAGS.
+  goflags:       List<Str> = []
+  ## Default hardening to turn off.
+  hardening_disable: Set<Hardening> = []
+  ## Link time optimization.
+  lto:           Bool = false
+  ## Run the check phase.
+  check:         Bool = true
+  ## Build with more than one job.
+  parallel:      Bool = true
+  ## Strip ELF files.
+  strip:         Bool = true
+  ## Split debug info into the -dbg subpackage.
+  debug_split:   Bool = true
+  ## Static variant only: link executables with -static-pie.
+  static_pie:    Bool = true
+  ## Dynamic variant only: keep usr/lib/*.a.
+  keep_archives: Bool = false
+  ## Empty directories to keep in the payload.
+  keep_dirs:     List<Str> = []
+  ## The ABI generation of this package's libraries. It never decreases.
+  abi_epoch:     Int where 0..=1000000 = 0
+
+  ## Automatic subpackages to create.
+  split:         Set<Split> = [dev, doc, dbg]
+  ## Explicit subpackages. Block label: the suffix.
+  subpackages:   Map<Str, Subpackage> = {} block subpackage
+  ## Alternative groups. Block label: the group name.
+  alternatives:  Map<Str, Alternative> = {} block alternative
+  ## Payload paths that request a setuid or setgid bit.
+  setuid:        Set<Str> = []
+  ## Payload paths with requested file capabilities.
+  caps:          Map<Str, Str> = {}
+  ## Payload globs with their "user:group" owner.
+  ownership:     Map<Str, Str> = {}
+
+  ## A script run in a view with only this package and its runtime
+  ## dependencies.
+  smoke:         Option<Str>
+  ## How new upstream versions are found.
+  update:        Option<Update>
+  ## CPE 2.3 product prefixes for CVE matching.
+  cpe:           List<Str> = []
+  ## The CI runner and time limit.
+  ci:            Ci = Ci {}
+}
+
+## A source of a package. Exactly one of `url` and `git` is set.
+struct Source {
+  ## Download locations, tried in order. https:// only.
+  url:              Option<List<Str>>
+  ## A clone URL. https:// only.
+  git:              Option<Str where matches(r"^https://.*")>
+  ## The full commit hash of a git source.
+  commit:           Option<Str where matches(r"^[0-9a-f]{40}$")>
+  ## Fetch git submodules at their recorded commits.
+  submodules:       Bool = false
+  ## The SHA-256 hash of the file, or of the tarball made from a git
+  ## checkout.
+  sha256:           Option<Str where matches(r"^sha256:[0-9a-f]{64}$")>
+  ## The name of the downloaded file. none: the last URL path segment.
+  file:             Option<Str>
+  ## Whether to extract the file. none: by its extension.
+  extract:          Option<Bool>
+  ## Leading path components to drop. none: one when the archive holds a
+  ## single directory.
+  strip_components: Option<Int where 0..=16>
+  ## The directory under $SRC. none: "" for main, the label otherwise.
+  dest:             Option<Str>
+}
+
+## Vendored dependencies, produced by running the vendoring tool on a
+## source.
+struct Vendor {
+  ## The hash of the normalized vendor tarball.
+  sha256: Str where matches(r"^sha256:[0-9a-f]{64}$")
+  ## The directory under $SRC holding Cargo.lock or go.mod.
+  dir:    Str = ""
+  ## The source the lock file comes from.
+  source: Str = "main"
+}
+
+## Phase replacements, hooks and the start directory.
+struct Phases {
+  ## The directory under $SRC every phase starts in.
+  subdir:         Option<Str>
+  ## Replaces the prepare script.
+  prepare:        Option<Str>
+  ## Replaces the configure script.
+  configure:      Option<Str>
+  ## Replaces the build script.
+  build:          Option<Str>
+  ## Replaces the check script.
+  check:          Option<Str>
+  ## Replaces the install script.
+  install:        Option<Str>
+  ## Runs as its own phase after install.
+  post_install:   Option<Str>
+  ## Runs before the configure script.
+  pre_configure:  Option<Str>
+  ## Runs after the configure script.
+  post_configure: Option<Str>
+  ## Runs before the build script.
+  pre_build:      Option<Str>
+  ## Runs after the build script.
+  post_build:     Option<Str>
+  ## Runs before the check script.
+  pre_check:      Option<Str>
+  ## Runs after the check script.
+  post_check:     Option<Str>
+  ## Runs before the install script.
+  pre_install:    Option<Str>
+}
+
+## An explicit subpackage. Block label: the suffix.
+struct Subpackage {
+  ## none: the package summary followed by the suffix in parentheses.
+  summary:         Option<Str>
+  ## Globs of the payload paths it contains.
+  files:           List<Str> where nonEmpty
+  ## Globs removed from the match.
+  exclude:         List<Str> = []
+  ## Runtime dependencies of this subpackage.
+  deps:            Set<Pkg> = []
+  ## Capabilities of this subpackage.
+  provides:        Set<Str> = []
+  ## Conflicts of this subpackage.
+  conflicts:       Set<Pkg> = []
+  ## Package names this subpackage supersedes.
+  replaces:        Set<Pkg> = []
+  ## Add an exact dependency on the main package.
+  depends_on_main: Bool = false
+  ## none: the package's licenses.
+  license:         Option<List<Spdx>>
+  ## Emit the subpackage even when no file matched.
+  keep_empty:      Bool = false
+}
+
+## Membership in an alternative group. Block label: the group name.
+struct Alternative {
+  ## Payload paths the package ships for this group.
+  paths:      List<Str> where nonEmpty
+  ## Higher wins when the configuration does not choose.
+  priority:   Int = 0
+  ## The subpackage that contains the paths. none: the main package.
+  subpackage: Option<Str>
+}
+
+## The CI runner and time limit.
+struct Ci {
+  ## The class of machine.
+  runner:          Runner = standard
+  ## The longest a build may take.
+  timeout_minutes: Int where 1..=1440 = 360
+}
+
+## How new upstream versions are found.
+struct Update {
+  ## "owner/repo" on GitHub.
+  github:     Option<Str where matches(r"^[^/]+/[^/]+$")>
+  ## "host/group/project" on a GitLab instance.
+  gitlab:     Option<Str>
+  ## A project id on release-monitoring.org.
+  anitya:     Option<Int where 1..=100000000>
+  ## A page to fetch. Requires `pattern`.
+  url:        Option<Str where matches(r"^https://.*")>
+  ## A regular expression with one capture group for the version.
+  pattern:    Option<Str>
+  ## A prefix stripped from tags.
+  tag_prefix: Option<Str>
+  ## Only versions with this prefix.
+  track:      Option<Str>
+  ## Candidates containing any of these are dropped.
+  ignore:     List<Str> = ["alpha", "beta", "rc", "pre", "dev", "snapshot"]
+  ## Keep prereleases.
+  prerelease: Bool = false
+  ## Bump changes may merge automatically.
+  automerge:  Bool = false
+  ## Why the package is never reported as outdated.
+  disabled:   Option<Str>
+}

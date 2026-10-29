@@ -452,6 +452,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "laft-build"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "laft-core",
+ "laft-test",
+ "serde",
+ "serde_json",
+ "stav",
+]
+
+[[package]]
 name = "laft-config"
 version = "0.1.0"
 dependencies = [

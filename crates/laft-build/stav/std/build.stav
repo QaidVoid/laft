@@ -1,0 +1,19 @@
+# URL helpers for recipes. Every input is a parameter, so a recipe passes
+# its version in with `self.version`.
+
+## The GNU mirror network and the GNU master site for `path`, for example
+## "gzip/gzip-1.14.tar.xz".
+fn gnu_mirrors(path: Str) -> List<Str> =
+  ["https://ftpmirror.gnu.org/#{path}", "https://ftp.gnu.org/gnu/#{path}"]
+
+## The source archive GitHub generates for the tag `tag` of `repo`
+## ("owner/name"), named `<name>-<tag>.tar.gz`.
+fn github_archive(repo: Str, tag: Str, name: Str) -> Str =
+  "https://github.com/#{repo}/archive/#{tag}/#{name}-#{tag}.tar.gz"
+
+## The file `file` attached to the release `tag` of `repo` on GitHub.
+fn github_release(repo: Str, tag: Str, file: Str) -> Str =
+  "https://github.com/#{repo}/releases/download/#{tag}/#{file}"
+
+## The file `path` below the kernel.org download area.
+fn kernel_org(path: Str) -> Str = "https://cdn.kernel.org/pub/#{path}"

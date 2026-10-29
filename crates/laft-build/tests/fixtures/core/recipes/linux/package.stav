@@ -1,0 +1,27 @@
+import "std/build" as build
+
+package linux {
+  version  = "6.17.5"
+  summary  = "The Linux kernel and modules"
+  homepage = "https://www.kernel.org"
+  license  = [GPL-2.0-only]
+
+  source main {
+    url    = [build.kernel_org("linux/kernel/v6.x/linux-#{self.version}.tar.xz")]
+    sha256 = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+  }
+
+  build_deps = [bc, bison, flex, perl, kmod, cpio, elfutils, openssl, pahole]
+  link_deps  = [elfutils, openssl]
+
+  build kernel {
+    config = ./files/config-x86_64
+  }
+
+  update {
+    url     = "https://cdn.kernel.org/pub/linux/kernel/v6.x/"
+    pattern = r"linux-([0-9.]+)\.tar\.xz"
+    track   = "6.17"
+  }
+  ci { runner = big }
+}

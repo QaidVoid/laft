@@ -1,0 +1,46 @@
+---
+source: crates/laft-build/tests/examples.rs
+assertion_line: 34
+expression: scripts(&recipe)
+---
+### prepare
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+if false; then autoreconf -fi; fi
+### configure
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+if true; then cd "$BUILDDIR"; fi
+"$SRC//configure" '--prefix=/usr' '--libdir=/usr/lib' '--libexecdir=/usr/lib' '--mandir=/usr/share/man' '--infodir=/usr/share/info' '--build=x86_64-laft-linux-gnu' '--host=x86_64-laft-linux-gnu' '--enable-languages=c,c++,lto' '--enable-default-pie' '--enable-default-ssp' '--enable-host-pie' '--enable-linker-build-id' '--enable-plugin' '--enable-lto' '--disable-multilib' '--disable-bootstrap' '--disable-fixincludes' '--with-system-zlib' '--with-zstd'
+### build
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+if true; then cd "$BUILDDIR"; fi
+make
+### check
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+if true; then cd "$BUILDDIR"; fi
+make 'check'
+### install
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+if true; then cd "$BUILDDIR"; fi
+make DESTDIR="$DESTDIR" install
+### post_install
+#!/usr/bin/bash
+set -euo pipefail
+umask 022
+cd "$SRC/"
+ln -s gcc "$DESTDIR/usr/bin/cc"
+ln -s g++ "$DESTDIR/usr/bin/c++"

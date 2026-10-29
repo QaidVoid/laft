@@ -1,0 +1,4 @@
+recipe_repo core {
+  arch            = ["x86_64-v3"]
+  toolchain_epoch = 1
+}
