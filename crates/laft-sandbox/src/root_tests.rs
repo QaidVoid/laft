@@ -62,6 +62,32 @@ fn a_command_runs_as_root_of_the_tree_and_sees_the_binds() {
 }
 
 #[test]
+fn a_mount_point_that_is_a_link_is_refused_without_touching_its_target() {
+    let dir = laft_test::tempdir();
+    let (missing, existing) = (dir.path().join("missing"), dir.path().join("existing"));
+    fs::create_dir(&existing).unwrap();
+    for target in [missing.join("run"), existing.clone()] {
+        let root = dir.path().join("root");
+        let _ = fs::remove_dir_all(&root);
+        let root = tree(dir.path());
+        symlink(&target, root.join("run")).unwrap();
+        let result = RootSandbox::new(&root)
+            .bind("/usr", "usr", false)
+            .command("/usr/bin/true")
+            .output();
+        if let Err(error) = &result
+            && let Some(reason) = sandbox_refused(error)
+        {
+            println!("skipping: {reason}");
+            return;
+        }
+        assert!(result.is_err(), "{}: {result:?}", target.display());
+    }
+    assert!(!missing.exists());
+    assert!(fs::read_dir(&existing).unwrap().next().is_none());
+}
+
+#[test]
 fn a_bind_name_with_a_slash_is_refused() {
     let dir = laft_test::tempdir();
     let root = tree(dir.path());
