@@ -108,8 +108,10 @@ impl Launcher {
     /// Starts a longrun, or emulates a oneshot outside the early boot graph
     /// as a supervised process.
     ///
-    /// For a longrun it checks that every dependency is ready, resolves the
-    /// accounts, creates the declared directories, applies the limits and
+    /// For a longrun it checks that every dependency is ready, starts a
+    /// session of its own, so that a program such as a getty can make its
+    /// terminal the controlling terminal, resolves the accounts, creates
+    /// the declared directories, applies the limits and
     /// the umask, sets up readiness, drops privileges, builds the
     /// environment and executes the command. On success it does not return.
     ///
@@ -167,6 +169,20 @@ impl Launcher {
             })?;
         } else {
             self.gate(&spec)?;
+            // A supervisor starts the service in its own process group or
+            // in its own session. Only a process group leader cannot start
+            // a session, and it already leads one, so that failure is
+            // fine.
+            match rustix::process::setsid() {
+                Ok(_) | Err(rustix::io::Errno::PERM) => {}
+                Err(e) => {
+                    return Err(Error::Setup {
+                        name: spec.name.clone(),
+                        step: "start a session",
+                        source: e.into(),
+                    });
+                }
+            }
         }
         let argv = self.argv(&spec, &spec.exec)?;
         let accounts = Accounts::read(&self.root)?;

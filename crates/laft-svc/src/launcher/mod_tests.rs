@@ -813,7 +813,8 @@ fn launcher_exec_starts_a_longrun() {
     let out = work.join("out");
     let script = format!(
         "fd3=closed; [ -w /proc/self/fd/3 ] && fd3=open; \
-         echo \"$(id -u) $(ulimit -n) $(umask) $(pwd) $HOME $fd3\" > {}",
+         sid=$(awk '{{ print ($1 == $6) ? \"leader\" : \"member\" }}' /proc/$$/stat); \
+         echo \"$(id -u) $(ulimit -n) $(umask) $(pwd) $HOME $fd3 $sid\" > {}",
         out.display()
     );
     let mut spec = resolve("daemon", &Service::longrun(&["/bin/sh", "-c", &script]));
@@ -855,7 +856,7 @@ fn launcher_exec_starts_a_longrun() {
     };
     assert_eq!(
         read(&out),
-        format!("{uid} 256 0027 {} {home} open\n", work.display())
+        format!("{uid} 256 0027 {} {home} open leader\n", work.display())
     );
     let state = fs::metadata(fixture.path("var/lib/daemon")).expect("created");
     assert_eq!(state.mode() & 0o7777, 0o750);
