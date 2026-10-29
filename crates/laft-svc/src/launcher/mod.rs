@@ -109,10 +109,10 @@ impl Launcher {
     /// as a supervised process.
     ///
     /// For a longrun it checks that every dependency is ready, starts a
-    /// session of its own, so that a program such as a getty can make its
-    /// terminal the controlling terminal, resolves the accounts, creates
-    /// the declared directories, applies the limits and
-    /// the umask, sets up readiness, drops privileges, builds the
+    /// session of its own unless it already leads one, so that a program
+    /// such as a getty can make its terminal the controlling terminal,
+    /// resolves the accounts, creates the declared directories, applies the
+    /// limits and the umask, sets up readiness, drops privileges, builds the
     /// environment and executes the command. On success it does not return.
     ///
     /// A oneshot runs `up`, marks itself ready and then waits until it is
@@ -123,8 +123,9 @@ impl Launcher {
     /// # Errors
     ///
     /// Fails when the spec is missing or invalid, a dependency is not
-    /// ready, or any setup step fails. The service did not start, and the
-    /// caller exits with [`SETUP_FAILED`].
+    /// ready, or any setup step fails, which includes a longrun started by a
+    /// process group leader that does not lead its session. The service did
+    /// not start, and the caller exits with [`SETUP_FAILED`].
     pub fn exec(&self, name: &str, mode: ExecMode) -> Result<i32, Error> {
         if mode != ExecMode::Detached {
             return self.exec_spec(name, mode);
@@ -169,12 +170,13 @@ impl Launcher {
             })?;
         } else {
             self.gate(&spec)?;
-            // A supervisor starts the service in its own process group or
-            // in its own session. Only a process group leader cannot start
-            // a session, and it already leads one, so that failure is
-            // fine.
+            // `setsid` fails for a process group leader, which may lead its
+            // session already, as under a supervisor that starts each
+            // service in a session of its own. Any other group leader would
+            // run the service without the session a getty needs.
             match rustix::process::setsid() {
-                Ok(_) | Err(rustix::io::Errno::PERM) => {}
+                Ok(_) => {}
+                Err(rustix::io::Errno::PERM) if leads_session() => {}
                 Err(e) => {
                     return Err(Error::Setup {
                         name: spec.name.clone(),
@@ -952,6 +954,11 @@ fn setup_error(name: &str, step: &'static str, errno: Errno) -> Error {
 /// `/proc/<pid>/stat`, or `None` when the process does not exist.
 fn start_time(pid: u32) -> Option<u64> {
     parse_start_time(&fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+/// Whether this process leads its session.
+fn leads_session() -> bool {
+    rustix::process::getsid(None).is_ok_and(|sid| sid == rustix::process::getpid())
 }
 
 /// Whether process `pid` is exiting or gone, from `/proc/<pid>/stat`.

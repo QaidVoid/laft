@@ -759,6 +759,21 @@ fn a_root_service_gets_its_declared_groups() {
 /// only in the environment of the child test process.
 const EXEC_ROOT: &str = "LAFT_SVC_TEST_EXEC_ROOT";
 
+/// Set in the environment of the child test process when it starts a
+/// session before it runs the launcher.
+const EXEC_SESSION: &str = "LAFT_SVC_TEST_EXEC_SESSION";
+
+/// Where the child test process that runs the launcher stands.
+#[derive(Clone, Copy)]
+enum Caller {
+    /// In the process group and session of the test.
+    Member,
+    /// Leading a process group of its own, in the session of the test.
+    GroupLeader,
+    /// Leading a session of its own.
+    SessionLeader,
+}
+
 /// Runs `Launcher::exec` for the longrun `daemon`, which replaces this
 /// process on success. A failure exits with the launcher's status.
 #[test]
@@ -767,6 +782,9 @@ fn exec_in_a_child_process() {
     let Some(root) = std::env::var_os(EXEC_ROOT) else {
         return;
     };
+    if std::env::var_os(EXEC_SESSION).is_some() {
+        rustix::process::setsid().expect("the test process leads no group");
+    }
     let error = Launcher::new(root)
         .exec("daemon", ExecMode::Supervised)
         .expect_err("exec only returns on failure");
@@ -776,16 +794,32 @@ fn exec_in_a_child_process() {
 
 /// Runs [`exec_in_a_child_process`] for the fixture below `root`.
 fn exec_daemon(root: &Path) -> std::process::Output {
-    Command::new(std::env::current_exe().expect("the test binary"))
+    exec_daemon_as(root, Caller::Member)
+}
+
+/// Runs [`exec_in_a_child_process`] for the fixture below `root` in a
+/// process that stands where `caller` says.
+fn exec_daemon_as(root: &Path, caller: Caller) -> std::process::Output {
+    use std::os::unix::process::CommandExt;
+    let mut command = Command::new(std::env::current_exe().expect("the test binary"));
+    command
         .args([
             "--exact",
             "launcher::tests::exec_in_a_child_process",
             "--ignored",
             "--nocapture",
         ])
-        .env(EXEC_ROOT, root)
-        .output()
-        .expect("runs")
+        .env(EXEC_ROOT, root);
+    match caller {
+        Caller::Member => {}
+        Caller::GroupLeader => {
+            command.process_group(0);
+        }
+        Caller::SessionLeader => {
+            command.env(EXEC_SESSION, "1");
+        }
+    }
+    command.output().expect("runs")
 }
 
 #[test]
@@ -854,10 +888,26 @@ fn launcher_exec_starts_a_longrun() {
     } else {
         (rustix::process::getuid().as_raw(), "/root")
     };
-    assert_eq!(
-        read(&out),
-        format!("{uid} 256 0027 {} {home} open leader\n", work.display())
+    let expected = format!("{uid} 256 0027 {} {home} open leader\n", work.display());
+    assert_eq!(read(&out), expected);
+
+    fs::remove_file(&out).expect("rm");
+    let grouped = exec_daemon_as(fixture.dir.path(), Caller::GroupLeader);
+    assert_eq!(grouped.status.code(), Some(crate::SETUP_FAILED));
+    assert!(
+        String::from_utf8_lossy(&grouped.stderr).contains("start a session"),
+        "a process group leader cannot start the session a getty needs: {}",
+        String::from_utf8_lossy(&grouped.stderr)
     );
+    assert!(!out.exists());
+    let leading = exec_daemon_as(fixture.dir.path(), Caller::SessionLeader);
+    assert_eq!(
+        leading.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&leading.stderr)
+    );
+    assert_eq!(read(&out), expected);
     let state = fs::metadata(fixture.path("var/lib/daemon")).expect("created");
     assert_eq!(state.mode() & 0o7777, 0o750);
     assert_eq!(
