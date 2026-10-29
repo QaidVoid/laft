@@ -35,6 +35,7 @@
 
 mod activate;
 mod apply;
+mod boot;
 mod cli;
 mod diff;
 mod env;
@@ -42,6 +43,7 @@ mod etc;
 mod explain;
 mod failure;
 mod gens;
+mod install;
 mod lang;
 mod live;
 mod plan;
@@ -49,6 +51,7 @@ mod query;
 mod repo;
 mod report;
 mod resolve;
+mod svc;
 mod tz;
 mod ui;
 mod verify;
@@ -59,7 +62,9 @@ use std::process::ExitCode;
 use clap::Parser;
 use laft_resolve::Upgrade;
 
-use crate::cli::{Cli, Command, EtcCommand, GensCommand, RepoCommand, ViewCommand};
+use crate::cli::{
+    BootCommand, Cli, Command, EtcCommand, GensCommand, RepoCommand, Shell, ViewCommand,
+};
 use crate::env::Env;
 use crate::failure::{Failure, exit};
 
@@ -69,7 +74,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let env = Env::new(&cli.global);
-    match run(&env, cli.command) {
+    match run(&env, &cli.global, cli.command) {
         Ok(code) => ExitCode::from(code),
         Err(failure) => {
             env.ui.failure(&failure);
@@ -78,7 +83,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(env: &Env, command: Command) -> Result<u8, Failure> {
+fn run(env: &Env, global: &cli::Global, command: Command) -> Result<u8, Failure> {
     match command {
         Command::Plan(args) => apply::plan_command(env, &args),
         Command::Apply(args) => apply::apply(
@@ -176,6 +181,46 @@ fn run(env: &Env, command: Command) -> Result<u8, Failure> {
         }
         Command::Options { prefix, all } => lang::options(env, prefix.as_deref(), all),
         Command::Explain { code } => lang::explain(env, &code),
-        _ => Err(Failure::new(exit::USAGE, "not available yet")),
+        Command::Install { generate_config } => install::install(env, generate_config),
+        Command::Activate { .. } => boot::activate(env),
+        Command::Boot(BootCommand::List) => boot::list(env),
+        Command::Boot(BootCommand::Show { generation }) => boot::show(env, generation),
+        Command::Boot(BootCommand::Log { generation }) => boot::log(env, generation),
+        Command::Boot(BootCommand::SetDefault { generation }) => {
+            gens::switch(env, generation, true, "boot set-default")
+        }
+        Command::Boot(BootCommand::MarkGood) => boot::mark_good(env),
+        Command::Boot(BootCommand::Install) => boot::install(env),
+        Command::Rescue(args) => install::rescue(env, args.generation, &args.command),
+        Command::Chroot { dir, rescue } => {
+            let mut global = global.clone();
+            global.root = Some(dir);
+            let env = Env::new(&global);
+            install::rescue(&env, rescue.generation, &rescue.command)
+        }
+        Command::Hardware { write } => install::hardware(env, write),
+        Command::Enter { view, command } => {
+            use std::os::unix::process::CommandExt;
+            let error = std::process::Command::new("/usr/bin/laft-enter")
+                .arg(&view)
+                .args(&command)
+                .exec();
+            Err(Failure::general(format!("/usr/bin/laft-enter: {error}")))
+        }
+        Command::Svc(command) => svc::run(env, command),
+        Command::Completions { shell } => {
+            use clap::CommandFactory;
+            let shell = match shell {
+                Shell::Bash => clap_complete::Shell::Bash,
+                Shell::Zsh => clap_complete::Shell::Zsh,
+                Shell::Fish => clap_complete::Shell::Fish,
+            };
+            clap_complete::generate(shell, &mut Cli::command(), "laft", &mut std::io::stdout());
+            Ok(0)
+        }
+        Command::Internal(_) => Err(Failure::new(
+            exit::USAGE,
+            "laft internal worker runs only as the child of a laft process",
+        )),
     }
 }

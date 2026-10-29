@@ -25,7 +25,7 @@ const STALE: Duration = Duration::from_secs(3600);
 pub(crate) const ARCH: Arch = Arch::X86_64V3;
 
 /// The command's environment.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Env {
     /// How to talk to the user.
     pub(crate) ui: Ui,

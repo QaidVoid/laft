@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 clap.workspace = true
+clap_complete.workspace = true
 codespan-reporting.workspace = true
 laft-activate.workspace = true
 laft-config.workspace = true
@@ -20,10 +21,11 @@ laft-fetch.workspace = true
 laft-index.workspace = true
 laft-pkg.workspace = true
 laft-resolve.workspace = true
+laft-sandbox.workspace = true
 laft-store.workspace = true
 laft-svc.workspace = true
 mimalloc.workspace = true
-rustix = { workspace = true, features = ["fs", "process", "termios"] }
+rustix = { workspace = true, features = ["fs", "mount", "process", "termios"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 stav.workspace = true

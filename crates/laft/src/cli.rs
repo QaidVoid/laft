@@ -17,7 +17,7 @@ pub(crate) struct Cli {
 }
 
 /// Options every command accepts.
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub(crate) struct Global {
     /// The configuration entry point [default: $LAFT_CONFIG, else
     /// the system.stav in etc/laft of the root].

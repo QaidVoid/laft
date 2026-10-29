@@ -98,7 +98,7 @@ impl Sym {
 }
 
 /// How the command talks to the user.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Ui {
     /// Whether output is JSON.
     pub(crate) json: bool,
