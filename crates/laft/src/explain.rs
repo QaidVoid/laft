@@ -149,7 +149,7 @@ const TEXTS: &[(&str, &str, &str)] = &[
     ),
     (
         "C0903",
-        "A view name is not a package name, or is `system`.",
+        "A view name is not a package name, or is `system` or `initrd`.",
         "Rename the view.",
     ),
     (

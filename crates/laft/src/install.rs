@@ -259,8 +259,15 @@ fn luks_of(device: &Path) -> Option<(String, PathBuf)> {
         .ok()?
         .trim()
         .to_owned();
-    let slave = fs::read_dir(sys.join("slaves")).ok()?.flatten().next()?;
-    Some((name, Path::new("/dev").join(slave.file_name())))
+    // A LUKS mapping has one device below it. Sorting keeps the result
+    // independent of the directory order should there be more.
+    let mut slaves: Vec<_> = fs::read_dir(sys.join("slaves"))
+        .ok()?
+        .flatten()
+        .map(|s| s.file_name())
+        .collect();
+    slaves.sort();
+    Some((name, Path::new("/dev").join(slaves.first()?)))
 }
 
 /// Probes the filesystems mounted below the root, the swap devices and
@@ -350,8 +357,27 @@ fn fstype(name: &str) -> String {
         "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "f2fs" | "vfat" | "tmpfs" | "nfs" | "nfs4" => {
             name.to_owned()
         }
-        other => format!("other(name = \"{other}\")"),
+        other => format!("other(name = {})", quoted(other)),
     }
+}
+
+/// `text` as a Stav string literal, with the characters that would end it
+/// or start an interpolation escaped.
+fn quoted(text: &str) -> String {
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '#' => out.push_str("\\#"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// The text of `hardware.stav` for `probe`.
@@ -362,23 +388,28 @@ pub(crate) fn hardware_stav(probe: &Probe) -> String {
     for fs in &probe.filesystems {
         let _ = write!(
             out,
-            "\nfs \"{}\" {{\n  device = \"{}\"\n  fstype = {}\n}}\n",
-            fs.mountpoint,
-            fs.device,
+            "\nfs {} {{\n  device = {}\n  fstype = {}\n}}\n",
+            quoted(&fs.mountpoint),
+            quoted(&fs.device),
             fstype(&fs.fstype)
         );
     }
     for device in &probe.swap {
-        let _ = write!(out, "\nswap \"{device}\" {{}}\n");
+        let _ = write!(out, "\nswap {} {{}}\n", quoted(device));
     }
     for (name, device) in &probe.luks {
-        let _ = write!(out, "\nluks {name} {{ device = \"{device}\" }}\n");
+        let _ = write!(
+            out,
+            "\nluks {} {{ device = {} }}\n",
+            quoted(name),
+            quoted(device)
+        );
     }
     let _ = write!(out, "\nboot {{\n");
     if let Some(microcode) = probe.microcode {
         let _ = writeln!(out, "  microcode = {microcode}");
     }
-    let modules: Vec<String> = probe.modules.iter().map(|m| format!("\"{m}\"")).collect();
+    let modules: Vec<String> = probe.modules.iter().map(|m| quoted(m)).collect();
     let _ = writeln!(out, "  initrd {{ modules = [{}] }}", modules.join(", "));
     out.push_str("}\n");
     out

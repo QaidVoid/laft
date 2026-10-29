@@ -193,18 +193,6 @@ pub(crate) fn changes(old: &BTreeMap<Name, Pkg>, new: &BTreeMap<Name, Pkg>) -> V
     out
 }
 
-/// The number the next generation gets: the counter the store keeps, or
-/// one more than the newest generation.
-fn next_generation(root: &Root) -> Option<u64> {
-    let newest = root.generations().ok()?.last().map_or(1, |n| n + 1);
-    let counter = std::fs::read(root.path().join("laft/state/counters.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|v| v["generation"].as_u64())
-        .unwrap_or(1);
-    Some(newest.max(counter))
-}
-
 /// Computes the plan.
 ///
 /// # Errors
@@ -300,8 +288,9 @@ pub(crate) fn plan<'a>(inputs: &Inputs<'_, 'a>) -> Result<Plan<'a>, Failure> {
         }
     }
 
-    let generation = next_generation(inputs.root);
-    let services = service_plan(inputs, generation.unwrap_or(1))?;
+    let number = inputs.root.next_generation()?;
+    let generation = Some(number);
+    let services = service_plan(inputs, number)?;
     let config_changed = active.is_none_or(|g| g.config.hash != Blake3Hash::of(inputs.config));
     let declared: BTreeSet<&Name> = inputs.resolved.views.keys().collect();
     let views_same = active.is_none_or(|g| g.views.keys().collect::<BTreeSet<_>>() == declared)

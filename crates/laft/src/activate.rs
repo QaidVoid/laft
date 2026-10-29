@@ -155,7 +155,9 @@ fn offline(
         env.ui.warn(warning.to_string());
     }
     let mut activation = Activation {
-        active: true,
+        // Below --root nothing runs, so the generation is only the one the
+        // target boots.
+        active: !env.offline_root,
         done: vec!["etc"],
         ..Activation::default()
     };

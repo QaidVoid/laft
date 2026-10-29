@@ -33,7 +33,7 @@ fn hardware_stav_declares_filesystems_swap_luks_and_boot() {
     assert!(text.contains("fstype = other(name = \"zfs\")"), "{text}");
     assert!(text.contains("swap \"UUID=5\" {}"), "{text}");
     assert!(
-        text.contains("luks cryptroot { device = \"UUID=7\" }"),
+        text.contains("luks \"cryptroot\" { device = \"UUID=7\" }"),
         "{text}"
     );
     assert!(text.contains("microcode = amd"), "{text}");
@@ -90,4 +90,24 @@ fn the_layout_links_usr_to_the_active_generation() {
         Path::new("/run/laft/system/etc")
     );
     create_layout(dir.path()).expect("creating it again changes nothing");
+}
+
+#[test]
+fn probed_names_cannot_break_out_of_their_strings() {
+    let probe = Probe {
+        filesystems: vec![ProbedFs {
+            mountpoint: "/mnt/a\"b#{x}\\c".into(),
+            device: "LABEL=x\" }\nboot { }".into(),
+            fstype: "ext4".into(),
+        }],
+        ..Probe::default()
+    };
+    let text = hardware_stav(&probe);
+    assert!(text.contains("fs \"/mnt/a\\\"b\\#{x}\\\\c\" {"), "{text}");
+    assert!(
+        text.contains("device = \"LABEL=x\\\" }\\nboot { }\""),
+        "{text}"
+    );
+    let formatted = stav::format(&format!("system {{\n{text}\n}}\n"));
+    assert!(formatted.is_ok(), "{text}");
 }
