@@ -279,7 +279,7 @@ fn rollback(root: &Root, activation: Activation<'_>, mounts: &mut dyn Mounts) ->
 /// Points every declared view of generation `number` at its version.
 fn views(root: &Root, number: u64) -> std::result::Result<(), String> {
     let generation = root.generation(number).map_err(|e| e.to_string())?;
-    let mut failed = Ok(());
+    let mut failed = Vec::new();
     for (name, version) in &generation.views {
         let link = root
             .path()
@@ -287,10 +287,14 @@ fn views(root: &Root, number: u64) -> std::result::Result<(), String> {
             .join(name.as_str())
             .join("current");
         if let Err(e) = replace_link(&link, &version.to_string()) {
-            failed = Err(format!("{}: {e}", link.display()));
+            failed.push(format!("{}: {e}", link.display()));
         }
     }
-    failed
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(failed.join("; "))
+    }
 }
 
 /// Brings the running services in line with generation `number`, when the
