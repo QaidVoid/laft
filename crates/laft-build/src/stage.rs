@@ -150,11 +150,11 @@ impl Stage {
         })?;
         let mut path = Vec::new();
         for dir in &stage.path {
-            let plain = !dir.is_empty()
+            let relative = !dir.is_empty()
                 && Path::new(dir)
                     .components()
                     .all(|c| matches!(c, Component::Normal(_)));
-            if !plain {
+            if !relative {
                 return Err(problem(format!(
                     "stage {name}: search directory {dir} is not a plain relative path"
                 )));

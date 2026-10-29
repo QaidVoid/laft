@@ -138,7 +138,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
                         .into(),
                 ));
             }
-            let run = StageRun {
+            let run = StageArgs {
                 min_free_gib,
                 dry_run,
                 rebuild,
@@ -714,7 +714,7 @@ fn record(db: &Db, item: &Item, outcome: &Outcome) -> Result<(), Failure> {
 }
 
 /// How `stage` runs, besides the options of builds.
-struct StageRun {
+struct StageArgs {
     min_free_gib: u64,
     dry_run: bool,
     rebuild: bool,
@@ -724,7 +724,7 @@ fn stage(
     build_root: &BuildRoot,
     file: &Path,
     root: PathBuf,
-    run: &StageRun,
+    run: &StageArgs,
     options: &BuildOptions,
     json: bool,
 ) -> Result<(), Failure> {
@@ -792,7 +792,7 @@ fn stage(
         say(json!({ "stage": stage.name, "steps": report }));
     }
     result.map_err(|e| match e.code() {
-        Some(code) if code.starts_with('R') => Failure::Usage(e.to_string()),
+        Some("R060") => Failure::Usage(e.to_string()),
         _ => Failure::from(e),
     })
 }
