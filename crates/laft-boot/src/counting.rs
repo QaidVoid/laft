@@ -263,6 +263,31 @@ pub fn menu_position(conf: &str, index: Option<u64>, generation: u64) -> Option<
     u64::try_from(slot + 1).ok()
 }
 
+/// The boot loader configuration `conf` with the entry of generation `to`
+/// as its default, and a warning when the menu index file `entries` gave a
+/// stale position for it.
+///
+/// # Errors
+///
+/// Fails when `entries` is not a version 1 menu index, when the menu has
+/// no entry for `to`, or when `conf` has no `default_entry` line. The
+/// caller then leaves the menu as it is and must not end the trial, so
+/// that the next boot falls back again.
+pub fn retarget_menu(
+    entries: &[u8],
+    conf: &str,
+    to: u64,
+) -> Result<(String, Option<String>), String> {
+    let hint = menu_index(entries, to)?;
+    let index = menu_position(conf, hint, to)
+        .ok_or_else(|| format!("the boot menu has no entry for generation {to}"))?;
+    let conf = set_default_entry(conf, index)
+        .ok_or_else(|| "the boot menu has no default_entry line".to_owned())?;
+    let stale = (hint != Some(index))
+        .then(|| format!("the boot menu index is stale, generation {to} is entry {index}"));
+    Ok((conf, stale))
+}
+
 /// The boot loader configuration `conf` with its default entry set to
 /// `index`, or `None` when it has no `default_entry: <n>` line to replace.
 /// Every other line is kept byte for byte.

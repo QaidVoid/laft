@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use laft_core::{BootEvent, BootEventKind, BootState, BootTrial, Timestamp};
 
-use super::{Plan, Step, Then, decide, menu_index, menu_position, set_default_entry};
+use super::{
+    Plan, Step, Then, decide, menu_index, menu_position, retarget_menu, set_default_entry,
+};
 use crate::generation::Generation;
 
 const TRIES: u32 = 3;
@@ -397,4 +399,24 @@ fn a_failed_listing_leaves_the_boot_state_unpruned() {
     let (pruned, warning) = super::prune_listed(state, Ok(BTreeSet::from([41])));
     assert!(pruned.bad.is_empty() && pruned.good.contains(&41));
     assert_eq!(warning, None);
+}
+
+#[test]
+fn a_menu_without_the_target_entry_cannot_be_retargeted() {
+    let entries = br#"{"entries": [{"gen": 41, "index": 3}], "version": 1}"#;
+    let error = retarget_menu(entries, MENU, 40).unwrap_err();
+    assert!(error.contains("no entry for generation 40"), "{error}");
+    assert!(retarget_menu(entries, "timeout: 3\n\n/Laft 41\n", 41).is_err());
+}
+
+#[test]
+fn retargeting_the_menu_sets_the_entry_and_reports_a_stale_index() {
+    let entries =
+        br#"{"entries": [{"gen": 41, "index": 3}, {"gen": 42, "index": 1}], "version": 1}"#;
+    let (conf, warning) = retarget_menu(entries, MENU, 41).unwrap();
+    assert!(conf.starts_with("timeout: 3\ndefault_entry: 3\n"), "{conf}");
+    assert_eq!(warning, None);
+    let (conf, warning) = retarget_menu(entries, MENU, 42).unwrap();
+    assert!(conf.contains("default_entry: 2\n"), "{conf}");
+    assert!(warning.is_some_and(|w| w.contains("stale")));
 }
