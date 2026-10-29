@@ -392,3 +392,19 @@ fn dirty_items_in_a_cycle_cannot_be_scheduled() {
     .expect_err("a cycle");
     assert_eq!(error.code, "B010");
 }
+
+#[test]
+fn a_stored_record_rederives_its_build_key() {
+    let inputs = KeyInputs::new(
+        &foo("foo:static"),
+        vec![link("zlib", 0, &["libz.so.1"])],
+        vec![StaticInput {
+            name: name("zlib"),
+            id: id(1),
+        }],
+    );
+    let stored = serde_json::to_string(&record(&inputs, &item("foo"))).expect("serializable");
+    let read: BuildRecord = serde_json::from_str(&stored).expect("readable");
+    let canonical = laft_core::to_canonical_json(&read.inputs).expect("canonical");
+    assert_eq!(Blake3Hash::of(&canonical), read.key);
+}

@@ -112,6 +112,7 @@ pub struct KeyInputs {
     pub links: Vec<LinkInput>,
     /// For a `static` build, every `static` package in the build view,
     /// sorted by name. Empty for a `dynamic` build.
+    #[serde(rename = "static")]
     pub statics: Vec<StaticInput>,
     /// The toolchain epoch of the recipe repositories.
     pub toolchain_epoch: u32,
@@ -137,22 +138,16 @@ impl KeyInputs {
         }
     }
 
-    /// The build key: BLAKE3 of the canonical JSON of the inputs. Two
+    /// The build key: BLAKE3 of the canonical JSON of the inputs, exactly
+    /// as they serialize, so a stored [`BuildRecord`] can re-derive it. Two
     /// builds with the same key are expected to produce the same outputs.
     ///
     /// # Panics
     ///
     /// Never in practice: the inputs always serialize to canonical JSON.
     pub fn build_key(&self) -> Blake3Hash {
-        let json = laft_core::to_canonical_json(&serde_json::json!({
-            "plan": self.plan,
-            "sources": self.sources,
-            "patches": self.patches,
-            "links": self.links,
-            "static": self.statics,
-            "toolchain_epoch": self.toolchain_epoch,
-        }))
-        .expect("build key inputs hold no number that canonical JSON refuses");
+        let json = laft_core::to_canonical_json(self)
+            .expect("build key inputs hold no number that canonical JSON refuses");
         Blake3Hash::of(&json)
     }
 
