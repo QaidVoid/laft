@@ -39,8 +39,27 @@ const STEPS: &str = r#"    { name = "build", packages = [greet] },
         echo checked >> "$ROOT/count"
         """ },"#;
 
-/// Runs `stage` into `dir/root` and returns the states it reported.
-fn run(dir: &Path, stage: &Stage, dry_run: bool) -> Result<Vec<(String, StageState)>, BuildError> {
+/// The options of a run into `dir/root`.
+fn options(dir: &Path) -> StageOptions {
+    StageOptions {
+        root: dir.join("root"),
+        jobs: 1,
+        timeout: Duration::from_secs(600),
+        min_available: 0,
+        dry_run: false,
+        rebuild: false,
+        laft_build: PathBuf::from("/nonexistent"),
+        mirrors: Vec::new(),
+    }
+}
+
+/// Runs `stage` with `options` and the build root `dir/build`, and returns
+/// the states it reported.
+fn run_with(
+    dir: &Path,
+    stage: &Stage,
+    options: &StageOptions,
+) -> Result<Vec<(String, StageState)>, BuildError> {
     let repos = Repos::open(&[&stage.recipes]).unwrap();
     let build_root = BuildRoot::new(dir.join("build"));
     let config = Config {
@@ -48,22 +67,25 @@ fn run(dir: &Path, stage: &Stage, dry_run: bool) -> Result<Vec<(String, StageSta
         ..Config::new(dir.join("cache"))
     };
     let cache = SourceCache::new(build_root.sources(), Fetcher::new(config));
-    let options = StageOptions {
-        root: dir.join("root"),
-        jobs: 1,
-        timeout: Duration::from_secs(600),
-        min_available: 0,
-        dry_run,
-        laft_build: PathBuf::from("/nonexistent"),
-        mirrors: Vec::new(),
-    };
     let mut states = Vec::new();
-    run_stage(stage, &repos, &cache, &build_root, &options, &mut |event| {
+    run_stage(stage, &repos, &cache, &build_root, options, &mut |event| {
         if let StageEvent::Finished { step, state, .. } = event {
             states.push((step.to_owned(), state));
         }
     })?;
     Ok(states)
+}
+
+/// Runs `stage` into `dir/root` and returns the states it reported.
+fn run(dir: &Path, stage: &Stage, dry_run: bool) -> Result<Vec<(String, StageState)>, BuildError> {
+    run_with(
+        dir,
+        stage,
+        &StageOptions {
+            dry_run,
+            ..options(dir)
+        },
+    )
 }
 
 fn no_shell() -> bool {
@@ -195,4 +217,76 @@ fn a_root_with_another_layout_is_refused() {
 fn a_dynamic_laft_build_cannot_build_inside_the_root() {
     let error = check_static(Path::new("/bin/sh")).unwrap_err();
     assert_eq!(error.code(), Some("B042"));
+}
+
+#[test]
+fn a_step_that_runs_again_runs_every_later_step_again() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = Stage::load(&write_stage(dir.path(), STEPS)).unwrap();
+    run(dir.path(), &stage, false).unwrap();
+    let recipe = dir.path().join("repo/recipes/greet/package.stav");
+    fs::write(&recipe, RECIPE.replace("echo hi", "echo hello")).unwrap();
+    let states = run(dir.path(), &stage, false).unwrap();
+    assert_eq!(
+        states,
+        [
+            ("build".to_owned(), StageState::Done),
+            ("check".to_owned(), StageState::Done)
+        ]
+    );
+    let root = dir.path().join("root");
+    assert_eq!(
+        fs::read_to_string(root.join("count")).unwrap(),
+        "checked\nchecked\n"
+    );
+}
+
+#[test]
+fn a_rebuild_runs_every_step_again() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = Stage::load(&write_stage(dir.path(), STEPS)).unwrap();
+    run(dir.path(), &stage, false).unwrap();
+    let rebuild = StageOptions {
+        rebuild: true,
+        ..options(dir.path())
+    };
+    let states = run_with(dir.path(), &stage, &rebuild).unwrap();
+    assert!(
+        states.iter().all(|(_, s)| *s == StageState::Done),
+        "{states:?}"
+    );
+    let states = run(dir.path(), &stage, false).unwrap();
+    assert!(
+        states.iter().all(|(_, s)| *s == StageState::UpToDate),
+        "{states:?}"
+    );
+}
+
+#[test]
+fn a_script_runs_again_when_its_environment_changes() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let steps = |value: &str| {
+        format!(
+            r#"    {{ name = "note", script = "echo \"$NOTE\" >> \"$ROOT/notes\"", env = {{ NOTE = "{value}" }} }},"#
+        )
+    };
+    let stage = Stage::load(&write_stage(dir.path(), &steps("a"))).unwrap();
+    run(dir.path(), &stage, false).unwrap();
+    run(dir.path(), &stage, false).unwrap();
+    let stage = Stage::load(&write_stage(dir.path(), &steps("b"))).unwrap();
+    let states = run(dir.path(), &stage, false).unwrap();
+    assert_eq!(states, [("note".to_owned(), StageState::Done)]);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("root/notes")).unwrap(),
+        "a\nb\n"
+    );
 }

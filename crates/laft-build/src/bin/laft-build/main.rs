@@ -128,8 +128,16 @@ fn run(cli: Cli) -> Result<(), Failure> {
             root: target,
             min_free_gib,
             dry_run,
+            rebuild,
             options,
-        } => return stage(&root, &file, target, min_free_gib, dry_run, &options, json),
+        } => {
+            let run = StageRun {
+                min_free_gib,
+                dry_run,
+                rebuild,
+            };
+            return stage(&root, &file, target, &run, &options, json);
+        }
         _ => {}
     }
     let paths = if cli.recipes.is_empty() {
@@ -661,15 +669,22 @@ fn bootstrap(
     Ok(())
 }
 
+/// How `stage` runs, besides the options of builds.
+struct StageRun {
+    min_free_gib: u64,
+    dry_run: bool,
+    rebuild: bool,
+}
+
 fn stage(
     build_root: &BuildRoot,
     file: &Path,
     root: PathBuf,
-    min_free_gib: u64,
-    dry_run: bool,
+    run: &StageRun,
     options: &BuildOptions,
     json: bool,
 ) -> Result<(), Failure> {
+    let dry_run = run.dry_run;
     let stage = Stage::load(file).map_err(|e| Failure::Usage(e.to_string()))?;
     if !dry_run {
         check_space(build_root.path())?;
@@ -687,8 +702,9 @@ fn stage(
             std::thread::available_parallelism().map_or(1, |n| u32::try_from(n.get()).unwrap_or(1))
         }),
         timeout: Duration::from_secs(options.timeout_hours * 3600),
-        min_available: min_free_gib << 30,
+        min_available: run.min_free_gib << 30,
         dry_run,
+        rebuild: run.rebuild,
         laft_build,
         mirrors: options.mirrors.clone(),
     };

@@ -125,7 +125,8 @@ pub(crate) enum Command {
     /// Run a bootstrap stage: build the packages of a stage file straight
     /// into a root, on the host or inside the root entered as a chroot, and
     /// run its scripts, in order. Finished steps are skipped, so a failed
-    /// run continues where it stopped.
+    /// run continues with the step that failed. A step that changed runs
+    /// again, and so does every step after it.
     Stage {
         /// The stage file.
         file: PathBuf,
@@ -139,6 +140,9 @@ pub(crate) enum Command {
         /// Print what is up to date and what would run, without running.
         #[arg(long)]
         dry_run: bool,
+        /// Run every step, even the finished ones.
+        #[arg(long)]
+        rebuild: bool,
         /// Options of builds.
         #[command(flatten)]
         options: BuildOptions,

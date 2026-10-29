@@ -15,13 +15,13 @@ use laft_sandbox::RootSandbox;
 use serde::Deserialize;
 use stav::{AttrPath, ImportRoot, Limits, RootSpec};
 
-use crate::build::{read_key, write_key};
+use crate::build::{installed_record, read_key, write_key};
 use crate::error::{BuildError, io};
 use crate::exec::{Executor, tail};
 use crate::loader::Scope;
 use crate::{
-    BuildRoot, Builder, Error, Item, Mode, Problem, Recipe, Repos, Runner, SourceCache, fsx, host,
-    installed, repo, schema,
+    BuildRoot, Builder, Error, Item, KeyInputs, Mode, Problem, Recipe, Repos, Runner, SourceCache,
+    fsx, host, installed, repo, schema,
 };
 
 /// Where a step runs.
@@ -184,6 +184,8 @@ pub struct StageOptions {
     pub min_available: u64,
     /// Report what would run instead of running it.
     pub dry_run: bool,
+    /// Run every step, even one whose record shows it up to date.
+    pub rebuild: bool,
     /// A statically linked `laft-build` that runs the builds of `root`
     /// steps inside the root.
     pub laft_build: PathBuf,
@@ -244,14 +246,14 @@ pub enum StageEvent<'a> {
 }
 
 /// Where the sandbox of a `root` step shows the build root, the recipe
-/// repository and `laft-build`.
+/// repository and, for a build, `laft-build`.
 const INSIDE_BUILD_ROOT: &str = "laft-build-root";
 const INSIDE_RECIPES: &str = "laft-recipes";
 const INSIDE_LAFT_BUILD: &str = "laft-build";
 
-/// Where script steps record that they ran, relative to the root: one
-/// record per step, `<stage>/<step>`, that holds the hash of the step.
-const SCRIPTS_RUN: &str = "var/lib/laft-build/stages";
+/// Where steps record that they ran, relative to the root: one record per
+/// step, `<stage>/<step>`, that holds the key of the step.
+const STEPS_RUN: &str = "var/lib/laft-build/stages";
 
 /// The top-level links of Laft's merged `/usr`.
 const ROOT_LINKS: [(&str, &str); 4] = [
@@ -267,17 +269,24 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// The root gets Laft's top-level layout first: `usr/bin` and `usr/lib`,
 /// with `bin` and `sbin` linking to `usr/bin` and `lib` and `lib64` to
 /// `usr/lib`. Each package is built in bootstrap mode and installed into
-/// the root with [`Builder::install`], and skipped when [`installed`] shows
-/// its current build key. On the host, a build uses the host's tools after
-/// the stage's search directories. Inside the root, `laft-build` itself
-/// runs the build in a [`RootSandbox`], with the build root and the recipe
-/// repository bound below `/run`, after the host fetched the sources.
+/// the root with [`Builder::install`]. On the host, a build uses the
+/// host's tools after the stage's search directories. Inside the root,
+/// `laft-build` itself runs the build in a [`RootSandbox`], with the build
+/// root and the recipe repository bound below `/run`, after the host
+/// fetched the sources.
 ///
 /// A script runs with POSIX `sh` and `ROOT`, `HOME`, `TMPDIR`, `LANG`,
 /// `LC_ALL` and `TZ` besides its own variables: on the host in a scratch
 /// directory with the stage's search path, inside the root in `/` with
-/// `PATH=/usr/bin`. Once it succeeded, its hash is recorded in the root,
-/// and it runs again only when it changes.
+/// `PATH=/usr/bin`.
+///
+/// Every step has a key that covers where it runs, its script and
+/// environment or the build keys of its packages, and the key of the step
+/// before it, so it covers every earlier step too. Once a step succeeded,
+/// its key is recorded in the root. A step whose recorded key matches is
+/// skipped unless [`StageOptions::rebuild`] is set, so a changed step runs
+/// again together with every step after it, and a failed run continues
+/// with the step that failed, from its first package.
 ///
 /// A build whose recipe has `ci.runner = big` first waits until the host
 /// has [`StageOptions::min_available`] of memory available. Every script
@@ -324,20 +333,45 @@ pub fn run_stage(
         options,
         logs: &logs,
     };
+    let mut previous = None;
     for (index, step) in stage.steps.iter().enumerate() {
         let tag = format!("{:02}-{}", index + 1, step.name);
-        match &step.work {
+        let key = match &step.work {
             Work::Packages(packages) => {
+                let mut found = Vec::new();
                 for package in packages {
-                    for recipe in recipes(repos, package)? {
-                        runner.package(step, &tag, &recipe, progress)?;
-                    }
+                    found.extend(recipes(repos, package)?);
                 }
+                runner.packages(step, &tag, &found, previous, progress)?
             }
-            Work::Script { script, env } => runner.script(step, &tag, script, env, progress)?,
-        }
+            Work::Script { script, env } => {
+                runner.script(step, &tag, script, env, previous, progress)?
+            }
+        };
+        previous = Some(key);
     }
     Ok(())
+}
+
+/// The key of `step`, whose own work is `work`, after the step whose key is
+/// `previous`.
+fn step_key(
+    step: &Step,
+    previous: Option<Blake3Hash>,
+    work: serde_json::Value,
+) -> Result<Blake3Hash, BuildError> {
+    let place = match step.place {
+        Place::Host => "host",
+        Place::Root => "root",
+    };
+    let value = serde_json::json!({
+        "previous": previous.map(|k| k.to_string()),
+        "place": place,
+        "work": work,
+    });
+    let bytes = laft_core::to_canonical_json(&value)
+        .map_err(|e| BuildError::problem("B023", format!("step {}: {e}", step.name)))?;
+    Ok(Blake3Hash::of(&bytes))
 }
 
 /// The recipes of `package` in `repos`, in the variant it names.
@@ -436,35 +470,69 @@ struct StageRun<'a> {
 }
 
 impl StageRun<'_> {
+    /// The record of `step` in the root.
+    fn record(&self, step: &Step) -> PathBuf {
+        self.options
+            .root
+            .join(STEPS_RUN)
+            .join(&self.stage.name)
+            .join(&step.name)
+    }
+
+    /// What becomes of `step` with the key `key` instead of running: up to
+    /// date when its record shows `key` and records count, pending in a dry
+    /// run, or `None` when it runs.
+    fn skipped(&self, step: &Step, key: Blake3Hash) -> Result<Option<StageState>, BuildError> {
+        if !self.options.rebuild && read_key(&self.record(step))? == Some(key) {
+            Ok(Some(StageState::UpToDate))
+        } else if self.options.dry_run {
+            Ok(Some(StageState::Pending))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Builds and installs `recipes` for `step` unless it is up to date, and
+    /// returns its key.
+    fn packages(
+        &self,
+        step: &Step,
+        tag: &str,
+        recipes: &[Recipe],
+        previous: Option<Blake3Hash>,
+        progress: &mut dyn FnMut(StageEvent<'_>),
+    ) -> Result<Blake3Hash, BuildError> {
+        let mut inputs = Vec::new();
+        for recipe in recipes {
+            inputs.push(self.builder.key_inputs(recipe)?);
+        }
+        let keys: Vec<String> = inputs.iter().map(|i| i.build_key().to_string()).collect();
+        let key = step_key(step, previous, serde_json::json!({ "packages": keys }))?;
+        if let Some(state) = self.skipped(step, key)? {
+            for recipe in recipes {
+                let what = Item::of(recipe).to_string();
+                progress(finished(&step.name, &what, state, Duration::ZERO));
+            }
+            return Ok(key);
+        }
+        for (recipe, inputs) in recipes.iter().zip(&inputs) {
+            self.package(step, tag, recipe, inputs, progress)?;
+        }
+        write_key(&self.record(step), &key)?;
+        Ok(key)
+    }
+
     fn package(
         &self,
         step: &Step,
         tag: &str,
         recipe: &Recipe,
+        inputs: &KeyInputs,
         progress: &mut dyn FnMut(StageEvent<'_>),
     ) -> Result<(), BuildError> {
         let root = &self.options.root;
         let item = Item::of(recipe);
         let what = item.to_string();
-        let key = self.builder.key_inputs(recipe)?.build_key();
-        if installed(root, &item)? == Some(key) {
-            progress(finished(
-                &step.name,
-                &what,
-                StageState::UpToDate,
-                Duration::ZERO,
-            ));
-            return Ok(());
-        }
-        if self.options.dry_run {
-            progress(finished(
-                &step.name,
-                &what,
-                StageState::Pending,
-                Duration::ZERO,
-            ));
-            return Ok(());
-        }
         if recipe.operations.ci.runner == Runner::Big {
             self.wait_for_memory(progress)?;
         }
@@ -474,15 +542,21 @@ impl StageRun<'_> {
         });
         let started = Instant::now();
         match step.place {
-            Place::Host => {
-                let inputs = self.builder.key_inputs(recipe)?;
-                self.builder.install(recipe, &inputs, root)?;
-            }
+            Place::Host => self.builder.install(recipe, inputs, root)?,
             Place::Root => {
+                // The build inside skips a package whose record shows its
+                // key, so the record goes first to make it build again.
+                let record = installed_record(root, &item);
+                match fs::remove_file(&record) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                        return Err(io(&record)(e));
+                    }
+                    _ => {}
+                }
                 self.builder.fetch(recipe)?;
                 let log = self.logs.join(format!("{tag}-{}.log", recipe.name));
                 self.build_inside(&what, &log)?;
-                if installed(root, &item)? != Some(key) {
+                if installed(root, &item)? != Some(inputs.build_key()) {
                     return Err(BuildError::problem(
                         "B040",
                         format!(
@@ -527,6 +601,7 @@ impl StageRun<'_> {
         .map(String::from);
         let command = self
             .sandbox()
+            .bind(&self.options.laft_build, INSIDE_LAFT_BUILD, false)
             .command(run(INSIDE_LAFT_BUILD))
             .args(args)
             .env("HOME", "/root");
@@ -537,7 +612,6 @@ impl StageRun<'_> {
         RootSandbox::new(&self.options.root)
             .bind(self.build_root.path(), INSIDE_BUILD_ROOT, true)
             .bind(&self.stage.recipes, INSIDE_RECIPES, false)
-            .bind(&self.options.laft_build, INSIDE_LAFT_BUILD, false)
     }
 
     /// Runs `command` with its output in `log` and fails with `B040` when
@@ -569,45 +643,26 @@ impl StageRun<'_> {
         ))
     }
 
+    /// Runs the script of `step` unless it is up to date, and returns its
+    /// key.
     fn script(
         &self,
         step: &Step,
         tag: &str,
         script: &str,
         env: &BTreeMap<String, String>,
+        previous: Option<Blake3Hash>,
         progress: &mut dyn FnMut(StageEvent<'_>),
-    ) -> Result<(), BuildError> {
+    ) -> Result<Blake3Hash, BuildError> {
         let root = &self.options.root;
-        let record = root
-            .join(SCRIPTS_RUN)
-            .join(&self.stage.name)
-            .join(&step.name);
-        let place = match step.place {
-            Place::Host => "host",
-            Place::Root => "root",
-        };
-        let value = serde_json::json!({ "place": place, "script": script, "env": env });
-        let hash = Blake3Hash::of(
-            &laft_core::to_canonical_json(&value)
-                .map_err(|e| BuildError::problem("B023", format!("step {}: {e}", step.name)))?,
-        );
-        if read_key(&record)? == Some(hash) {
-            progress(finished(
-                &step.name,
-                "script",
-                StageState::UpToDate,
-                Duration::ZERO,
-            ));
-            return Ok(());
-        }
-        if self.options.dry_run {
-            progress(finished(
-                &step.name,
-                "script",
-                StageState::Pending,
-                Duration::ZERO,
-            ));
-            return Ok(());
+        let key = step_key(
+            step,
+            previous,
+            serde_json::json!({ "script": script, "env": env }),
+        )?;
+        if let Some(state) = self.skipped(step, key)? {
+            progress(finished(&step.name, "script", state, Duration::ZERO));
+            return Ok(key);
         }
         progress(StageEvent::Start {
             step: &step.name,
@@ -660,14 +715,14 @@ impl StageRun<'_> {
                 self.run_logged(command, &self.logs.join(format!("{tag}.log")), &step.name)?;
             }
         }
-        write_key(&record, &hash)?;
+        write_key(&self.record(step), &key)?;
         progress(finished(
             &step.name,
             "script",
             StageState::Done,
             started.elapsed(),
         ));
-        Ok(())
+        Ok(key)
     }
 
     fn wait_for_memory(&self, progress: &mut dyn FnMut(StageEvent<'_>)) -> Result<(), BuildError> {
