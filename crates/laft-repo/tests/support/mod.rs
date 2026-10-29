@@ -97,11 +97,15 @@ impl Pkg {
         self
     }
 
-    pub(crate) fn alternative(mut self, group: &str, paths: &[&str]) -> Self {
+    pub(crate) fn alternative(self, group: &str, paths: &[&str]) -> Self {
+        self.ranked_alternative(group, paths, 0)
+    }
+
+    pub(crate) fn ranked_alternative(mut self, group: &str, paths: &[&str], priority: i64) -> Self {
         self.meta.alternatives.push(Alternative {
             group: group.parse().expect("valid group"),
             paths: paths.iter().map(|p| (*p).into()).collect(),
-            priority: 0,
+            priority,
         });
         self
     }

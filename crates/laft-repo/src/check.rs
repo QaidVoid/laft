@@ -10,7 +10,7 @@
 //! | KR001 | error | Two packages that can share a view own the same non-directory path outside a common alternatives group, or disagree on whether a path is a directory. |
 //! | KR002 | error | A dependency that no package of the index or of a base index satisfies. |
 //! | KR003 | error | A package that the resolver cannot install on its own. |
-//! | KR004 | error | An alternatives group without a valid default, whose members ship different paths, or that lists a path its member does not ship. |
+//! | KR004 | error | An alternatives group whose default is not a member, that has no default while the newest versions of several members share the highest priority, whose members ship different paths, or that lists a path its member does not ship. |
 //! | KR005 | error | A package whose name, version, revision and variant are already published with another store id. |
 //! | KR006 | warning | The newest version of a name is older than the newest one previously published. |
 //! | KR007 | error | Packages of several names that can share a view provide the same `so:` or `virtual:` value, and no provider default chooses one of them. |
@@ -555,7 +555,10 @@ fn closure(input: &Input<'_>, dangling: &HashSet<StoreId>, findings: &mut Vec<Fi
     }
 }
 
-/// KR004: alternatives groups are consistent and have a default.
+/// KR004: alternatives groups are consistent, and the resolver can choose
+/// a member of each without the configuration: the group has a default, or
+/// the newest version of one member has a higher priority than the newest
+/// versions of all others.
 fn alternatives(index: &Index, packages: &[Loaded<'_>], findings: &mut Vec<Finding>) {
     let shipped: HashMap<StoreId, &Manifest> =
         packages.iter().map(|p| (p.entry.id, &p.manifest)).collect();
@@ -601,16 +604,35 @@ fn alternatives(index: &Index, packages: &[Loaded<'_>], findings: &mut Vec<Findi
             .join(", ");
         let metas = || members.iter().map(|(e, _)| &e.meta);
         match index.defaults.alternatives.get(*group) {
-            None => findings.push(
-                finding(
-                    "KR004",
-                    Level::Error,
-                    format!("alternatives group {group} has no default"),
-                )
-                .detail(format!("members: {listed}"))
-                .detail(format!("fix: choose one with --alternative {group}=<member>"))
-                .packages(metas()),
-            ),
+            None => {
+                let ranked: Vec<(i64, &Name)> = newest(members.iter().map(|(e, _)| *e))
+                    .into_iter()
+                    .map(|(name, entry)| (priority(entry, group), name))
+                    .collect();
+                let top = ranked.iter().map(|(p, _)| *p).max().unwrap_or_default();
+                let tied: Vec<&str> = ranked
+                    .iter()
+                    .filter(|(p, _)| *p == top)
+                    .map(|(_, n)| n.as_str())
+                    .collect();
+                if tied.len() > 1 {
+                    findings.push(
+                        finding(
+                            "KR004",
+                            Level::Error,
+                            format!(
+                                "alternatives group {group} has no default, and {} share the highest priority {top}",
+                                tied.join(", ")
+                            ),
+                        )
+                        .detail(format!("members: {listed}"))
+                        .detail(format!(
+                            "fix: choose one with --alternative {group}=<member>, or give one a higher priority"
+                        ))
+                        .packages(metas()),
+                    );
+                }
+            }
             Some(default) if !names.contains(default) => findings.push(
                 finding(
                     "KR004",
@@ -683,8 +705,8 @@ fn downgrades(input: &Input<'_>, findings: &mut Vec<Finding>) {
         return;
     };
     let yanked: HashSet<StoreId> = input.index.yanked.iter().map(|y| y.id).collect();
-    let before = newest(published);
-    for (name, now) in newest(input.index) {
+    let before = newest(&published.packages);
+    for (name, now) in newest(&input.index.packages) {
         let Some(old) = before.get(name) else {
             continue;
         };
@@ -708,10 +730,22 @@ fn downgrades(input: &Input<'_>, findings: &mut Vec<Finding>) {
     }
 }
 
-/// The newest package of each name.
-fn newest(index: &Index) -> BTreeMap<&Name, &IndexEntry> {
+/// The priority that `entry` gives itself in alternatives `group`.
+fn priority(entry: &IndexEntry, group: &Name) -> i64 {
+    entry
+        .meta
+        .alternatives
+        .iter()
+        .find(|a| &a.group == group)
+        .map_or(0, |a| a.priority)
+}
+
+/// The newest of `entries` for each name.
+fn newest<'a>(
+    entries: impl IntoIterator<Item = &'a IndexEntry>,
+) -> BTreeMap<&'a Name, &'a IndexEntry> {
     let mut newest: BTreeMap<&Name, &IndexEntry> = BTreeMap::new();
-    for e in &index.packages {
+    for e in entries {
         let slot = newest.entry(&e.meta.name).or_insert(e);
         if (&e.meta.version, e.meta.rev) > (&slot.meta.version, slot.meta.rev) {
             *slot = e;

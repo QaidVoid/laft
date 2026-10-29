@@ -117,10 +117,12 @@ fn index_refuses_a_candidate_with_check_errors_and_writes_nothing() {
 fn index_sets_defaults_and_keeps_them_in_later_generations() {
     let dir = laft_test::tempdir();
     let out = dir.path().join("out");
-    pkg("vim", "9.1.0800")
-        .file("usr/bin/vi", "vim")
-        .alternative("vi", &["usr/bin/vi"])
-        .write(&out);
+    for name in ["vim", "neovim"] {
+        pkg(name, "1.0")
+            .file("usr/bin/vi", name)
+            .alternative("vi", &["usr/bin/vi"])
+            .write(&out);
+    }
     let repo = dir.path().join("repo");
     let now = at(0);
     let mut args = index_args(&repo, "current", &now);
@@ -139,7 +141,7 @@ fn index_sets_defaults_and_keeps_them_in_later_generations() {
     args.push(s(&later));
     ok(&args);
     let index = read_index(&repo, "current");
-    assert_eq!(index.packages.len(), 2);
+    assert_eq!(index.packages.len(), 3);
     assert_eq!(
         index.defaults.alternatives[&"vi".parse().unwrap()].as_str(),
         "vim"

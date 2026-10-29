@@ -181,20 +181,59 @@ fn kr003_a_package_whose_closure_conflicts() {
     );
 }
 
-#[test]
-fn kr004_an_alternatives_group_without_default() {
+/// Checks an index whose alternatives group `vi` has `vim` with priority
+/// `vim`, `neovim` 0.10.0 with priority 9 and `neovim` 0.11.4 with
+/// priority `neovim`, and `vim` as its default when `default` is set.
+fn check_vi(vim: i64, neovim: i64, default: bool) -> (Vec<String>, serde_json::Value) {
     let dir = laft_test::tempdir();
-    let packages = [pkg("vim", "9.1.0800")
-        .file("usr/bin/vi", "vim")
-        .alternative("vi", &["usr/bin/vi"])
-        .write(&dir.path().join("out"))];
+    let out = dir.path().join("out");
+    let vi = &["usr/bin/vi"];
+    let packages = [
+        pkg("vim", "9.1.0800")
+            .file("usr/bin/vi", "vim")
+            .ranked_alternative("vi", vi, vim)
+            .write(&out),
+        pkg("neovim", "0.10.0")
+            .file("usr/bin/vi", "nvim")
+            .ranked_alternative("vi", vi, 9)
+            .write(&out),
+        pkg("neovim", "0.11.4")
+            .file("usr/bin/vi", "nvim")
+            .ranked_alternative("vi", vi, neovim)
+            .write(&out),
+    ];
     let repo = dir.path().join("repo");
-    fixture(&repo, "current", 0, &packages, |_| {});
+    fixture(&repo, "current", 0, &packages, |index| {
+        if default {
+            index.defaults.alternatives.insert(
+                "vi".parse().expect("a valid group"),
+                "vim".parse().expect("a valid name"),
+            );
+        }
+    });
     let (codes, report, _) = check(&repo, &[]);
+    (codes, report)
+}
+
+#[test]
+fn kr004_is_silent_when_one_member_has_the_highest_priority() {
+    let (codes, report) = check_vi(5, 0, false);
+    assert!(codes.is_empty(), "{report}");
+}
+
+#[test]
+fn kr004_is_silent_for_a_tied_priority_with_a_default() {
+    let (codes, report) = check_vi(5, 5, true);
+    assert!(codes.is_empty(), "{report}");
+}
+
+#[test]
+fn kr004_a_tied_priority_without_a_default() {
+    let (codes, report) = check_vi(5, 5, false);
     assert_eq!(codes, ["KR004"], "{report}");
     assert_eq!(
         report["findings"][0]["message"],
-        "alternatives group vi has no default"
+        "alternatives group vi has no default, and neovim, vim share the highest priority 5"
     );
 }
 

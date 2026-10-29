@@ -350,8 +350,8 @@ const TEXTS: &[(&str, &str, &str)] = &[
     ),
     (
         "KR004",
-        "An alternatives group has no valid default, or its members ship different paths.",
-        "Set a default with `--alternative` and make the members agree.",
+        "An alternatives group has an invalid default, has no default while several members share the highest priority, or its members ship different paths.",
+        "Set a default with `--alternative` or give one member a higher priority, and make the members agree.",
     ),
     (
         "KR005",
