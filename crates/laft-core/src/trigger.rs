@@ -7,8 +7,10 @@
 //! metadata which triggers its payload activates, using
 //! [`Trigger::activated_by`], and assembly runs the triggers of a view.
 
-/// The version of [`TRIGGERS`]. It changes whenever an entry changes, so
-/// that outputs computed with an older table are never reused.
+/// The version of [`TRIGGERS`]. It changes whenever an entry changes in a
+/// way that can change what the triggers write, so that outputs computed
+/// with an older table are never reused. A change to only
+/// [`Trigger::generated`] or [`Trigger::required`] leaves it as it is.
 pub const TRIGGER_TABLE_VERSION: u32 = 1;
 
 /// How many instances of a trigger a view has.
