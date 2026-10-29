@@ -28,9 +28,10 @@ use crate::{BuildRoot, fsx};
 ///
 /// # Errors
 ///
-/// Fails with [`BuildError::Package`] when `lpkg` is not a valid package,
-/// with [`BuildError::Store`] when it cannot enter the store, and when the
-/// record cannot be written.
+/// Fails with [`BuildError::Io`] when `lpkg` cannot be opened or the seed
+/// record cannot be written, with [`BuildError::Package`] when `lpkg` is not
+/// a valid package, and with [`BuildError::Store`] when the store cannot be
+/// listed or the package cannot enter it.
 pub fn seed(root: &BuildRoot, lpkg: &Path) -> Result<String, BuildError> {
     let file = fs::File::open(lpkg).map_err(io(lpkg))?;
     let id = laft_pkg::Reader::new(io::BufReader::new(file))?

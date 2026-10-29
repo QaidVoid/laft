@@ -29,13 +29,18 @@ const STAGING: &str = "var/lib/laft-build/unpack";
 /// without owner write, such as one that an earlier package declared
 /// read-only, lets its owner write while the paths move in, and gets its
 /// mode back afterwards, also after a failure. The staging directory is
-/// removed whether or not this succeeds.
+/// removed whether or not this succeeds. When the unpack fails, its error
+/// is the one returned even if the removal fails too, and the next unpack
+/// into `dest` removes what is left.
 ///
-/// Every file is on disk before it is renamed into place, and every rename
-/// and new directory is on disk before this returns, so that a record
-/// written afterwards never outlives a payload that a crash lost. Each of
-/// the two flushes is one `syncfs(2)` of the filesystem of `dest`, which
-/// covers every path of the package at once.
+/// Every file is on disk before it is renamed into place, because a
+/// filesystem may keep a rename across a crash without the data it moved,
+/// which would leave an empty file where a working one was, and later
+/// builds run the tools of `dest`. Every rename and new directory is on
+/// disk before this returns, so that a record written afterwards never
+/// outlives a payload that a crash lost. Each of the two flushes is one
+/// `syncfs(2)` of the filesystem of `dest`, which covers every path of the
+/// package at once.
 ///
 /// # Errors
 ///
