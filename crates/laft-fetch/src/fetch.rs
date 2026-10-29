@@ -410,8 +410,9 @@ impl Fetcher {
     /// [`ErrorKind::HttpNotAllowed`] or [`ErrorKind::InvalidUrl`] for a URL
     /// it does not accept, with [`ErrorKind::Offline`] for a network URL in
     /// offline mode, with [`ErrorKind::NotFound`] when the file does not
-    /// exist, and otherwise with the error of the last attempt. Every error
-    /// names the URL.
+    /// exist, and otherwise with the error of the last attempt. A failure
+    /// to write `dest`, or to read a `file://` source that exists, names
+    /// that file, and every other error names the URL.
     pub fn download(
         &self,
         url: &str,
