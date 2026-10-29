@@ -271,8 +271,19 @@ fn first_boot(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<(
         "laft-vmtest: marker service is running",
     )?;
     login(&mut machine)?;
+    // boot-complete and the getty start together, so the note of
+    // `laft boot mark-good` may come before or after the prompt.
+    check(
+        "boot mark-good ran",
+        &machine.transcript(),
+        "generation 1 booted completely",
+    )?;
     let state = shell(&mut machine, "cat /laft/state/boot.json")?;
-    check("boot mark-good ran", &state, "\"last_good\":1")?;
+    check(
+        "generation 1 is the last good one",
+        &state,
+        "\"last_good\":1",
+    )?;
     check("the trial ended", &state, "\"trial\":null")?;
     let links = shell(
         &mut machine,
