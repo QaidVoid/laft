@@ -269,7 +269,6 @@ fn power_off(machine: &mut Machine) -> Result<()> {
     Ok(())
 }
 
-/// Fails unless `output` contains `needle`.
 /// Fails unless `output` lacks `needle`, which describes what `what`
 /// rules out.
 fn check_absent(what: &str, output: &str, needle: &str) -> Result<()> {
@@ -281,6 +280,7 @@ fn check_absent(what: &str, output: &str, needle: &str) -> Result<()> {
     }
 }
 
+/// Fails unless `output` contains `needle`.
 fn check(what: &str, output: &str, needle: &str) -> Result<()> {
     if output.contains(needle) {
         eprintln!("laft-vmtest: ok: {what}");
