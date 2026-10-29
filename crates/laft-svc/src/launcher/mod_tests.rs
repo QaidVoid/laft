@@ -7,7 +7,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use laft_test::TempDir;
 
-use super::{ExecMode, Launcher, parse_start_time, restarts, start_time};
+use super::{ExecMode, Launcher, parse_exiting, parse_start_time, restarts, start_time};
 use crate::launcher::accounts::Credentials;
 use crate::launcher::process::{drop_privileges, spawn_as};
 use crate::spec::{Spec, SpecDir};
@@ -576,19 +576,37 @@ fn start_time_is_read_after_the_command_name() {
 
 #[test]
 fn a_background_start_that_crashes_leaves_no_pid_file() {
-    let fixture = Fixture::new();
-    let mut spec = resolve("udevd", &Service::longrun(&["/bin/true"]));
-    spec.early = true;
-    fixture.install(&spec);
-    let mut crash = Command::new("/bin/sh");
-    crash.args(["-c", "exit 1"]);
-    let code = fixture
-        .launcher
-        .start_detached(&spec, crash)
-        .expect("never fails");
-    assert_eq!(code, 0);
-    assert_eq!(fixture.failures(), "udevd failed\n");
-    assert!(!fixture.path("run/runit/early/udevd.pid").exists());
+    // The status pipe closes before the exiting process can be waited
+    // for, so a single start rarely hits the window between the two.
+    for _ in 0..200 {
+        let fixture = Fixture::new();
+        let mut spec = resolve("udevd", &Service::longrun(&["/bin/true"]));
+        spec.early = true;
+        fixture.install(&spec);
+        let mut crash = Command::new("/bin/sh");
+        crash.args(["-c", "exit 1"]);
+        let code = fixture
+            .launcher
+            .start_detached(&spec, crash)
+            .expect("never fails");
+        assert_eq!(code, 0);
+        assert_eq!(fixture.failures(), "udevd failed\n");
+        assert!(!fixture.ready("udevd"));
+        assert!(!fixture.path("run/runit/early/udevd.pid").exists());
+    }
+}
+
+#[test]
+fn exiting_processes_are_told_from_running_ones() {
+    let stat = |state: &str, flags: u32| {
+        format!("42 (a (b) c) {state} 1 42 42 0 -1 {flags} 0 0 0 0 0 0 0 0 20 0 1 0 1234 0 0")
+    };
+    assert!(!parse_exiting(&stat("S", 0x0040_0100)));
+    assert!(!parse_exiting(&stat("R", 0)));
+    assert!(parse_exiting(&stat("R", 0x0040_0104)));
+    assert!(parse_exiting(&stat("Z", 0)));
+    assert!(parse_exiting(&stat("X", 0)));
+    assert!(parse_exiting("garbage"));
 }
 
 #[test]

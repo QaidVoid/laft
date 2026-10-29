@@ -493,6 +493,14 @@ impl Launcher {
             let executed = match &status {
                 Some(reader) => match exec_status(reader) {
                     ExecStatus::Pending => false,
+                    ExecStatus::Executed if exiting(child.id()) => {
+                        // The pipe also closes when the process exits
+                        // without executing the service, and that happens
+                        // before the process can be waited for.
+                        child.wait().map_err(wait_error)?;
+                        exited = true;
+                        break;
+                    }
                     ExecStatus::Executed => {
                         status = None;
                         true
@@ -912,6 +920,31 @@ fn setup_error(name: &str, step: &'static str, errno: Errno) -> Error {
 /// `/proc/<pid>/stat`, or `None` when the process does not exist.
 fn start_time(pid: u32) -> Option<u64> {
     parse_start_time(&fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+/// Whether process `pid` is exiting or gone, from `/proc/<pid>/stat`.
+fn exiting(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |stat| parse_exiting(&stat))
+}
+
+/// Whether a `/proc/<pid>/stat` line describes a process that is exiting:
+/// a zombie, a dead process or one with `PF_EXITING` set. The kernel sets
+/// that flag before it closes the files of an exiting process, so a pipe
+/// that closed because the process exits always finds it set. A line that
+/// cannot be read counts as exiting.
+fn parse_exiting(stat: &str) -> bool {
+    /// The task flag of a process that started to exit.
+    const PF_EXITING: u32 = 0x4;
+    let Some((_, rest)) = stat.rsplit_once(')') else {
+        return true;
+    };
+    let mut fields = rest.split_whitespace();
+    let state = fields.next();
+    let flags = fields.nth(5).and_then(|f| f.parse::<u32>().ok());
+    match (state, flags) {
+        (Some("Z" | "X" | "x"), _) | (_, None) => true,
+        (_, Some(flags)) => flags & PF_EXITING != 0,
+    }
 }
 
 /// The start time field of a `/proc/<pid>/stat` line. The command name in
