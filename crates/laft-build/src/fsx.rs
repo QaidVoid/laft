@@ -45,6 +45,12 @@ pub(crate) fn publish(tmp: &Path, path: &Path) -> Result<(), BuildError> {
         .map_err(io(path))
 }
 
+/// Flushes every write to the filesystem that holds `path`.
+pub(crate) fn sync_fs(path: &Path) -> Result<(), BuildError> {
+    let dir = File::open(path).map_err(io(path))?;
+    rustix::fs::syncfs(&dir).map_err(|e| io(path)(e.into()))
+}
+
 /// Removes the tree at `path`, first giving its owner write access to every
 /// directory in it. A missing tree is fine.
 pub(crate) fn remove_tree(path: &Path) -> Result<(), BuildError> {

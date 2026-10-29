@@ -28,6 +28,12 @@ const STAGING: &str = "var/lib/laft-build/unpack";
 /// followed, so nothing is written outside it. The staging directory is
 /// removed whether or not this succeeds.
 ///
+/// Every file is on disk before it is renamed into place, and every rename
+/// and new directory is on disk before this returns, so that a record
+/// written afterwards never outlives a payload that a crash lost. Each of
+/// the two flushes is one `syncfs(2)` of the filesystem of `dest`, which
+/// covers every path of the package at once.
+///
 /// # Errors
 ///
 /// Fails with `B043` when a payload path is a directory in the package and
@@ -51,6 +57,7 @@ fn place(file: &Path, staging: &Path, dest: &Path) -> Result<(), BuildError> {
         .and_then(|f| Reader::new(f).map_err(BuildError::from))?;
     let entries = reader.manifest().entries().to_vec();
     reader.unpack(staging)?;
+    fsx::sync_fs(staging)?;
     let mut made = Vec::new();
     for entry in &entries {
         let rel = entry.path();
@@ -84,7 +91,7 @@ fn place(file: &Path, staging: &Path, dest: &Path) -> Result<(), BuildError> {
         }
         fs::set_permissions(&to, fs::Permissions::from_mode(mode)).map_err(io(&to))?;
     }
-    Ok(())
+    fsx::sync_fs(dest)
 }
 
 fn conflict(file: &Path, rel: &str, directory: bool) -> BuildError {
