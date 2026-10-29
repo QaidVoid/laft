@@ -375,13 +375,25 @@ fn a_failed_reset_leaves_the_live_file_in_place() {
 }
 
 #[test]
-fn reset_refuses_absolute_paths_outside_etc() {
+fn reset_refuses_paths_outside_etc() {
     let env = Env::new();
     let lock = env.lock();
     build_generation(&lock, 1, &config_with(&[]));
     reconcile_etc(&lock, 1, &none(), OnConflict::Stop).expect("reconciles");
-    let err = reset_etc(&lock, &["/etchosts".to_owned()]).expect_err("not below /etc");
-    assert!(matches!(err, Error::NotResettable { .. }), "{err}");
+    for path in [
+        "/etchosts",
+        "../passwd",
+        "a/../hosts",
+        "./hosts",
+        "/etc/../hosts",
+        "",
+    ] {
+        let err = reset_etc(&lock, &[path.to_owned()]).expect_err(path);
+        assert!(
+            matches!(err, Error::NotResettable { reason, .. } if reason.contains("not below /etc")),
+            "{path}: {err}"
+        );
+    }
 }
 
 #[test]
@@ -417,6 +429,31 @@ fn a_changed_copy_that_is_no_longer_declared_is_kept_with_a_warning() {
         [Warning::ChangedCopyKept("machine.conf".into())]
     );
     assert_eq!(env.read("etc/machine.conf"), "edited\n");
+}
+
+#[test]
+fn a_copy_replaced_by_a_link_or_directory_is_kept_with_a_warning() {
+    for replace in ["link", "dir"] {
+        let env = Env::new();
+        let lock = env.lock();
+        build_generation(&lock, 1, &copied("one\n"));
+        build_generation(&lock, 2, &config_with(&[]));
+        reconcile_etc(&lock, 1, &none(), OnConflict::Stop).expect("reconciles");
+        let live = env.path("etc/machine.conf");
+        fs::remove_file(&live).unwrap();
+        match replace {
+            "link" => std::os::unix::fs::symlink("elsewhere", &live).unwrap(),
+            _ => fs::create_dir(&live).unwrap(),
+        }
+
+        let report = reconcile_etc(&lock, 2, &none(), OnConflict::Stop).expect("reconciles");
+        assert_eq!(
+            report.warnings,
+            [Warning::ChangedCopyKept("machine.conf".into())],
+            "{replace}"
+        );
+        assert!(fs::symlink_metadata(&live).is_ok(), "{replace}");
+    }
 }
 
 #[test]

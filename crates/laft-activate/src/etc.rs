@@ -393,20 +393,24 @@ fn paths(root: &Root, generation: u64) -> Paths {
 }
 
 /// `path` relative to `/etc`, whether it is given absolute or relative, or
-/// `None` for an absolute path that is not below `/etc`.
+/// `None` for a path that is not below `/etc`: an absolute path outside it,
+/// or a path with an empty, `.` or `..` component.
 fn relative(path: &str) -> Option<String> {
     let path = match path.strip_prefix('/') {
         Some(absolute) => absolute.strip_prefix("etc/")?,
         None => path,
     };
-    Some(path.trim_matches('/').to_owned())
+    let path = path.trim_matches('/');
+    path.split('/')
+        .all(|c| !matches!(c, "" | "." | ".."))
+        .then(|| path.to_owned())
 }
 
 /// `paths` relative to `/etc`.
 ///
 /// # Errors
 ///
-/// Fails with [`Error::Invalid`] for an absolute path not below `/etc`.
+/// Fails with [`Error::Invalid`] for a path not below `/etc`.
 fn relative_set(paths: &BTreeSet<String>) -> Result<BTreeSet<String>> {
     paths
         .iter()
@@ -659,12 +663,10 @@ fn plan(
             continue;
         }
         let live = paths.etc.join(path);
-        if fsx::lstat(&live)?.is_some_and(|m| m.is_file()) {
-            if hash_file(&live)? == *hash {
-                plan.stale.push(path.clone());
-            } else {
-                plan.warnings.push(Warning::ChangedCopyKept(path.clone()));
-            }
+        match fsx::lstat(&live)? {
+            None => {}
+            Some(m) if m.is_file() && hash_file(&live)? == *hash => plan.stale.push(path.clone()),
+            Some(_) => plan.warnings.push(Warning::ChangedCopyKept(path.clone())),
         }
     }
     Ok(plan)
