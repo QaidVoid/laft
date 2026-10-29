@@ -114,6 +114,8 @@ system {
     up          = default(["/usr/bin/hwclock", "--hctosys", "--utc"])
     down        = default(["/usr/bin/hwclock", "--systohc", "--utc"])
     after       = [kernel-fs]
+    # hwclock keeps the drift of the hardware clock in adjtime there.
+    state_dirs  = [Dir { path = "hwclock" }]
     log         = default(console)
     on_change   = default(ignore)
     early       = default(true)

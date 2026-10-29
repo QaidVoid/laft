@@ -69,7 +69,14 @@
       "size": 1000000,
       "count": 10
     },
-    "state_dirs": [],
+    "state_dirs": [
+      {
+        "path": "hwclock",
+        "mode": 493,
+        "owner": null,
+        "group": null
+      }
+    ],
     "runtime_dirs": [],
     "restart": "always",
     "restart_delay": 1,
