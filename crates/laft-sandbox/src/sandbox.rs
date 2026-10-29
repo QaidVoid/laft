@@ -75,15 +75,17 @@ pub(crate) const ROOT_LINKS: [(&CStr, &CStr); 4] = [
 /// How a sandbox reaches the network.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Network {
-    /// A new network namespace whose only interface is a loopback interface
-    /// that is down, so nothing is reachable. The sandbox has no `/etc`.
+    /// A new network namespace whose only interface is a loopback interface,
+    /// which is up, so that a command reaches its own sockets and nothing
+    /// else. `/etc` holds only the user database.
     #[default]
     Isolated,
     /// The caller's network namespace, for the phase that fetches sources.
     ///
     /// So that names resolve, the host's `/etc/resolv.conf`, `/etc/hosts`
-    /// and `/etc/nsswitch.conf` are bound read-only into an otherwise empty,
-    /// read-only `/etc`. A file the host lacks is left out.
+    /// and `/etc/nsswitch.conf` are bound read-only into the read-only
+    /// `/etc`, next to the user database. A file the host lacks is left
+    /// out.
     Host,
 }
 
@@ -507,6 +509,8 @@ impl BuildRoot {
         write_user_files(&root)?;
         if self.host_etc {
             mount_host_etc(&root)?;
+        } else {
+            sys::loopback_up().map_err(fail(Step::Loopback))?;
         }
         enter_root(&root)?;
         drop_capabilities()?;

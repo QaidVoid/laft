@@ -225,7 +225,7 @@ fn proc_shows_only_the_sandbox_processes() {
 }
 
 #[test]
-fn isolated_network_has_only_loopback_and_reaches_nothing() {
+fn isolated_network_has_only_loopback_and_reaches_nothing_else() {
     let fixture = Fixture::new();
     let Some(output) = fixture.run("cat /proc/net/dev") else {
         return;
@@ -249,8 +249,13 @@ fn isolated_network_has_only_loopback_and_reaches_nothing() {
         .unwrap();
     let errors = String::from_utf8(output.stderr).unwrap();
     assert_eq!(
+        errors.matches("connect: Connection refused").count(),
+        1,
+        "the loopback interface is up: {errors}"
+    );
+    assert_eq!(
         errors.matches("connect: Network is unreachable").count(),
-        2,
+        1,
         "{errors}"
     );
 }

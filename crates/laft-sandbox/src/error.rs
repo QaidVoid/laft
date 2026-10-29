@@ -65,6 +65,7 @@ steps! {
     SwitchIds => "switching to user nobody",
     ReadIds => "reading the process ids",
     InvalidBindName => "expecting a plain file name below /run, got",
+    Loopback => "bringing up the loopback interface",
 }
 
 impl Step {

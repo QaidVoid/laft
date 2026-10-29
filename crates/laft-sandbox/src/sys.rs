@@ -173,3 +173,29 @@ pub(crate) fn exit_like(status: WaitStatus) -> ! {
     }
     exit(status.exit_status().unwrap_or(1))
 }
+
+/// Brings up `lo`, the loopback interface of the calling process's network
+/// namespace.
+pub(crate) fn loopback_up() -> Result<(), Errno> {
+    // SAFETY: `socket` takes only integer arguments and returns a new
+    // descriptor or -1.
+    let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
+    if fd == -1 {
+        return Err(last_errno());
+    }
+    // SAFETY: `ifreq` is a plain C struct of integers, arrays and a union of
+    // them, for which all zero bytes is a valid value.
+    let mut request: libc::ifreq = unsafe { std::mem::zeroed() };
+    for (to, from) in request.ifr_name.iter_mut().zip(b"lo") {
+        *to = *from as libc::c_char;
+    }
+    request.ifr_ifru.ifru_flags = (libc::IFF_UP | libc::IFF_RUNNING) as libc::c_short;
+    // SAFETY: `fd` is the socket opened above, and `request` is an
+    // initialized `ifreq` with a NUL-terminated name, which `SIOCSIFFLAGS`
+    // only reads.
+    let ret = unsafe { libc::ioctl(fd, libc::SIOCSIFFLAGS, &raw mut request) };
+    let result = if ret == -1 { Err(last_errno()) } else { Ok(()) };
+    // SAFETY: `fd` is open and owned here, and nothing uses it afterwards.
+    unsafe { libc::close(fd) };
+    result
+}

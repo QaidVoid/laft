@@ -8,8 +8,9 @@
 //!   directories, no capabilities and `no_new_privs`. The phase that fetches
 //!   sources keeps the host network with [`Network::Host`], which also binds
 //!   the host's `/etc/resolv.conf`, `/etc/hosts` and `/etc/nsswitch.conf`
-//!   read-only into an otherwise empty `/etc`, so that names resolve. An
-//!   isolated sandbox has no `/etc` at all.
+//!   read-only into `/etc`, so that names resolve. An isolated sandbox
+//!   reaches only its own loopback interface. Its `/etc` holds a user
+//!   database that names `root` and `nobody`, and nothing of the host.
 //! - Assembly runs every fixed program, such as a trigger that computes a
 //!   cache from the tree being assembled, in a [`FixedSandbox`]: the tree
 //!   as `/usr` with only named directories writable, a given configuration
