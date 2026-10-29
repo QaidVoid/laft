@@ -14,6 +14,42 @@ struct RecipeRepos {
   repos: Map<Str, RecipeRepo> = {} block recipe_repo
 }
 
+## The root of a bootstrap stage file.
+struct StageFile {
+  ## The stage. Block label: the stage name.
+  stages: Map<Str, Stage> = {} block stage
+}
+
+## Where a step of a stage runs.
+type Place = host | root
+
+## A stage of a bootstrap: steps that build packages from one recipe
+## repository straight into a root directory, or run scripts, in order.
+struct Stage {
+  ## The recipe repository of the packages, relative to the stage file.
+  recipes: Str
+  ## Directories below the root that steps on the host search for programs
+  ## before the host's own, such as the bin directory of a cross toolchain.
+  path:    List<Str> = []
+  ## The steps, in the order they run.
+  steps:   List<Step> where nonEmpty
+}
+
+## One step of a stage. Exactly one of `packages` and `script` is set.
+struct Step {
+  ## The name in progress reports and logs, unique in the stage.
+  name:     Str where matches(r"^[a-z0-9][a-z0-9-]*$")
+  ## On the host, or inside the root entered as a chroot.
+  place:    Place = host
+  ## Packages built in this order and installed into the root.
+  packages: List<Pkg> = []
+  ## A POSIX shell script, such as a checkpoint. It runs once, and again
+  ## when it changes. `$ROOT` is the root as the script sees it.
+  script:   Option<Str>
+  ## Extra environment variables of the script.
+  env:      Map<Str, Str> = {}
+}
+
 ## The identity of a recipe repository.
 struct RecipeRepo {
   ## Architectures this repository builds for.

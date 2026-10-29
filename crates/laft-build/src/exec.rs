@@ -348,7 +348,7 @@ fn wait(mut child: Child, timeout: Duration, log: &Path) -> Result<ExitStatus, B
 }
 
 /// The last lines of the log `path`, indented, for an error message.
-fn tail(path: &Path) -> String {
+pub(crate) fn tail(path: &Path) -> String {
     let text = fs::read(path).unwrap_or_default();
     let text = String::from_utf8_lossy(&text);
     let lines: Vec<&str> = text.lines().collect();

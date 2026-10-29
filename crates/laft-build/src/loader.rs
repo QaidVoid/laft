@@ -34,6 +34,8 @@ pub(crate) enum Scope {
     Descriptor,
     /// The recipe of one package and the shared modules below `common/`.
     Package(String),
+    /// One stage file at the top of the import root, alone.
+    Stage(String),
 }
 
 /// Serves the std catalog from the binary and files from recipe
@@ -57,6 +59,7 @@ impl RepoLoader {
             (Scope::Descriptor, [file]) => *file == DESCRIPTOR,
             (Scope::Package(name), [RECIPES, dir, RECIPE_FILE]) => dir == name,
             (Scope::Package(_), [COMMON, _, ..]) => true,
+            (Scope::Stage(name), [file]) => file == name,
             _ => false,
         }
     }
@@ -79,6 +82,7 @@ impl Loader for RepoLoader {
                 Scope::Package(_) => {
                     format!("a recipe can only import modules below {COMMON}/")
                 }
+                Scope::Stage(_) => "a stage file imports nothing".to_owned(),
             }));
         }
         read_inside(root.path(), &root.path().join(rel.to_path()))

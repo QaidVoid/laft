@@ -289,7 +289,7 @@ fn evaluate_variant(
 
 /// Reports a path or import that leaves the recipe repositories, which
 /// Stav reports as `E0702`, as `R002`.
-fn own_codes(report: &Report) -> Report {
+pub(crate) fn own_codes(report: &Report) -> Report {
     report.with_items(report.iter().map(|item| {
         match item.diagnostic.code {
         "E0702" => FileDiagnostic {

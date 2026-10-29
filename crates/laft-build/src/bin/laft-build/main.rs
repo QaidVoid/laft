@@ -38,7 +38,7 @@ use std::time::{Duration, SystemTime};
 use clap::Parser;
 use laft_build::{
     BuildError, BuildRoot, Builder, Buildinfo, Cutoff, Event, Item, Mode, Recipe, Repos,
-    SourceCache, check_repro, record_repro,
+    SourceCache, Stage, StageEvent, StageOptions, check_repro, record_repro, run_stage,
 };
 use laft_core::PkgRef;
 use laft_fetch::{Config, Fetcher};
@@ -120,8 +120,17 @@ struct Context {
 
 fn run(cli: Cli) -> Result<(), Failure> {
     let root = BuildRoot::new(build_root(cli.root)?);
-    if let Command::Gc { sources_older_than } = cli.command {
-        return gc(&root, sources_older_than);
+    let json = cli.json;
+    match cli.command {
+        Command::Gc { sources_older_than } => return gc(&root, sources_older_than),
+        Command::Stage {
+            file,
+            root: target,
+            min_free_gib,
+            dry_run,
+            options,
+        } => return stage(&root, &file, target, min_free_gib, dry_run, &options, json),
+        _ => {}
     }
     let paths = if cli.recipes.is_empty() {
         std::env::var("LAFT_RECIPES")
@@ -187,7 +196,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
             &options,
             &packages,
         ),
-        Command::Gc { .. } => Ok(()),
+        Command::Gc { .. } | Command::Stage { .. } => Ok(()),
     }
 }
 
@@ -644,6 +653,80 @@ fn bootstrap(
         say(json!({ "bootstrap": report }));
     }
     Ok(())
+}
+
+fn stage(
+    build_root: &BuildRoot,
+    file: &Path,
+    root: PathBuf,
+    min_free_gib: u64,
+    dry_run: bool,
+    options: &BuildOptions,
+    json: bool,
+) -> Result<(), Failure> {
+    let stage = Stage::load(file).map_err(|e| Failure::Usage(e.to_string()))?;
+    if !dry_run {
+        check_space(build_root.path())?;
+    }
+    let repos = Repos::open(&[&stage.recipes]).map_err(|e| Failure::Usage(e.to_string()))?;
+    let cache = SourceCache::new(
+        build_root.sources(),
+        Fetcher::new(Config::new(build_root.cache())),
+    );
+    let laft_build = std::env::current_exe()
+        .map_err(|e| Failure::Environment(format!("cannot find laft-build itself: {e}")))?;
+    let options = StageOptions {
+        root: std::path::absolute(&root)
+            .map_err(|e| Failure::Usage(format!("{}: {e}", root.display())))?,
+        jobs: options.jobs.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, |n| u32::try_from(n.get()).unwrap_or(1))
+        }),
+        timeout: Duration::from_secs(options.timeout_hours * 3600),
+        min_available: min_free_gib << 30,
+        dry_run,
+        laft_build,
+        mirrors: options.mirrors.clone(),
+    };
+    let mut report = Vec::new();
+    let result = run_stage(
+        &stage,
+        &repos,
+        &cache,
+        build_root,
+        &options,
+        &mut |event| match event {
+            StageEvent::Start { step, what } => eprintln!("{step}: {what}: starting"),
+            StageEvent::Waiting { available, needed } => eprintln!(
+                "waiting for memory: {} MiB available, {} MiB needed",
+                available >> 20,
+                needed >> 20
+            ),
+            StageEvent::Finished {
+                step,
+                what,
+                state,
+                elapsed,
+            } => {
+                if !json {
+                    say(format_args!(
+                        "{step}: {what}: {} ({}s)",
+                        state.as_str(),
+                        elapsed.as_secs()
+                    ));
+                }
+                report.push(json!({
+                    "step": step,
+                    "what": what,
+                    "state": state.as_str(),
+                    "seconds": elapsed.as_secs(),
+                }));
+            }
+        },
+    );
+    if json {
+        say(json!({ "stage": stage.name, "steps": report }));
+    }
+    result.map_err(Failure::from)
 }
 
 fn gc(root: &BuildRoot, sources_older_than: Option<u64>) -> Result<(), Failure> {

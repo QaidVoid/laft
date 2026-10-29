@@ -233,3 +233,23 @@ pub(crate) enum Build {
         make_args: Vec<String>,
     },
 }
+
+/// A `stage` block.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Stage {
+    pub(crate) recipes: String,
+    pub(crate) path: Vec<String>,
+    pub(crate) steps: Vec<Step>,
+}
+
+/// A step of a stage.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Step {
+    pub(crate) name: String,
+    pub(crate) place: crate::stage::Place,
+    pub(crate) packages: Vec<PkgRef>,
+    pub(crate) script: Option<String>,
+    pub(crate) env: BTreeMap<String, String>,
+}

@@ -122,6 +122,27 @@ pub(crate) enum Command {
         #[arg(required = true)]
         packages: Vec<String>,
     },
+    /// Run a bootstrap stage: build the packages of a stage file straight
+    /// into a root, on the host or inside the root entered as a chroot, and
+    /// run its scripts, in order. Finished steps are skipped, so a failed
+    /// run continues where it stopped.
+    Stage {
+        /// The stage file.
+        file: PathBuf,
+        /// The root the stage builds. It gets Laft's top-level layout.
+        #[arg(long, value_name = "DIR")]
+        root: PathBuf,
+        /// The available memory, in GiB, that a build of a recipe whose CI
+        /// runner is `big` waits for.
+        #[arg(long, value_name = "GIB", default_value_t = 6)]
+        min_free_gib: u64,
+        /// Print what is up to date and what would run, without running.
+        #[arg(long)]
+        dry_run: bool,
+        /// Options of builds.
+        #[command(flatten)]
+        options: BuildOptions,
+    },
     /// Remove working trees, staging files and old sources.
     Gc {
         /// Also remove cached sources not used for this many days, at

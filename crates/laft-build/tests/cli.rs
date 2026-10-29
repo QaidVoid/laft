@@ -127,6 +127,38 @@ fn an_installing_dry_run_lists_what_it_would_install() {
 }
 
 #[test]
+fn a_stage_dry_run_lists_its_steps_without_touching_the_root() {
+    let dir = laft_test::tempdir();
+    let file = dir.path().join("stage.stav");
+    std::fs::write(
+        &file,
+        format!(
+            "stage s {{\n  recipes = \"{}\"\n  steps = [\n    {{ name = \"tools\", packages = [zlib] }},\n    \
+             {{ name = \"check\", place = root, script = \"true\" }},\n  ]\n}}\n",
+            support::core().display()
+        ),
+    )
+    .unwrap();
+    let root = dir.path().join("system");
+    let output = laft_build(
+        dir.path(),
+        &[
+            "stage",
+            file.to_str().unwrap(),
+            "--root",
+            root.to_str().unwrap(),
+            "--dry-run",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        stdout(&output),
+        "tools: zlib: pending (0s)\ncheck: script: pending (0s)\n"
+    );
+    assert!(!root.exists());
+}
+
+#[test]
 fn usage_errors_exit_with_2() {
     let dir = laft_test::tempdir();
     let output = Command::new(env!("CARGO_BIN_EXE_laft-build"))

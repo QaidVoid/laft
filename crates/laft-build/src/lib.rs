@@ -35,7 +35,9 @@
 //!    ([`Builder::run`]). [`Mode::Bootstrap`] builds without sandbox or
 //!    store, for the first stage of a new system, and
 //!    [`Builder::install`] installs such a build straight into a system
-//!    under construction instead of making packages.
+//!    under construction instead of making packages. A [`Stage`] runs
+//!    such builds and scripts in order, on the host or inside the root
+//!    entered as a chroot, with [`run_stage`].
 //! 7. A [`Buildinfo`] records what one build used and produced, as
 //!    canonical JSON written next to its packages, and the [`Db`] keeps
 //!    the record that plans the next run. [`check_repro`] rebuilds and
@@ -68,6 +70,7 @@
 //! | `R030` | an `env` key that does not match `[A-Z_][A-Z0-9_]*` |
 //! | `R031` | an `env` key that the builder sets itself, unless it is set with `force(...)`, and always `JOBS` and `MAKEFLAGS` |
 //! | `R050` | an `update` block without exactly one of `github`, `gitlab`, `anitya` and `url`, or with `pattern` and `url` not set together |
+//! | `R060` | a stage file without exactly one stage, a step that sets both or neither of `packages` and `script`, a step name used twice, a search directory that is not a plain relative path, a missing recipe repository, or a package that builds nothing in the variant named |
 //!
 //! Between recipes, and while planning, these problems are found:
 //!
@@ -97,6 +100,7 @@
 //! | `B031` | a build root with less than 10 GiB free |
 //! | `B040` | a phase or tool that failed |
 //! | `B041` | an installation into a directory outside bootstrap mode |
+//! | `B042` | a stage root whose top-level entries differ from Laft's layout, or a `laft-build` that is not static for a step inside the root |
 //! | `B050` | a build view that the build-side store cannot satisfy |
 //! | `B060` | a reproducibility check of a package without a successful build |
 //! | `B1xx`, `R040`, `W1xx` | a payload that breaks a post-processing rule, see [`post`] |
@@ -123,6 +127,7 @@ mod repo;
 mod repro;
 mod schema;
 mod source;
+mod stage;
 mod style;
 mod target;
 mod vendor;
@@ -154,6 +159,7 @@ pub use recipe::{
 pub use repo::{Evaluation, RecipeRepo, Repos};
 pub use repro::{DifferingFile, ReproReport, check_repro, compare, record_repro};
 pub use source::{SourceCache, SourceError};
+pub use stage::{Place, Stage, StageEvent, StageOptions, StageState, Step, Work, run_stage};
 pub use target::{ARCH, CPU, GNU_TRIPLE, MUSL_TRIPLE, SYSROOT, Target};
 pub use vendor::normalized_tarball;
 
