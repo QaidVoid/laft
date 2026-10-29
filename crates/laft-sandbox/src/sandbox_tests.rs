@@ -161,14 +161,14 @@ fn host_paths_are_invisible() {
     let host = fixture.dir.path().display();
     let manifest = env!("CARGO_MANIFEST_DIR");
     let script = format!(
-        "echo /*; echo /dev/*; echo $PWD; for p in '{host}' '{manifest}' /home /etc /var; do test -e \"$p\" && echo \"visible $p\"; done; true"
+        "echo /*; echo /dev/*; echo $PWD; for p in '{host}' '{manifest}' /home /etc/hosts /var; do test -e \"$p\" && echo \"visible $p\"; done; true"
     );
     let Some(output) = fixture.run(&script) else {
         return;
     };
     assert_eq!(
         stdout(&output),
-        "/bin /build /dev /lib /lib64 /out /proc /sbin /tmp /usr\n\
+        "/bin /build /dev /etc /lib /lib64 /out /proc /sbin /tmp /usr\n\
          /dev/fd /dev/full /dev/null /dev/ptmx /dev/pts /dev/random /dev/stderr /dev/stdin /dev/stdout /dev/tty /dev/urandom /dev/zero\n\
          /build\n"
     );
@@ -443,7 +443,9 @@ fn host_network_sees_only_the_host_name_resolution_files() {
             present.push(name);
         }
     }
-    for name in &present {
+    let mut listed: Vec<&str> = present.iter().copied().chain(["group", "passwd"]).collect();
+    listed.sort_unstable();
+    for name in listed {
         expected.push_str(&format!("{name}\n"));
     }
     let host = fixture.sandbox.clone().network(Network::Host);
@@ -468,7 +470,9 @@ fn host_network_sees_only_the_host_name_resolution_files() {
         );
     }
 
-    let Some(output) = fixture.run("test -e /etc && echo present; true") else {
+    let Some(output) = fixture
+        .run("for f in hosts nsswitch.conf resolv.conf; do test -e /etc/$f && echo $f; done; true")
+    else {
         return;
     };
     assert_eq!(stdout(&output), "");
@@ -497,4 +501,15 @@ fn a_command_opens_pseudo_terminals_of_its_own() {
         return;
     };
     assert_eq!(stdout(&output), "opened\n", "{output:?}");
+}
+
+#[test]
+fn the_user_and_group_of_a_command_have_names() {
+    let fixture = Fixture::new();
+    let Some(output) =
+        fixture.run("whoami; id -gn; touch /etc/laft-probe 2>/dev/null || echo read-only")
+    else {
+        return;
+    };
+    assert_eq!(stdout(&output), "root\nroot\nread-only\n", "{output:?}");
 }

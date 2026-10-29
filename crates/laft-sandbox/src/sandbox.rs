@@ -52,7 +52,18 @@ const HOST_ETC: [(&CStr, &CStr); 3] = [
     (c"/etc/nsswitch.conf", c"nsswitch.conf"),
 ];
 
-const ROOT_DIRS: [&CStr; 6] = [c"usr", c"build", c"out", c"proc", c"dev", c"tmp"];
+const ROOT_DIRS: [&CStr; 7] = [c"usr", c"build", c"out", c"proc", c"dev", c"tmp", c"etc"];
+
+/// The user database of `/etc`, which names the only ids a command runs
+/// as and sees, so that programs that look up their user or group find
+/// one.
+const USER_FILES: [(&CStr, &[u8]); 2] = [
+    (
+        c"passwd",
+        b"root:x:0:0:root:/build/home:/bin/sh\nnobody:x:65534:65534:nobody:/nonexistent:/bin/false\n",
+    ),
+    (c"group", b"root:x:0:\nnogroup:x:65534:\n"),
+];
 
 pub(crate) const ROOT_LINKS: [(&CStr, &CStr); 4] = [
     (c"bin", c"usr/bin"),
@@ -96,7 +107,7 @@ pub enum Network {
 /// | `/proc` | a new procfs that shows only the sandbox's processes |
 /// | `/dev` | a read-only tmpfs with `null`, `zero`, `full`, `random`, `urandom` and `tty` bound from the host, `fd`, `stdin`, `stdout`, `stderr` links, and a private pseudo-terminal filesystem at `pts` with `ptmx` linking to its multiplexer |
 /// | `/tmp` | a private tmpfs |
-/// | `/etc` | only with [`Network::Host`]: the host's name resolution files, read-only |
+/// | `/etc` | read-only, with `passwd` and `group` naming `root` and `nobody`, and with [`Network::Host`] the host's name resolution files |
 ///
 /// Before the command is executed, its capability bounding set is emptied,
 /// `no_new_privs` is set, the core size limit is 0 and the open file limit
@@ -493,6 +504,7 @@ impl BuildRoot {
         mount_dev(&root, true)?;
         let tmp = fresh_mount(c"tmpfs", Some(c"1777"), nosuid).map_err(fail(Step::MountTmp))?;
         attach(&tmp, &root, c"tmp")?;
+        write_user_files(&root)?;
         if self.host_etc {
             mount_host_etc(&root)?;
         }
@@ -605,10 +617,35 @@ pub(crate) fn mount_dev(root: &OwnedFd, ptys: bool) -> Result<(), Failure> {
     .map_err(fail(Step::MountDev))
 }
 
-/// Creates `/etc` in `root` and binds each file of [`HOST_ETC`] the host has
-/// into it, read-only. The directory becomes read-only with the root.
+/// Writes the files of [`USER_FILES`] into `/etc` of `root`, which
+/// becomes read-only with the root.
+fn write_user_files(root: &OwnedFd) -> Result<(), Failure> {
+    let etc = rustix::fs::openat(
+        root,
+        c"etc",
+        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(fail(Step::Populate))?;
+    for (name, contents) in USER_FILES {
+        let file = rustix::fs::openat(
+            &etc,
+            name,
+            OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o644),
+        )
+        .map_err(fail(Step::Populate))?;
+        let written = rustix::io::write(&file, contents).map_err(fail(Step::Populate))?;
+        if written != contents.len() {
+            return Err((Step::Populate, Errno::IO));
+        }
+    }
+    Ok(())
+}
+
+/// Binds each file of [`HOST_ETC`] the host has into `/etc` of `root`,
+/// read-only. The directory becomes read-only with the root.
 fn mount_host_etc(root: &OwnedFd) -> Result<(), Failure> {
-    rustix::fs::mkdirat(root, c"etc", Mode::from_raw_mode(0o755)).map_err(fail(Step::Populate))?;
     let etc = rustix::fs::openat(
         root,
         c"etc",
