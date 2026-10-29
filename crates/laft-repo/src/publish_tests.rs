@@ -202,3 +202,18 @@ fn a_keys_signature_for_another_version_stops_publishing() {
     assert!(error.to_string().contains("is signed as"), "{error}");
     assert!(!target.exists());
 }
+
+#[test]
+fn a_mirror_list_is_not_published() {
+    let dir = laft_test::tempdir();
+    keygen(&dir.path().join("online"), false, None).unwrap();
+    let signer = Signer::load(&dir.path().join("online.key"), None).unwrap();
+    let repo = Repository::new(dir.path().join("repo"));
+    let hello = package(&repo, "hello", b"hello");
+    generation(&repo, &signer, 0, vec![hello]);
+    fs::write(repo.path("mirrors.json"), b"{}").unwrap();
+    let target = dir.path().join("target");
+    run(&repo, &target, None).unwrap();
+    assert!(target.join(channel().index()).exists());
+    assert!(!target.join("mirrors.json").exists());
+}

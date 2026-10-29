@@ -8,8 +8,7 @@
 //! 1. Package files and buildinfo the target does not have yet.
 //! 2. A check that the target now holds every package file the new
 //!    indexes reference, with the right size.
-//! 3. `keys.json` and `mirrors.json`, each before its signature, when they
-//!    changed.
+//! 3. `keys.json`, before its signature, when it changed.
 //! 4. The snapshots of new generations, each before its signature.
 //! 5. Each changed entry point, then its signature.
 //! 6. Snapshots the repository no longer keeps.
@@ -29,7 +28,7 @@ use laft_index::{Index, IndexComment, Keys, KeysComment, Signature};
 
 use crate::error::{Error, Result, io};
 use crate::fsx;
-use crate::layout::{Channel, KEYS, MIRRORS, Repository, SIG, sig};
+use crate::layout::{Channel, KEYS, Repository, SIG, sig};
 
 /// One operation on the target, with paths relative to the repository
 /// root.
@@ -143,18 +142,13 @@ pub(crate) fn plan(repo: &Repository, target: &Path, only: Option<&Name>) -> Res
         }
     }
     steps.push(Step::Verify(referenced));
-    for document in [KEYS, MIRRORS] {
-        if fsx::size(&repo.path(document))?.is_none() {
-            continue;
+    if fsx::size(&repo.path(KEYS))?.is_some() {
+        if fsx::size(&repo.path(&sig(KEYS)))?.is_none() {
+            return Err(Error::new(format!("{KEYS} is not signed")));
         }
-        if fsx::size(&repo.path(&sig(document)))?.is_none() {
-            return Err(Error::new(format!("{document} is not signed")));
-        }
-        if document == KEYS {
-            check_keys_signature(repo)?;
-        }
-        changed(repo, target, document, &mut steps)?;
-        changed(repo, target, &sig(document), &mut steps)?;
+        check_keys_signature(repo)?;
+        changed(repo, target, KEYS, &mut steps)?;
+        changed(repo, target, &sig(KEYS), &mut steps)?;
     }
     for (channel, index) in channels.iter().zip(&indexes) {
         let kept = repo.snapshots(channel)?;

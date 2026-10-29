@@ -3,7 +3,6 @@
 //! ```text
 //! <root>/
 //! ├── keys.json, keys.json.minisig
-//! ├── mirrors.json, mirrors.json.minisig
 //! ├── pool/<id>.lpkg
 //! ├── buildinfo/<id>.json
 //! └── channels/<channel>/<arch>/
@@ -26,8 +25,6 @@ pub(crate) const INDEX: &str = "index.json.zst";
 pub(crate) const SIG: &str = ".minisig";
 /// The name of the online key list.
 pub(crate) const KEYS: &str = "keys.json";
-/// The name of the optional mirror list.
-pub(crate) const MIRRORS: &str = "mirrors.json";
 
 /// A repository directory.
 #[derive(Debug, Clone)]

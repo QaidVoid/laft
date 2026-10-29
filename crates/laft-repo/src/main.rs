@@ -5,7 +5,8 @@
 //! `pool/<id>.lpkg`, their buildinfo in `buildinfo/<id>.json`, one signed
 //! index per channel and architecture in `channels/<channel>/<arch>/` with
 //! immutable snapshots of its recent generations, and optionally the
-//! root-signed list of online keys in `keys.json`.
+//! root-signed list of online keys in `keys.json`. Mirror lists are not
+//! published yet, because no client reads them.
 //!
 //! ```text
 //! laft-repo keygen --out keys/online --unencrypted
