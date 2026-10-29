@@ -89,3 +89,18 @@ fn a_phase_that_runs_too_long_is_killed() {
     assert_eq!(error.code(), Some("B030"));
     assert!(started.elapsed() < Duration::from_secs(10));
 }
+
+#[test]
+fn a_direct_phase_that_times_out_leaves_no_process_behind() {
+    let dir = laft_test::tempdir();
+    let marker = dir.path().join("late");
+    let exec = Executor::direct("/", dir.path(), dir.path(), dir.path().join("logs"))
+        .timeout(Duration::from_millis(300));
+    let script = format!("(sleep 1; touch '{}') & sleep 30", marker.display());
+    let error = exec
+        .run("build", &script, &BTreeMap::new())
+        .expect_err("the phase times out");
+    assert_eq!(error.code(), Some("B030"));
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(!marker.exists(), "a process of the phase outlived it");
+}

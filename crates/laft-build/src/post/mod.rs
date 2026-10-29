@@ -4,29 +4,29 @@
 //! order. Each step is a function of this module. A failing step stops the
 //! build with its code.
 //!
-//! | Step | Function | What it does |
-//! |---|---|---|
-//! | P1 | [`check_output`] | the payload holds a file (`B101`) |
-//! | P2 | [`normalize_paths`] | moves everything into `usr/`, deletes libtool and info index files (`B102`) |
-//! | P3 | [`check_paths`] | only `usr/` and `etc/` (`B103`), static archives removed (`W110`) |
-//! | P4 | [`static_layout`] | `static` builds: the sysroot layout, no shared objects (`B104`, `B105`) |
-//! | P4b | [`strip_trigger_outputs`] | removes files that views generate (`W113`) |
-//! | P5 | [`privileges`] | modes, owners, requested privileges (`B106`, `B111`, `B114`) |
-//! | P6 | [`scan_elf`], [`soname_links`], [`check_private_libraries`], [`check_needs`] | search paths and library placement (`B107`, `B108`, `B112`, `B113`, `W111`, `W114`, `W115`) |
-//! | P7 | [`strip`] | strips ELF files, splits debug info |
-//! | P8 | [`abi_digests`] | ABI digests of libraries |
-//! | P9 | [`detect`], [`imports`], [`exports`] | dependencies and provides (`W112`), imports and exports |
-//! | P10 | [`static_deps`] | static libraries linked into a `static` build |
-//! | P11 | [`split()`] | the main package and its subpackages (`B115`) |
-//! | P12 | [`triggers`] | the triggers each package activates |
-//! | P13 | [`alternatives`] | alternative groups (`R040`) |
-//! | P14 | [`package()`] | metadata, manifest and store id (`B116`) |
-//! | P15 | [`lint`] | suspicious contents (`B109`, `W101`, `W120`, `W121`, `W122`) |
-//! | P16 | [`write_packages`] | the package files |
-//! | P17 | [`smoke()`] | the recipe's smoke test (`B110`) |
+//! | Function | What it does |
+//! |---|---|
+//! | [`check_output`] | the payload holds a file (`B101`) |
+//! | [`normalize_paths`] | moves everything into `usr/`, deletes libtool and info index files (`B102`) |
+//! | [`check_paths`] | only `usr/` and `etc/` (`B103`), static archives removed (`W110`) |
+//! | [`static_layout`] | `static` builds: the sysroot layout, no shared objects (`B104`, `B105`) |
+//! | [`strip_trigger_outputs`] | removes files that views generate (`W113`) |
+//! | [`privileges`] | modes, owners, requested privileges (`B106`, `B111`, `B114`) |
+//! | [`scan_elf`], [`soname_links`], [`check_private_libraries`], [`check_needs`] | search paths and library placement (`B107`, `B108`, `B112`, `B113`, `W111`, `W114`, `W115`) |
+//! | [`strip`] | strips ELF files, splits debug info |
+//! | [`abi_digests`] | ABI digests of libraries |
+//! | [`detect`], [`imports`], [`exports`] | dependencies and provides (`W112`), imports and exports |
+//! | [`static_deps`] | static libraries linked into a `static` build |
+//! | [`split()`] | the main package and its subpackages (`B115`) |
+//! | [`triggers`] | the triggers each package activates |
+//! | [`alternatives`] | alternative groups (`R040`) |
+//! | [`package()`] | metadata, manifest and store id (`B116`) |
+//! | [`lint`] | suspicious contents (`B109`, `W101`, `W120`, `W121`, `W122`) |
+//! | [`write_packages`] | the package files |
+//! | [`smoke()`] | the recipe's smoke test (`B110`) |
 //!
-//! The builder runs P16 and P17 itself, because they need the output
-//! directory and the build-side store.
+//! The builder writes the package files and runs the smoke test itself,
+//! because they need the output directory and the build-side store.
 
 mod deps;
 mod elf;
@@ -95,7 +95,8 @@ pub struct Output {
     pub warnings: Vec<Warning>,
 }
 
-/// Runs the post-processing steps P1 to P15 on the payload of a build.
+/// Runs the post-processing steps up to the lint on the payload of a
+/// build, in the order of the table above.
 ///
 /// # Errors
 ///

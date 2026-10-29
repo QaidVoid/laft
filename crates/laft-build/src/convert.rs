@@ -295,7 +295,7 @@ fn sources(cx: &mut Cx<'_>, p: &schema::Package) -> Vec<Source> {
             cx.error(
                 &keys,
                 "R018",
-                format!("{what} has a label that is not a plain name of letters, digits, `-`, `_` and `.`"),
+                format!("{what} has a label that is not a plain name of letters, digits, `-`, `_` and `.` that does not start with `.`"),
             );
             continue;
         }
@@ -466,7 +466,8 @@ fn check_package_shape(cx: &mut Cx<'_>, p: &schema::Package) {
 }
 
 /// Checks the names of the recipe's environment variables. A variable the
-/// builder sets may be replaced only with `force(...)`.
+/// builder sets may be replaced only with `force(...)`, except `JOBS` and
+/// `MAKEFLAGS`, which every build sets from its job count.
 fn check_env(cx: &mut Cx<'_>, env: &BTreeMap<String, String>) {
     for key in env.keys() {
         let mut bytes = key.bytes();
@@ -479,6 +480,12 @@ fn check_env(cx: &mut Cx<'_>, env: &BTreeMap<String, String>) {
                 &["env", key],
                 "R030",
                 format!("environment variable `{key}` does not match [A-Z_][A-Z0-9_]*"),
+            );
+        } else if [env::JOBS, env::MAKEFLAGS].contains(&key.as_str()) {
+            cx.error(
+                &["env", key],
+                "R031",
+                format!("environment variable `{key}` is set for each build, even over force(...); set `parallel = false` for one job"),
             );
         } else if RESERVED.contains(&key.as_str())
             && cx.evaluated.priority(&AttrPath::new([

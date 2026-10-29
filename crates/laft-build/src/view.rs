@@ -134,19 +134,36 @@ pub struct BuildView {
 
 /// Assembles the build view of `recipe` as `tree/usr` from the packages of
 /// `store`: [`requests`] and their runtime dependency closure, resolved like
-/// any view, with the alternatives the resolution chooses.
+/// any view, with the alternatives the resolution chooses. With `pinned`,
+/// only the packages with those store ids are considered, so that a
+/// rebuild sees the view of an earlier build even after the store gained
+/// newer packages.
 ///
 /// # Errors
 ///
 /// Fails with `B050` when the requests cannot be resolved against the
-/// store, and when the tree cannot be assembled.
+/// store or a pinned package is no longer in it, and when the tree cannot
+/// be assembled.
 pub fn assemble(
     store: &Store,
     recipe: &Recipe,
     check: bool,
     tree: &Path,
+    pinned: Option<&BTreeSet<StoreId>>,
 ) -> Result<BuildView, BuildError> {
-    let entries = store_entries(store)?;
+    let mut entries = store_entries(store)?;
+    if let Some(pinned) = pinned {
+        entries.retain(|e| pinned.contains(&e.id));
+        if let Some(gone) = pinned
+            .iter()
+            .find(|id| !entries.iter().any(|e| e.id == **id))
+        {
+            return Err(BuildError::problem(
+                "B050",
+                format!("package {gone} of the earlier build view is no longer in the store"),
+            ));
+        }
+    }
     let names = entries.iter().map(|e| e.meta.name.clone()).collect();
     let refs = requests(recipe, check, &names);
     let origin = format!("build view of {}", Item::of(recipe));
@@ -329,7 +346,12 @@ fn name(text: &str) -> Name {
 ///
 /// Fails when the store cannot be read.
 pub fn key_inputs(recipe: &Recipe, store: &Store) -> Result<KeyInputs, BuildError> {
-    let entries = store_entries(store)?;
+    Ok(key_inputs_from(recipe, &store_entries(store)?))
+}
+
+/// [`key_inputs`] against `entries`, which [`store_entries`] read, so that
+/// planning many recipes reads the store once.
+pub fn key_inputs_from(recipe: &Recipe, entries: &[StoreEntry]) -> KeyInputs {
     let mut links = Vec::new();
     let mut statics = Vec::new();
     for link in &recipe.link_deps {
@@ -364,7 +386,7 @@ pub fn key_inputs(recipe: &Recipe, store: &Store) -> Result<KeyInputs, BuildErro
             });
         }
     }
-    Ok(KeyInputs::new(recipe, links, statics))
+    KeyInputs::new(recipe, links, statics)
 }
 
 #[cfg(test)]

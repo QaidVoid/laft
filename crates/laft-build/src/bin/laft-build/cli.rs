@@ -114,8 +114,9 @@ pub(crate) enum Command {
     },
     /// Remove working trees, staging files and old sources.
     Gc {
-        /// Also remove cached sources not used for this many days.
-        #[arg(long, value_name = "DAYS")]
+        /// Also remove cached sources not used for this many days, at
+        /// most 36500.
+        #[arg(long, value_name = "DAYS", value_parser = clap::value_parser!(u64).range(..=36500))]
         sources_older_than: Option<u64>,
     },
 }
@@ -140,10 +141,15 @@ pub(crate) struct BuildOptions {
     pub(crate) no_check: bool,
     /// The number of parallel jobs inside a build. Defaults to the number
     /// of CPUs.
-    #[arg(long, value_name = "N")]
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
     pub(crate) jobs: Option<u32>,
-    /// The longest one phase may run, in hours.
-    #[arg(long, value_name = "HOURS", default_value_t = 6)]
+    /// The longest one phase may run, in hours, from 1 to 8760.
+    #[arg(
+        long,
+        value_name = "HOURS",
+        default_value_t = 6,
+        value_parser = clap::value_parser!(u64).range(1..=8760)
+    )]
     pub(crate) timeout_hours: u64,
     /// Extra source mirrors, tried after the repositories' own.
     #[arg(long = "mirror", value_name = "URL")]

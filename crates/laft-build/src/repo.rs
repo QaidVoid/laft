@@ -297,7 +297,10 @@ fn own_codes(report: &Report) -> Report {
             diagnostic: Diagnostic::error(
                 "R002",
                 item.diagnostic.span,
-                "the path leaves the recipe repository",
+                quoted(&item.diagnostic.message).map_or_else(
+                    || "the path leaves the recipe repository".to_owned(),
+                    |path| format!("the path `{path}` leaves the recipe repository"),
+                ),
             )
             .with_help(format!(
                 "a recipe reads files only from {RECIPES}/<name>/ and {COMMON}/ of its repository"
@@ -306,6 +309,13 @@ fn own_codes(report: &Report) -> Report {
         _ => item.clone(),
     }
     }))
+}
+
+/// The first text between backticks in `message`, which is how Stav
+/// names the path it reports.
+fn quoted(message: &str) -> Option<&str> {
+    let (_, rest) = message.split_once('`')?;
+    rest.split_once('`').map(|(path, _)| path)
 }
 
 /// A recipe evaluated for one variant, with what decides the others.

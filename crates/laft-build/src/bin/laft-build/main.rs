@@ -75,7 +75,7 @@ impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Usage(m) | Self::Environment(m) => f.write_str(m),
-            Self::Build(e) if e.is_environment() => write!(
+            Self::Build(e) if e.refuses_namespaces() => write!(
                 f,
                 "{e}\nbuilds need unprivileged user namespaces: enable them with \
                  `sysctl kernel.unprivileged_userns_clone=1`, or lift the restriction \
@@ -247,9 +247,9 @@ fn builder<'a>(cx: &'a Context, mode: Mode, options: Option<&BuildOptions>) -> B
     if let Some(options) = options {
         builder.check = !options.no_check;
         if let Some(jobs) = options.jobs {
-            builder.jobs = jobs.max(1);
+            builder.jobs = jobs;
         }
-        builder.timeout = Duration::from_secs(options.timeout_hours.max(1) * 3600);
+        builder.timeout = Duration::from_secs(options.timeout_hours * 3600);
         builder.mirrors = options.mirrors.clone();
     }
     builder
@@ -422,11 +422,24 @@ fn build(
             && let Some(recipe) = graph.recipe(item)
         {
             eprintln!("laft-build: {error}");
-            eprintln!("opening a shell in the sandbox of {item}; exit it to continue");
-            let key = builder.key_inputs(recipe)?.build_key();
-            builder
-                .executor(recipe, &key)
-                .interactive(&recipe.environment(builder.jobs))?;
+            let key = builder
+                .key_inputs(recipe)
+                .ok()
+                .map(|inputs| inputs.build_key())
+                .filter(|key| builder.work_dir(key).is_dir());
+            if let Some(key) = key {
+                eprintln!("opening a shell in the sandbox of {item}; exit it to continue");
+                let shell = builder
+                    .executor(recipe, &key)
+                    .interactive(&recipe.environment(builder.jobs));
+                if let Err(shell) = shell {
+                    eprintln!("laft-build: cannot open the shell: {shell}");
+                }
+            } else {
+                eprintln!(
+                    "laft-build: {item} failed before its working tree existed, so no shell opens"
+                );
+            }
         }
         return Err(error.into());
     }
@@ -473,6 +486,9 @@ fn shell(
 
 fn one(mut recipes: Vec<Recipe>, package: &str) -> Result<Recipe, Failure> {
     match recipes.len() {
+        0 => Err(Failure::Usage(format!(
+            "{package} builds nothing on this architecture"
+        ))),
         1 => Ok(recipes.remove(0)),
         _ => Err(Failure::Usage(format!(
             "{package} builds several variants: name one, for example {package}:static"
@@ -491,11 +507,12 @@ fn repro(cx: &Context, package: &str) -> Result<(), Failure> {
             format!("{item} has no successful build to check"),
         ))
     })?;
-    let jobs = fs::read(cx.root.out().join(&previous.buildinfo))
+    let buildinfo = fs::read(cx.root.out().join(&previous.buildinfo))
         .ok()
-        .and_then(|b| Buildinfo::from_json(&b).ok())
-        .map_or(2, |b| b.host.jobs);
+        .and_then(|b| Buildinfo::from_json(&b).ok());
+    let jobs = buildinfo.as_ref().map_or(2, |b| b.host.jobs);
     let mut second = builder(cx, Mode::Store, None);
+    second.pinned_view = buildinfo.map(|b| b.build_view.iter().map(|p| p.id).collect());
     let base = cx.root.path().join("repro");
     second.work = base.join("work");
     second.out = base.join("out");
@@ -602,12 +619,18 @@ fn gc(root: &BuildRoot, sources_older_than: Option<u64>) -> Result<(), Failure> 
     let remove = |path: &Path| -> Result<(), Failure> {
         remove_tree(path).map_err(|e| Failure::Environment(format!("{}: {e}", path.display())))
     };
-    for dir in [root.work(), root.tmp(), root.path().join("repro/work")] {
+    for dir in ["work", "out", "logs"]
+        .iter()
+        .map(|d| root.path().join("repro").join(d))
+        .chain([root.work(), root.tmp()])
+    {
         remove(&dir)?;
     }
     let mut removed = 0;
     if let Some(days) = sources_older_than {
-        let limit = SystemTime::now() - Duration::from_secs(days * 86_400);
+        let limit = SystemTime::now()
+            .checked_sub(Duration::from_secs(days * 86_400))
+            .unwrap_or(SystemTime::UNIX_EPOCH);
         let dir = root.sources().join("sha256");
         for item in fs::read_dir(&dir).into_iter().flatten().flatten() {
             let used = item
@@ -621,7 +644,7 @@ fn gc(root: &BuildRoot, sources_older_than: Option<u64>) -> Result<(), Failure> 
         }
     }
     say(format_args!(
-        "removed working trees{}",
+        "removed working trees and reproducibility check outputs{}",
         if sources_older_than.is_some() {
             format!(" and {removed} sources")
         } else {

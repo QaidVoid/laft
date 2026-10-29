@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -245,6 +246,7 @@ impl Executor {
                     .arg("-c")
                     .arg(rebase(script, &self.build, &self.out))
                     .arg(phase)
+                    .process_group(0)
                     .env_clear()
                     .envs(&rebased)
                     .current_dir(&self.build)
@@ -270,7 +272,11 @@ impl Executor {
     }
 }
 
-/// Waits for `child` until `timeout` has passed, then kills it.
+/// Waits for `child` until `timeout` has passed, then kills it. A direct
+/// phase leads its own process group, which is killed with it, so that
+/// nothing it started keeps writing to the tree. A sandboxed phase is the
+/// first process of its PID namespace, whose other processes the kernel
+/// kills when it dies.
 fn wait(mut child: Child, timeout: Duration, log: &Path) -> Result<ExitStatus, BuildError> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -278,6 +284,14 @@ fn wait(mut child: Child, timeout: Duration, log: &Path) -> Result<ExitStatus, B
             return Ok(status);
         }
         if Instant::now() >= deadline {
+            // A group with the child's pid as its id exists only when the
+            // child leads it, so this never reaches unrelated processes.
+            if let Some(pid) = i32::try_from(child.id())
+                .ok()
+                .and_then(rustix::process::Pid::from_raw)
+            {
+                let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+            }
             let _ = child.kill();
             let _ = child.wait();
             let hours = timeout.as_secs_f64() / 3600.0;
@@ -304,8 +318,8 @@ fn tail(path: &Path) -> String {
 
 /// Rewrites every `/build` and `/out` path in `text` to start with `build`
 /// and `out` instead. A path counts when it starts the text or follows a
-/// space, a quote, `=`, `:` or `,`, and ends there or continues with `/`
-/// or one of those characters.
+/// space, a tab, a newline, a quote, `=`, `:` or `,`, and ends there or
+/// continues with `/` or one of those characters.
 pub(crate) fn rebase(text: &str, build: &Path, out: &Path) -> String {
     let build = build.display().to_string();
     let out = out.display().to_string();

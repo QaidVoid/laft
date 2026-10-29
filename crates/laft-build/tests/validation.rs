@@ -84,7 +84,7 @@ fn path_literals_stay_in_the_recipe_directory_and_common() {
         escaping,
         [(
             "R002".to_owned(),
-            "the path leaves the recipe repository".to_owned()
+            "the path `../../../../etc/passwd` leaves the recipe repository".to_owned()
         )]
     );
     let other = run("../bar/patches/x.patch");
@@ -230,6 +230,8 @@ fn environment_variables_are_named_and_replace_the_builder_s_only_when_forced() 
     assert_eq!(codes("foo", &body("\"1FOO\" = \"x\"")), ["R030"]);
     assert_eq!(codes("foo", &body("PATH = \"/bin\"")), ["R031"]);
     assert_eq!(codes("foo", &body("MAKEFLAGS = \"-j1\"")), ["R031"]);
+    assert_eq!(codes("foo", &body("MAKEFLAGS = force(\"-j1\")")), ["R031"]);
+    assert_eq!(codes("foo", &body("JOBS = force(\"1\")")), ["R031"]);
     assert_eq!(codes("foo", &body("PATH = default(\"/bin\")")), ["R031"]);
 
     let dir = laft_test::tempdir();

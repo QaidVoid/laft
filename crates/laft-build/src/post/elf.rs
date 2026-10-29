@@ -49,7 +49,7 @@ fn leaks(entry: &str) -> bool {
         .any(|p| entry == *p || entry.starts_with(&format!("{p}/")))
 }
 
-/// P6: inspects every ELF file of the payload `out` before it is stripped.
+/// Inspects every ELF file of the payload `out` before it is stripped.
 ///
 /// Search paths are rewritten first: an entry of only `/usr/lib` is
 /// removed and `DT_RPATH` becomes `DT_RUNPATH`. Then a search path into
@@ -114,7 +114,7 @@ pub fn scan_elf(out: &Path, warnings: &mut Vec<Warning>) -> Result<ElfFiles, Bui
     Ok(files)
 }
 
-/// P6, rule 1: makes every shared object directly in `usr/lib/` reachable
+/// Makes every shared object directly in `usr/lib/` reachable
 /// by its soname, because views have no linker cache.
 ///
 /// For a library with `DT_SONAME` `S`, `usr/lib/S` must resolve to it. A
@@ -187,8 +187,8 @@ pub(crate) fn provided(elves: &ElfFiles) -> Provided {
     Provided { usr_lib, private }
 }
 
-/// P6, rule 2: every object that needs a library which the payload has only
-/// outside `usr/lib/` must reach it through a `DT_RUNPATH` entry, which
+/// Checks that every object that needs a library which the payload has only
+/// outside `usr/lib/` reaches it through a `DT_RUNPATH` entry, which
 /// expands `$ORIGIN` to the object's own directory. Otherwise the build
 /// fails with `B113`.
 ///
@@ -230,7 +230,7 @@ pub fn check_private_libraries(elves: &ElfFiles) -> Result<(), BuildError> {
     Ok(())
 }
 
-/// P6, rule 3: warns with `W114` about every needed library that neither
+/// Warns with `W114` about every needed library that neither
 /// the payload nor a package of the build view provides. `view` holds the
 /// sonames the build view provides, and is `None` when they are unknown,
 /// which skips the check.
@@ -258,7 +258,7 @@ pub fn check_needs(elves: &ElfFiles, view: Option<&BTreeSet<Soname>>, warnings: 
     }
 }
 
-/// P8: the ABI digest of every shared object directly in `usr/lib/` that
+/// The ABI digest of every shared object directly in `usr/lib/` that
 /// has a `DT_SONAME`, by payload path.
 pub fn abi_digests(elves: &ElfFiles) -> BTreeMap<String, Abi> {
     elves

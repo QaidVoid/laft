@@ -44,3 +44,17 @@ fn a_payload_without_licenses_is_reported() {
         ["W101"]
     );
 }
+
+#[test]
+fn a_build_path_across_two_reads_is_found() {
+    let dir = laft_test::tempdir();
+    let path = dir.path().join("big");
+    for at in [CHUNK - 3, CHUNK, 3 * CHUNK + 1] {
+        let mut data = vec![b'x'; 4 * CHUNK];
+        data[at..at + BUILD_PATH.len()].copy_from_slice(BUILD_PATH);
+        fs::write(&path, &data).unwrap();
+        assert!(contains(&path, BUILD_PATH).unwrap(), "{at}");
+    }
+    fs::write(&path, vec![b'x'; 2 * CHUNK]).unwrap();
+    assert!(!contains(&path, BUILD_PATH).unwrap());
+}

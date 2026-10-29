@@ -52,7 +52,9 @@ pub struct ReproReport {
 /// `builder` should use another working directory, another output
 /// directory and another number of jobs than the first build, so that the
 /// check exposes builds that depend on them, and should not add its
-/// packages to the store.
+/// packages to the store. Its [`Builder::pinned_view`] should hold the
+/// build view of `previous`, because a dependency rebuilt since then with
+/// the same ABI keeps the build key but changes what the rebuild links.
 ///
 /// # Errors
 ///

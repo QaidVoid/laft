@@ -75,3 +75,32 @@ fn debug_files_live_below_their_build_id() {
     );
     assert_eq!(debug_path(&[0xab]), None);
 }
+
+#[test]
+fn a_file_linked_under_two_names_is_stripped_once() {
+    if tools_missing() {
+        return;
+    }
+    let (dir, _, exec, options) = setup(true);
+    let out = dir.path().join("out");
+    fs::hard_link(out.join("usr/bin/program"), out.join("usr/bin/alias")).unwrap();
+    let elves = crate::post::scan_elf(&out, &mut Vec::new()).unwrap();
+    strip(&out, &elves, &options, &exec).expect("each file is stripped once");
+    let program = fs::read(out.join("usr/bin/program")).unwrap();
+    let debuglinks = program
+        .windows(14)
+        .filter(|w| *w == b".gnu_debuglink")
+        .count();
+    assert_eq!(debuglinks, 1);
+}
+
+#[test]
+fn a_failed_tool_leaves_the_file_mode_alone() {
+    let (dir, elves, _, options) = setup(false);
+    let out = dir.path().join("out");
+    let empty = dir.path().join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    let exec = Executor::direct(&empty, dir.path(), &out, dir.path().join("logs"));
+    strip(&out, &elves, &options, &exec).expect_err("no tools exist");
+    assert_eq!(mode(&out.join("usr/bin/program")), 0o555);
+}

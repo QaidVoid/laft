@@ -129,3 +129,65 @@ fn gc_removes_working_trees() {
     assert!(output.status.success(), "{output:?}");
     assert!(!dir.path().join("work").exists());
 }
+
+#[test]
+fn job_counts_and_timeouts_must_be_usable() {
+    let dir = laft_test::tempdir();
+    for flags in [
+        ["--jobs", "0"],
+        ["--timeout-hours", "0"],
+        ["--timeout-hours", "18446744073709551615"],
+    ] {
+        let mut args = vec!["shell", "zlib:static"];
+        args.extend(flags);
+        let output = laft_build(dir.path(), &args);
+        assert_eq!(output.status.code(), Some(2), "{flags:?}: {output:?}");
+    }
+    let output = laft_build(
+        dir.path(),
+        &["gc", "--sources-older-than", "18446744073709551615"],
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
+fn a_package_without_a_build_for_this_architecture_says_so() {
+    let dir = laft_test::tempdir();
+    let body = format!(
+        "{}  arch = [\"aarch64\"]\n  build custom {{}}",
+        support::SOURCE
+    );
+    let repo = support::write_repo(
+        &dir.path().join("repo"),
+        "core",
+        "",
+        &[("recipes/foo/package.stav", &support::recipe("foo", &body))],
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_laft-build"))
+        .env_remove("LAFT_RECIPES")
+        .arg("--root")
+        .arg(dir.path().join("root"))
+        .arg("--recipes")
+        .arg(&repo)
+        .args(["shell", "foo"])
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("foo builds nothing on this architecture"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn gc_removes_the_outputs_of_reproducibility_checks() {
+    let dir = laft_test::tempdir();
+    for sub in ["repro/work/k", "repro/out", "repro/logs/zlib"] {
+        std::fs::create_dir_all(dir.path().join(sub)).unwrap();
+    }
+    let output = laft_build(dir.path(), &["gc"]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(!dir.path().join("repro/out").exists());
+    assert!(!dir.path().join("repro/logs").exists());
+}

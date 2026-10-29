@@ -10,7 +10,7 @@ use crate::error::{BuildError, Warning, io};
 use crate::fsx::{self, Kind};
 use crate::post::read_elf;
 
-/// P1: fails with `B101` when the payload `out` holds no file or symlink,
+/// Fails with `B101` when the payload `out` holds no file or symlink,
 /// unless the package is `empty`.
 ///
 /// # Errors
@@ -30,7 +30,7 @@ pub fn check_output(out: &Path, empty: bool) -> Result<(), BuildError> {
     }
 }
 
-/// P2: moves everything into the `usr` layout and deletes files no package
+/// Moves everything into the `usr` layout and deletes files no package
 /// ships.
 ///
 /// Top-level `bin`, `sbin`, `lib` and `lib64` move into `usr/`, then
@@ -107,7 +107,7 @@ fn merge(out: &Path, from: &str, to: &str) -> Result<(), BuildError> {
     fs::remove_dir(&source).map_err(io(&source))
 }
 
-/// P3: fails with `B103` for anything outside `usr/` and `etc/` or inside
+/// Fails with `B103` for anything outside `usr/` and `etc/` or inside
 /// `usr/local/`. In a `dynamic` build, static archives directly in
 /// `usr/lib/` are deleted with warning `W110` unless `keep_archives`.
 ///
@@ -162,7 +162,7 @@ pub fn check_paths(
     Ok(())
 }
 
-/// P4: arranges the payload of a `static` build, which installs into the
+/// Arranges the payload of a `static` build, which installs into the
 /// musl sysroot.
 ///
 /// Programs in the sysroot's `usr/bin` move to `usr/bin`, its manual
@@ -211,7 +211,7 @@ pub fn static_layout(out: &Path) -> Result<(), BuildError> {
     Ok(())
 }
 
-/// P4b: deletes every file that a trigger of the trigger table generates,
+/// Deletes every file that a trigger of the trigger table generates,
 /// because every view generates its own, with warning `W113`.
 ///
 /// # Errors

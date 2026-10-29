@@ -10,7 +10,7 @@ use crate::error::{BuildError, io};
 use crate::exec::Executor;
 use crate::fsx;
 
-/// P17: runs the recipe's smoke test `script` in a sandbox whose `/usr` is
+/// Runs the recipe's smoke test `script` in a sandbox whose `/usr` is
 /// `view`, a view that holds only the main package, its runtime dependency
 /// closure, `bash` and `coreutils`. The sandbox's `/build` and `/out` are
 /// new empty directories below `work`, which is removed afterwards.

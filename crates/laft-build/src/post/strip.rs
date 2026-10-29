@@ -24,7 +24,7 @@ pub fn debug_path(id: &[u8]) -> Option<String> {
     (hex.len() > 2).then(|| format!("{DEBUG_DIR}/.build-id/{}/{}.debug", &hex[..2], &hex[2..]))
 }
 
-/// P7: strips the ELF files of the payload `out` when the recipe's `strip`
+/// Strips the ELF files of the payload `out` when the recipe's `strip`
 /// is set, running `objcopy` and `strip` through `exec`.
 ///
 /// With `debug_split`, every executable and shared object with a build id
@@ -71,33 +71,36 @@ pub fn strip(
         };
         let mode = metadata.permissions().mode() & 0o7777;
         fsx::set_mode(&path, mode | 0o200)?;
-        let file = exec.out_path(&rel);
-        let split = options.debug_split && flag != "--strip-debug";
-        if let Some(debug) = elves
-            .get(&rel)
-            .and_then(|e| e.build_id.as_deref())
-            .and_then(debug_path)
-            .filter(|_| split)
-        {
-            let host = out.join(&debug);
-            if let Some(dir) = host.parent() {
-                fs::create_dir_all(dir).map_err(io(dir))?;
+        let stripped = (|| {
+            let file = exec.out_path(&rel);
+            let split = options.debug_split && flag != "--strip-debug";
+            if let Some(debug) = elves
+                .get(&rel)
+                .and_then(|e| e.build_id.as_deref())
+                .and_then(debug_path)
+                .filter(|_| split)
+            {
+                let host = out.join(&debug);
+                if let Some(dir) = host.parent() {
+                    fs::create_dir_all(dir).map_err(io(dir))?;
+                }
+                let target = exec.out_path(&debug);
+                exec.tool(
+                    "strip",
+                    "objcopy",
+                    &["--only-keep-debug".into(), file.clone(), target.clone()],
+                )?;
+                exec.tool(
+                    "strip",
+                    "objcopy",
+                    &[format!("--add-gnu-debuglink={target}"), file.clone()],
+                )?;
+                fsx::set_mode(&host, 0o444)?;
             }
-            let target = exec.out_path(&debug);
-            exec.tool(
-                "strip",
-                "objcopy",
-                &["--only-keep-debug".into(), file.clone(), target.clone()],
-            )?;
-            exec.tool(
-                "strip",
-                "objcopy",
-                &[format!("--add-gnu-debuglink={target}"), file.clone()],
-            )?;
-            fsx::set_mode(&host, 0o444)?;
-        }
-        exec.tool("strip", "strip", &[flag.into(), file])?;
+            exec.tool("strip", "strip", &[flag.into(), file])
+        })();
         fsx::set_mode(&path, mode)?;
+        stripped?;
     }
     Ok(())
 }

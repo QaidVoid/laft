@@ -52,7 +52,7 @@ fn automatic(split: Split) -> &'static [&'static str] {
     }
 }
 
-/// P11: removes empty directories, then assigns every path of the payload
+/// Removes empty directories, then assigns every path of the payload
 /// `out` to exactly one package of `recipe`.
 ///
 /// Empty directories are removed unless `keep_dirs` matches them. Each
@@ -102,12 +102,13 @@ pub fn split(out: &Path, recipe: &Recipe, elves: &ElfFiles) -> Result<Vec<Part>,
             (suffix, globs(&sub.files), globs(&sub.exclude))
         })
         .collect();
-    let auto: Vec<Split> = recipe
+    let auto: Vec<(Split, Vec<Glob>)> = recipe
         .outputs
         .split
         .iter()
         .copied()
         .filter(|s| !recipe.outputs.subpackages.contains_key(s.as_str()))
+        .map(|s| (s, automatic(s).iter().map(|g| Glob::new(g)).collect()))
         .collect();
 
     let mut parts: Vec<Part> = Vec::new();
@@ -131,10 +132,9 @@ pub fn split(out: &Path, recipe: &Recipe, elves: &ElfFiles) -> Result<Vec<Part>,
             Some(suffix.as_str())
         } else {
             let mut found = None;
-            for split in &auto {
-                let globs: Vec<Glob> = automatic(*split).iter().map(|g| Glob::new(g)).collect();
+            for (split, globs) in &auto {
                 let extra = *split == Split::Dev && dev_library(out, rel, *kind, recipe, &sonames)?;
-                if any_matches(&globs, rel) || extra {
+                if any_matches(globs, rel) || extra {
                     found = Some(split.as_str());
                     break;
                 }

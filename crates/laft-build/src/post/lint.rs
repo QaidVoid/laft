@@ -1,6 +1,7 @@
 //! The step that reports suspicious payload contents.
 
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 use crate::error::{BuildError, Warning, io};
@@ -14,7 +15,7 @@ fn under(path: &str, dir: &str) -> bool {
     path == dir || path.starts_with(&format!("{dir}/"))
 }
 
-/// P15: reports what the payload `out` should probably not contain.
+/// Reports what the payload `out` should probably not contain.
 ///
 /// A symlink into `/build` or `/out` is the error `B109`. The warnings are
 /// `W120` for an absolute symlink outside the system directories, `W121`
@@ -51,14 +52,14 @@ pub fn lint(
                     ));
                 }
             }
-            Kind::File if !rel.starts_with(&format!("{DEBUG_DIR}/")) => {
-                let data = fs::read(&path).map_err(io(&path))?;
-                if data.windows(7).any(|w| w == b"/build/") {
-                    warnings.push(Warning::new(
-                        "W121",
-                        format!("{rel} contains /build/, which is probably a leaked build path"),
-                    ));
-                }
+            Kind::File
+                if !rel.starts_with(&format!("{DEBUG_DIR}/"))
+                    && contains(&path, BUILD_PATH).map_err(io(&path))? =>
+            {
+                warnings.push(Warning::new(
+                    "W121",
+                    format!("{rel} contains /build/, which is probably a leaked build path"),
+                ));
             }
             _ => {}
         }
@@ -76,6 +77,36 @@ pub fn lint(
         ));
     }
     Ok(())
+}
+
+/// What a leaked build path starts with.
+const BUILD_PATH: &[u8] = b"/build/";
+
+/// How much of a file [`contains`] reads at once.
+const CHUNK: usize = 64 * 1024;
+
+/// Whether the file `path` contains `needle`, read in chunks so that a
+/// large file never sits in memory whole.
+fn contains(path: &Path, needle: &[u8]) -> std::io::Result<bool> {
+    let mut file = fs::File::open(path)?;
+    let keep = needle.len().saturating_sub(1);
+    let mut buffer = vec![0; keep + CHUNK];
+    let mut filled = 0;
+    loop {
+        let n = match file.read(&mut buffer[filled..]) {
+            Ok(0) => return Ok(false),
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        filled += n;
+        if buffer[..filled].windows(needle.len()).any(|w| w == needle) {
+            return Ok(true);
+        }
+        let tail = filled.saturating_sub(keep);
+        buffer.copy_within(tail..filled, 0);
+        filled -= tail;
+    }
 }
 
 #[cfg(test)]

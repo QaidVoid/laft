@@ -42,7 +42,7 @@ impl Privileges {
     }
 }
 
-/// P5: settles the permissions of the payload `out`.
+/// Settles the permissions of the payload `out`.
 ///
 /// 1. Every path belongs to root, except where the recipe's `ownership`
 ///    names a `user:group` from the static system account registry

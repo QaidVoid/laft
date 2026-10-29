@@ -107,16 +107,32 @@ impl BuildGraph {
     ) -> Result<Self, Vec<Problem>> {
         let mut problems = Vec::new();
         let mut unique = BTreeMap::new();
+        let mut duplicates: BTreeMap<Item, Vec<Name>> = BTreeMap::new();
         for recipe in recipes {
             match unique.entry(Item::of(&recipe)) {
-                Entry::Occupied(taken) => problems.push(Problem::new(
-                    "R022",
-                    format!("the run holds two recipes for {}", taken.key()),
-                )),
+                Entry::Occupied(taken) => {
+                    let first: &Recipe = taken.get();
+                    duplicates
+                        .entry(taken.key().clone())
+                        .or_insert_with(|| first.repos.last().cloned().into_iter().collect())
+                        .extend(recipe.repos.last().cloned());
+                }
                 Entry::Vacant(free) => {
                     free.insert(recipe);
                 }
             }
+        }
+        for (item, mut repos) in duplicates {
+            let count = repos.len();
+            let last = repos.pop().map(|r| r.to_string()).unwrap_or_default();
+            let rest: Vec<&str> = repos.iter().map(Name::as_str).collect();
+            problems.push(Problem::new(
+                "R022",
+                format!(
+                    "the run holds {count} recipes for {item}, from {} and {last}",
+                    rest.join(", ")
+                ),
+            ));
         }
         let recipes = unique;
         let mut mains: BTreeMap<&str, Vec<&Item>> = BTreeMap::new();

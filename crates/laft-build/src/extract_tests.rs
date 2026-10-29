@@ -191,6 +191,33 @@ fn files_that_are_not_extracted_are_copied() {
 }
 
 #[test]
+fn copied_files_are_never_written_through_a_link() {
+    let tree = Tree::new();
+    tree.unpack(
+        &source("one.tar", "", Some(0)),
+        &tar(&[
+            E::Dir("real"),
+            E::Symlink("extra", "real"),
+            E::Symlink("real/foo.patch", "x"),
+        ]),
+    )
+    .expect("stays inside");
+    let error = tree
+        .unpack(&source("foo.patch", "extra", None), b"diff")
+        .expect_err("the destination is a link");
+    assert_eq!(error.code(), "B021");
+    assert_eq!(
+        tree.listing(),
+        ["extra -> real", "real/", "real/foo.patch -> x"]
+    );
+
+    tree.unpack(&source("foo.patch", "real", None), b"diff")
+        .expect("the link at the file name is replaced");
+    assert_eq!(tree.listing(), ["extra -> real", "real/", "real/foo.patch"]);
+    assert!(!tree.dir.path().join("src/real/x").exists());
+}
+
+#[test]
 fn entries_that_leave_the_destination_are_refused() {
     let cases: [(&[E<'_>], &str); 7] = [
         (

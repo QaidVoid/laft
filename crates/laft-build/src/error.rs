@@ -52,6 +52,24 @@ impl BuildError {
     pub fn is_environment(&self) -> bool {
         matches!(self, Self::Sandbox(_))
     }
+
+    /// Whether a sandbox failed the way a kernel or a security policy
+    /// refuses unprivileged user namespaces: with `EPERM`, `EACCES`,
+    /// `ENOSPC` or `ENOSYS`.
+    pub fn refuses_namespaces(&self) -> bool {
+        match self {
+            Self::Sandbox(e) => e.io_error().is_some_and(refused),
+            _ => false,
+        }
+    }
+}
+
+fn refused(error: &io::Error) -> bool {
+    use rustix::io::Errno;
+    matches!(
+        Errno::from_io_error(error),
+        Some(Errno::PERM | Errno::ACCESS | Errno::NOSPC | Errno::NOSYS)
+    )
 }
 
 impl fmt::Display for BuildError {
@@ -143,3 +161,7 @@ impl fmt::Display for Warning {
         write!(f, "warning[{}]: {}", self.code, self.message)
     }
 }
+
+#[cfg(test)]
+#[path = "error_tests.rs"]
+mod tests;

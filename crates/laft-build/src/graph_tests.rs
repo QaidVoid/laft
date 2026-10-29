@@ -136,19 +136,28 @@ fn static_inputs_follow_static_link_dependencies_transitively() {
 }
 
 #[test]
-fn two_recipes_for_one_item_are_reported() {
+fn several_recipes_for_one_item_are_reported_once_with_their_repositories() {
+    let from = |repo: &str| {
+        let mut zlib = recipe("zlib");
+        zlib.repos.push(repo.parse().unwrap());
+        zlib
+    };
     let problems = BuildGraph::new(
         [
             recipe("zlib"),
-            recipe("zlib"),
+            from("extra"),
+            from("local"),
             recipe("zlib:static"),
             recipe("curl"),
         ],
         &everything,
     )
-    .expect_err("zlib comes twice");
+    .expect_err("zlib comes three times");
     assert_eq!(
         problems,
-        [Problem::new("R022", "the run holds two recipes for zlib")]
+        [Problem::new(
+            "R022",
+            "the run holds 3 recipes for zlib, from core, extra and local"
+        )]
     );
 }

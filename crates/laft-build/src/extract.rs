@@ -6,7 +6,6 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read};
 use std::os::fd::OwnedFd;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -70,7 +69,9 @@ impl Format {
 
 /// Places the fetched file `file` of `source` in the source tree `src`.
 ///
-/// A file that is not extracted is copied to `<src>/<dest>/<file>`. An
+/// A file that is not extracted is copied to `<src>/<dest>/<file>`
+/// without passing through a symbolic link, replacing a link at the file
+/// name. An
 /// archive is extracted into `<src>/<dest>`, by these rules:
 ///
 /// 1. Entries with an absolute path or a `..` component are refused.
@@ -122,10 +123,7 @@ pub fn unpack(
         if Path::new(name).components().count() != 1 || !is_plain(Path::new(name)) {
             return Err(not_plain(&target, "file name"));
         }
-        fs::create_dir_all(&dest).map_err(io_error(&dest))?;
-        fs::copy(file, &target).map_err(io_error(&target))?;
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o644))
-            .map_err(io_error(&target))?;
+        copy_beneath(file, src, Path::new(&source.dest), OsStr::new(name))?;
         return Ok(Vec::new());
     }
     let Some(format) = Format::of(name) else {
@@ -147,6 +145,55 @@ pub fn unpack(
     removed?;
     check_links(file, src)?;
     Ok(warnings)
+}
+
+/// Copies `file` to `<src>/<dest>/<name>` with mode `0644`, creating the
+/// missing directories. No directory on the way may be a symbolic link,
+/// and a link at `name` is replaced rather than written through.
+fn copy_beneath(file: &Path, src: &Path, dest: &Path, name: &OsStr) -> Result<(), SourceError> {
+    let target = src.join(dest).join(name);
+    let through_link = || SourceError::Unsafe {
+        archive: file.to_path_buf(),
+        entry: target.display().to_string(),
+        reason: "would be written through a symbolic link".to_owned(),
+    };
+    let mut dir = rustix::fs::open(
+        src,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(errno(src))?;
+    for part in dest {
+        dir = match make_dir(&dir, part) {
+            Ok(fd) => fd,
+            Err(Errno::LOOP | Errno::NOTDIR | Errno::EXIST) => return Err(through_link()),
+            Err(e) => return Err(errno(&target)(e)),
+        };
+    }
+    match rustix::fs::statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(stat) if FileType::from_raw_mode(stat.st_mode) == FileType::Directory => {
+            return Err(SourceError::Unsafe {
+                archive: file.to_path_buf(),
+                entry: target.display().to_string(),
+                reason: "replaces a directory".to_owned(),
+            });
+        }
+        Ok(_) => rustix::fs::unlinkat(&dir, name, AtFlags::empty()).map_err(errno(&target))?,
+        Err(Errno::NOENT) => {}
+        Err(e) => return Err(errno(&target)(e)),
+    }
+    let fd = rustix::fs::openat2(
+        &dir,
+        name,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::from_raw_mode(0o644),
+        beneath(),
+    )
+    .map_err(errno(&target))?;
+    rustix::fs::fchmod(&fd, Mode::from_raw_mode(0o644)).map_err(errno(&target))?;
+    let mut from = fs::File::open(file).map_err(io_error(file))?;
+    io::copy(&mut from, &mut fs::File::from(fd)).map_err(io_error(&target))?;
+    Ok(())
 }
 
 /// Extracts `file` into `staging`, checks its links and moves its tree

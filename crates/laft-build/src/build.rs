@@ -8,7 +8,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use laft_core::{Blake3Hash, Name, PkgRef, Timestamp, Variant};
+use laft_core::{Blake3Hash, Name, PkgRef, StoreId, Timestamp, Variant};
 use laft_pkg::Compression;
 use laft_store::Store;
 
@@ -101,7 +101,9 @@ pub enum Mode {
     Store,
     /// Every phase runs in a sandbox whose `/usr` is this `usr` tree,
     /// prepared by the caller, instead of a view from the store. Nothing
-    /// enters the store, and the buildinfo lists no build view.
+    /// enters the store, and the buildinfo lists no build view. The command
+    /// line never uses it. It serves callers that bring their own tools,
+    /// such as tests that build without a populated store.
     View(PathBuf),
     /// Bootstrap mode: every phase runs directly on the host with the tools
     /// of `<root>/usr/bin`, as [`Executor::direct`] describes. Such a build
@@ -232,6 +234,10 @@ pub struct Builder<'a> {
     /// Whether the packages of a [`Mode::Store`] build enter the store. A
     /// rebuild that only checks reproducibility leaves the store alone.
     pub add_to_store: bool,
+    /// The store ids a [`Mode::Store`] build view is limited to, as
+    /// [`view::assemble`] describes. A reproducibility check pins the view
+    /// of the build it repeats.
+    pub pinned_view: Option<BTreeSet<StoreId>>,
 }
 
 impl<'a> Builder<'a> {
@@ -255,6 +261,7 @@ impl<'a> Builder<'a> {
             timeout: DEFAULT_TIMEOUT,
             compression: Compression::DEVELOPMENT,
             add_to_store: true,
+            pinned_view: None,
         }
     }
 
@@ -293,13 +300,14 @@ impl<'a> Builder<'a> {
         forced: &BTreeSet<Item>,
         use_published: &BTreeSet<Item>,
     ) -> Result<(BuildGraph, Schedule), BuildError> {
-        let names: BTreeSet<(Name, Variant)> = match self.mode {
-            Mode::Store => view::store_entries(&self.store)?
-                .into_iter()
-                .map(|e| (e.meta.name, e.meta.variant))
-                .collect(),
-            _ => BTreeSet::new(),
+        let entries = match self.mode {
+            Mode::Store => view::store_entries(&self.store)?,
+            _ => Vec::new(),
         };
+        let names: BTreeSet<(Name, Variant)> = entries
+            .iter()
+            .map(|e| (e.meta.name.clone(), e.meta.variant))
+            .collect();
         let unresolved = !matches!(self.mode, Mode::Store);
         let published = |r: &PkgRef| unresolved || names.contains(&(r.name().clone(), r.variant()));
         let graph = BuildGraph::new(recipes, &published).map_err(problems)?;
@@ -309,7 +317,10 @@ impl<'a> Builder<'a> {
             let Some(recipe) = graph.recipe(item) else {
                 continue;
             };
-            let inputs = self.key_inputs(recipe)?;
+            let inputs = match self.mode {
+                Mode::Store => view::key_inputs_from(recipe, &entries),
+                _ => self.key_inputs(recipe)?,
+            };
             let latest = db.latest(item)?.map(|s| s.record);
             dirty.insert(
                 item.clone(),
@@ -456,6 +467,7 @@ impl<'a> Builder<'a> {
                 recipe,
                 check,
                 &dir.join("root"),
+                self.pinned_view.as_ref(),
             )?),
             _ => None,
         };
@@ -672,7 +684,7 @@ impl<'a> Builder<'a> {
         let buildinfo_name = buildinfo.file_name();
         fsx::write_atomic(&self.out.join(&buildinfo_name), &buildinfo.to_json(), 0o644)?;
 
-        let outputs: BTreeMap<Name, laft_core::StoreId> = output
+        let outputs: BTreeMap<Name, StoreId> = output
             .packages
             .iter()
             .map(|p| (p.meta.name.clone(), p.manifest.store_id()))
@@ -700,7 +712,7 @@ impl<'a> Builder<'a> {
         })
     }
 
-    /// P17: runs the smoke test of the package `main` in a view of it and
+    /// Runs the smoke test of the package `main` in a view of it and
     /// its runtime closure.
     fn smoke(&self, session: &Session, main: &Package, script: &str) -> Result<(), BuildError> {
         let identity = main.manifest.package();

@@ -24,7 +24,7 @@ laft-sandbox.workspace = true
 laft-store.workspace = true
 lzma-rust2.workspace = true
 mimalloc.workspace = true
-rustix = { workspace = true, features = ["fs", "system"] }
+rustix = { workspace = true, features = ["fs", "process", "system"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true

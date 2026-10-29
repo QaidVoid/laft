@@ -61,10 +61,10 @@
 //! | `R015` | a `dest`, `dir`, `subdir`, file name, license file, or `setuid`, `caps` or alternative path that is not a plain relative path |
 //! | `R016` | an empty package with sources or a style other than `custom`, or a package without sources that is not empty |
 //! | `R017` | the `cargo` or `go` style without the matching `vendor` block |
-//! | `R018` | a source label that is not a plain name of letters, digits, `-`, `_` and `.` |
+//! | `R018` | a source label that is not a plain name of letters, digits, `-`, `_` and `.` that does not start with `.` |
 //! | `R019` | an alternative whose `subpackage` is neither an explicit nor an automatic subpackage of the package |
 //! | `R030` | an `env` key that does not match `[A-Z_][A-Z0-9_]*` |
-//! | `R031` | an `env` key that the builder sets itself, unless it is set with `force(...)` |
+//! | `R031` | an `env` key that the builder sets itself, unless it is set with `force(...)`, and always `JOBS` and `MAKEFLAGS` |
 //! | `R050` | an `update` block without exactly one of `github`, `gitlab`, `anitya` and `url`, or with `pattern` and `url` not set together |
 //!
 //! Between recipes, and while planning, these problems are found:
@@ -73,7 +73,7 @@
 //! |---|---|
 //! | `R020` | a reference to a package of the run in a variant it does not build |
 //! | `R021` | a reference that no recipe of the run and no published package satisfies |
-//! | `R022` | two recipes of the run for the same package and variant |
+//! | `R022` | more than one recipe of the run for the same package and variant, reported once with their repositories |
 //! | `B010` | dirty items that depend on each other in a cycle |
 //!
 //! Fetching and unpacking sources reports [`SourceError`]s:
@@ -90,7 +90,7 @@
 //!
 //! | Code | Problem |
 //! |---|---|
-//! | `B023` | a recipe file that changed since evaluation, or a missing license file |
+//! | `B023` | a recipe file that changed since evaluation or cannot be read, a license file that is missing or outside the source tree, or a build record or reproducibility report that cannot be read or serialized |
 //! | `B030` | a phase that ran longer than the timeout |
 //! | `B031` | a build root with less than 10 GiB free |
 //! | `B040` | a phase or tool that failed |

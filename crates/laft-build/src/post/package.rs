@@ -56,7 +56,7 @@ fn sorted_deps(deps: impl IntoIterator<Item = Dep>) -> Vec<Dep> {
     map.into_values().collect()
 }
 
-/// P14: the metadata and manifest of the package `part` of `recipe`.
+/// The metadata and manifest of the package `part` of `recipe`.
 ///
 /// The metadata is a function of the recipe and the payload alone, so two
 /// builds with the same output describe their packages with the same
@@ -241,7 +241,7 @@ fn entries(payload: Payload<'_>, part: &Part) -> Vec<Entry> {
         .collect()
 }
 
-/// P16: writes every package to the directory `dir`, reading payload files
+/// Writes every package to the directory `dir`, reading payload files
 /// from `out`, and returns the paths of the package files. Each file is
 /// named as the package format specifies and appears whole, with one
 /// rename.
