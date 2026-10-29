@@ -83,4 +83,5 @@ fn invalid_entries_are_reported_together() {
     );
     assert!(matches!(&errors[6], ConfigError::InvalidCaps { caps, .. } if caps == "cap_setuid+x"));
     assert!(matches!(&errors[7], ConfigError::UnknownAccount { name, .. } if name == "stranger"));
+    assert_eq!(errors[7].code(), Some("C0492"));
 }

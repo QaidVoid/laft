@@ -213,7 +213,13 @@ fn invalid_names_fields_and_references_are_all_reported() {
     let codes: Vec<_> = errors.iter().map(ConfigError::code).collect();
     assert_eq!(
         codes,
-        [Some("C0405"), Some("C0405"), Some("C0406"), None, None],
+        [
+            Some("C0405"),
+            Some("C0405"),
+            Some("C0406"),
+            None,
+            Some("C0492")
+        ],
         "{errors:?}"
     );
 }

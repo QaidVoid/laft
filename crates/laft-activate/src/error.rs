@@ -255,14 +255,15 @@ pub enum ConfigError {
     /// A regular user would take a system group with its name as its
     /// primary group. Code `C0415`.
     SystemPrimaryGroup(String),
-    /// No id is free in the range an account allocates from.
+    /// No id is free in the range an account allocates from. Code
+    /// `C0491`.
     IdsExhausted {
         /// `user` or `group`.
         kind: &'static str,
         /// The account.
         name: String,
     },
-    /// A reference names an account that is not declared.
+    /// A reference names an account that is not declared. Code `C0492`.
     UnknownAccount {
         /// `user` or `group`.
         kind: &'static str,
@@ -355,9 +356,9 @@ impl ConfigError {
             Self::PrivilegedPath(_) => "C1301",
             Self::Unprivileged(_) => "C1302",
             Self::InvalidCaps { .. } => "C1303",
-            Self::IdsExhausted { .. } | Self::UnknownAccount { .. } | Self::InvalidValue { .. } => {
-                return None;
-            }
+            Self::IdsExhausted { .. } => "C0491",
+            Self::UnknownAccount { .. } => "C0492",
+            Self::InvalidValue { .. } => return None,
         })
     }
 }

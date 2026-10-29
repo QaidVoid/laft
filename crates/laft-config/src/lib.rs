@@ -35,6 +35,8 @@
 //! | `C0434` | sysctl value not an integer, string or boolean |
 //! | `C0450` | init backend not available in this version |
 //! | `C0490` | a value that cannot be written into the file it belongs to |
+//! | `C0491` | no free id left for an account |
+//! | `C0492` | a reference to an account that is not declared |
 //! | `C0801` | repository URL with an unsupported scheme, or `http://` without `allow_http` |
 //! | `C0802` | repository key that is not a minisign public key |
 //! | `C0803` | repository name that is not a package name |

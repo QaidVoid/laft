@@ -169,7 +169,7 @@ fn running_out_of_ids_points_at_the_account() {
         .map(|i| format!("user s{i} {{ system = true, group = users }}\n"))
         .collect();
     let report = load_body(&format!("users {{\n{users}}}")).expect_err("no ids are left");
-    assert!(codes(&report).iter().all(|&c| c == "C0490"));
+    assert!(codes(&report).iter().all(|&c| c == "C0491"), "{report}");
     for i in 0..report.iter().count() {
         let at = pointed_at(&report, i);
         assert!(at.starts_with("user s"), "{at}");
