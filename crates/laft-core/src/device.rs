@@ -44,8 +44,7 @@ impl DeviceSpec {
         let Self::Path(path) = self else {
             return None;
         };
-        path.strip_prefix("/dev/")
-            .filter(|name| !name.contains('/'))
+        path.strip_prefix("/dev/").filter(|name| is_component(name))
     }
 
     /// The device-mapper name of a path `/dev/mapper/<name>`, which exists
@@ -55,7 +54,7 @@ impl DeviceSpec {
             return None;
         };
         path.strip_prefix("/dev/mapper/")
-            .filter(|name| !name.contains('/'))
+            .filter(|name| is_component(name))
     }
 
     /// Whether the initramfs can find the device: by `UUID=`, by a kernel
@@ -65,6 +64,12 @@ impl DeviceSpec {
             || self.kernel_name().is_some()
             || self.mapper_name().is_some()
     }
+}
+
+/// Whether `name` is one path component that names something: not empty,
+/// not `.` or `..`, and without `/`.
+fn is_component(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains('/')
 }
 
 impl FromStr for DeviceSpec {

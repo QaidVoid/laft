@@ -65,3 +65,19 @@ fn the_initramfs_resolves_uuids_kernel_names_and_mapper_names() {
         assert!(!spec(text).resolved_at_boot(), "{text}");
     }
 }
+
+#[test]
+fn hand_built_paths_without_a_device_name_are_not_resolved() {
+    for path in [
+        "/dev/",
+        "/dev/.",
+        "/dev/..",
+        "/dev/mapper/",
+        "/dev/mapper/..",
+    ] {
+        let spec = DeviceSpec::Path(path.into());
+        assert_eq!(spec.kernel_name(), None, "{path}");
+        assert_eq!(spec.mapper_name(), None, "{path}");
+        assert!(!spec.resolved_at_boot(), "{path}");
+    }
+}
