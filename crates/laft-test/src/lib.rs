@@ -113,23 +113,67 @@ pub fn write_program(path: &Path, content: &[u8]) {
 /// `shopt`, `pushd`, `popd`, `[[`, `]]`, `==` and `pipefail`, in order.
 ///
 /// A word is a run of characters between blanks and the shell operators
-/// `;`, `|`, `&`, `(` and `)`. Quotes are not parsed, so a quoted word
-/// counts too. The scan finds the common extensions that a POSIX shell
-/// parses but cannot run, not every one.
+/// `;`, `|`, `&`, `(` and `)`. Single and double quoted text and comments
+/// separate words and are never words themselves, and a backslash escapes
+/// the next character. The scan finds the common extensions that a POSIX
+/// shell parses but cannot run, not every one.
 ///
 /// ```
 /// assert_eq!(laft_test::bashisms("local x; [ \"$x\" == y ]"), ["local", "=="]);
-/// assert!(laft_test::bashisms("x=1; [ \"$x\" = 1 ]").is_empty());
+/// assert!(laft_test::bashisms("x=1; [ \"$x\" = 1 ] # local").is_empty());
 /// ```
 pub fn bashisms(script: &str) -> Vec<&str> {
     const EXTENSIONS: [&str; 12] = [
         "local", "source", "declare", "typeset", "function", "shopt", "pushd", "popd", "[[", "]]",
         "==", "pipefail",
     ];
-    script
-        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')'))
-        .filter(|word| EXTENSIONS.contains(word))
-        .collect()
+    let bytes = script.as_bytes();
+    let mut found = Vec::new();
+    let mut start = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        let separator = c.is_ascii_whitespace() || matches!(c, b';' | b'|' | b'&' | b'(' | b')');
+        let skip_to = match c {
+            b'\\' => None,
+            b'\'' => Some(
+                script[i + 1..]
+                    .find('\'')
+                    .map_or(bytes.len(), |n| i + 2 + n),
+            ),
+            b'"' => Some(closing_quote(bytes, i + 1)),
+            b'#' if start.is_none() => Some(script[i..].find('\n').map_or(bytes.len(), |n| i + n)),
+            _ => None,
+        };
+        if separator || skip_to.is_some() {
+            if let Some(from) = start.take() {
+                found.push(&script[from..i]);
+            }
+            i = skip_to.unwrap_or(i + 1);
+            continue;
+        }
+        start.get_or_insert(i);
+        i += if c == b'\\' { 2 } else { 1 };
+    }
+    if let Some(from) = start {
+        found.push(&script[from..]);
+    }
+    found.retain(|word| EXTENSIONS.contains(word));
+    found
+}
+
+/// The index after the `"` that closes a double quoted text whose content
+/// starts at `from` in `bytes`, or the length when none does.
+fn closing_quote(bytes: &[u8], from: usize) -> usize {
+    let mut i = from;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'"' => return i + 1,
+            _ => i += 1,
+        }
+    }
+    bytes.len()
 }
 
 /// Adds the owner write bit to `dir` and every directory below it,

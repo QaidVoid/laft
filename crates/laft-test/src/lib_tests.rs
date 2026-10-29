@@ -57,3 +57,11 @@ fn a_written_program_runs_at_once_while_other_threads_spawn() {
         .mode();
     assert_eq!(mode & 0o777, 0o755);
 }
+
+#[test]
+fn words_in_quotes_and_comments_are_no_bashisms() {
+    let script = "echo \"the source tree\"\nprintf '%s\\n' 'declare done' # local build\n\
+                  echo it\\'s == \"a \\\" local\"";
+    assert_eq!(bashisms(script), ["=="]);
+    assert_eq!(bashisms("x=a#local; source ./env"), ["source"]);
+}
