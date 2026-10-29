@@ -367,8 +367,8 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// in a view starts with the packages of the view and their store ids.
 ///
 /// Every step has a key that covers where it runs, on the host together
-/// with the stage's search directories and in a view with its packages,
-/// its script and environment or the
+/// with the stage's search directories and in a view with its packages and
+/// the store entries they resolve to, its script and environment or the
 /// build keys of its packages and whether they are made into packages, and
 /// the key of the step before it, so it covers every earlier step too.
 /// Once a step succeeded, its key is recorded in the root. A step whose
@@ -378,9 +378,9 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// have if it ended with that package, so a failed run continues with the
 /// package that failed. The build key of a package is taken right before
 /// it builds, so that it covers the packages that the step built before
-/// it. A record goes before the script or package it
-/// stands for runs, so work that fails partway never counts as done, even
-/// when a later run brings back the key it had before.
+/// it. A record goes before the script or package it stands for runs, so
+/// work that fails partway never counts as done, even when a later run
+/// brings back the key it had before.
 ///
 /// A build whose recipe has `ci.runner = big` first waits until the host
 /// has [`StageOptions::min_available`] of memory available. Every script
@@ -879,12 +879,11 @@ impl StageRun<'_> {
             ));
         };
         let root = &self.options.root;
-        let key = step_key(
-            step,
-            previous,
-            &self.stage.path,
-            serde_json::json!({ "script": script, "env": env }),
-        )?;
+        let mut work = serde_json::json!({ "script": script, "env": env });
+        if step.place == Place::View {
+            work["resolved"] = self.resolved(step, view)?;
+        }
+        let key = step_key(step, previous, &self.stage.path, work)?;
         let script = &format!("{}{script}", crate::Shell::Sh.header());
         if let Some(state) = self.skipped(step, key)? {
             progress(finished(&step.name, "script", state, Duration::ZERO));
@@ -960,6 +959,18 @@ impl StageRun<'_> {
             started.elapsed(),
         ));
         Ok(key)
+    }
+
+    /// The store ids that the packages `view` of `step` resolve to, or null
+    /// when the store cannot satisfy them, which running the step reports.
+    fn resolved(&self, step: &Step, view: &[PkgRef]) -> Result<serde_json::Value, BuildError> {
+        let origin = format!("view of step {}", step.name);
+        match crate::view::view_packages(&self.builder.store, &self.builder.seeds()?, view, &origin)
+        {
+            Ok(packages) => Ok(packages.iter().map(|p| p.id.to_string()).collect()),
+            Err(e) if e.code() == Some("B050") => Ok(serde_json::Value::Null),
+            Err(e) => Err(e),
+        }
     }
 
     /// Runs `script` for `step` in a sandbox whose `/usr` is a view of the

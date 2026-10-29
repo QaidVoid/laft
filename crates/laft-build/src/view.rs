@@ -189,7 +189,7 @@ pub fn assemble(
     let names = entries.iter().map(|e| e.meta.name.clone()).collect();
     let refs = requests(recipe, check, &names);
     let origin = format!("build view of {}", Item::of(recipe));
-    let chosen = resolve(&entries, &refs, &origin, None, store, tree)?;
+    let chosen = resolve(&entries, &refs, &origin, None, store, Some(tree))?;
     let mut statics = Vec::new();
     if recipe.variant == Variant::Static {
         let by_name: BTreeMap<&Name, &StoreEntry> = chosen
@@ -258,7 +258,7 @@ pub fn assemble_smoke(
             .map(|n| PkgRef::new(n, None, Variant::Dynamic)),
     );
     let origin = format!("smoke test of {}", main.meta.name);
-    resolve(&entries, &refs, &origin, Some(main), store, tree)?;
+    resolve(&entries, &refs, &origin, Some(main), store, Some(tree))?;
     Ok(tree.join("usr"))
 }
 
@@ -279,7 +279,25 @@ pub fn assemble_view(
     tree: &Path,
 ) -> Result<Vec<ViewPackage>, BuildError> {
     let entries = usable(store_entries(store)?, seeds);
-    let chosen = resolve(&entries, refs, origin, None, store, tree)?;
+    let chosen = resolve(&entries, refs, origin, None, store, Some(tree))?;
+    Ok(chosen.iter().map(|e| view_package(e)).collect())
+}
+
+/// The packages that [`assemble_view`] would assemble for `refs`, sorted
+/// by name, without assembling them.
+///
+/// # Errors
+///
+/// Fails with `B050` when the store cannot satisfy `refs`, and when the
+/// store cannot be read.
+pub fn view_packages(
+    store: &Store,
+    seeds: &BTreeSet<StoreId>,
+    refs: &[PkgRef],
+    origin: &str,
+) -> Result<Vec<ViewPackage>, BuildError> {
+    let entries = usable(store_entries(store)?, seeds);
+    let chosen = resolve(&entries, refs, origin, None, store, None)?;
     Ok(chosen.iter().map(|e| view_package(e)).collect())
 }
 
@@ -295,15 +313,15 @@ fn view_package(entry: &StoreEntry) -> ViewPackage {
 }
 
 /// Resolves `refs` against `entries`, preferring the installed `pinned`
-/// package, assembles the result into `tree` and returns the chosen
-/// entries, sorted by name.
+/// package, assembles the result into `tree` when one is given and returns
+/// the chosen entries, sorted by name.
 fn resolve<'e>(
     entries: &'e [StoreEntry],
     refs: &[PkgRef],
     origin: &str,
     pinned: Option<&StoreEntry>,
     store: &Store,
-    tree: &Path,
+    tree: Option<&Path>,
 ) -> Result<Vec<&'e StoreEntry>, BuildError> {
     let mut packages: Vec<IndexEntry> = entries
         .iter()
@@ -364,17 +382,18 @@ fn resolve<'e>(
         .values()
         .map(|s| s.candidate.id)
         .collect();
-    let chosen: Vec<&StoreEntry> = entries.iter().filter(|e| ids.contains(&e.id)).collect();
-    let inputs: Vec<PackageInput> = chosen
-        .iter()
-        .map(|e| PackageInput {
-            dir: e.dir.clone(),
-            reasons: Vec::new(),
-        })
-        .collect();
-    std::fs::create_dir_all(tree).map_err(crate::error::io(tree))?;
-    store.assemble(&inputs, &resolution.alternatives, tree)?;
-    let mut chosen = chosen;
+    let mut chosen: Vec<&StoreEntry> = entries.iter().filter(|e| ids.contains(&e.id)).collect();
+    if let Some(tree) = tree {
+        let inputs: Vec<PackageInput> = chosen
+            .iter()
+            .map(|e| PackageInput {
+                dir: e.dir.clone(),
+                reasons: Vec::new(),
+            })
+            .collect();
+        std::fs::create_dir_all(tree).map_err(crate::error::io(tree))?;
+        store.assemble(&inputs, &resolution.alternatives, tree)?;
+    }
     chosen.sort_by(|a, b| a.meta.name.cmp(&b.meta.name));
     Ok(chosen)
 }

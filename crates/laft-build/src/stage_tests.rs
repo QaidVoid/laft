@@ -1177,3 +1177,37 @@ fn a_package_built_after_its_link_dependency_in_one_step_is_up_to_date_next_time
         "{second:?}"
     );
 }
+
+#[test]
+fn a_view_step_runs_again_when_its_packages_resolve_to_other_entries() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "check", place = view, view = [dash, extra],
+      env = { LD_LIBRARY_PATH = "/usr/lib" }, script = "true" },"#;
+    let stage = host_tools_stage(dir.path(), steps);
+    store_with_host_tools(dir.path());
+    let build = BuildRoot::new(dir.path().join("build"));
+    let seed = crate::test_support::TestPkg::new("extra").add(&build.store(), dir.path());
+    fsx::write_atomic(&build.seeds().join(seed.to_string()), b"", 0o644).unwrap();
+    let result = run_with(dir.path(), &stage, &store_options(dir.path()));
+    if refused(&result) {
+        return;
+    }
+    assert_eq!(result.unwrap(), [("check".to_owned(), StageState::Done)]);
+    let again = run_with(dir.path(), &stage, &store_options(dir.path())).unwrap();
+    assert_eq!(again, [("check".to_owned(), StageState::UpToDate)]);
+
+    let other = dir.path().join("other");
+    fs::create_dir_all(&other).unwrap();
+    let built = crate::test_support::TestPkg {
+        files: &[("usr/share/extra/file", b"built here")],
+        ..crate::test_support::TestPkg::new("extra")
+    }
+    .add(&build.store(), &other);
+    let replaced = run_with(dir.path(), &stage, &store_options(dir.path())).unwrap();
+    assert_eq!(replaced, [("check".to_owned(), StageState::Done)]);
+    let log = fs::read_to_string(dir.path().join("build/logs/stage/demo/01-check.log")).unwrap();
+    assert!(log.contains(&built.to_string()), "{log}");
+}
