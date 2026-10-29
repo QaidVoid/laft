@@ -137,3 +137,38 @@ fn an_overlay_extends_only_repositories_listed_before_it() {
         "recipe repository personal extends core, which is not listed before it"
     );
 }
+
+#[test]
+fn every_contributing_repository_and_the_recipe_restrict_the_architecture() {
+    let dir = laft_test::tempdir();
+    let body = |arch: &str| {
+        support::recipe(
+            "foo",
+            &format!("{}  build custom {{}}\n{arch}", support::SOURCE),
+        )
+    };
+    let cases = std::cell::Cell::new(0);
+    let count = |core_arch: &str, overlay_arch: &str, recipe_arch: &str| {
+        cases.set(cases.get() + 1);
+        let core = support::write_repo(
+            &dir.path().join(format!("case{}/core", cases.get())),
+            "core",
+            core_arch,
+            &[("recipes/foo/package.stav", &body(recipe_arch))],
+        );
+        let overlay = support::write_repo(
+            &dir.path().join(format!("case{}/personal", cases.get())),
+            "personal",
+            &format!("  extends = [\"core\"]\n{overlay_arch}"),
+            &[("recipes/foo/package.stav", "package foo {}\n")],
+        );
+        let repos = Repos::open(&[core, overlay]).expect("the repositories open");
+        support::evaluate(&repos, "foo").len()
+    };
+    let foreign = "  arch = [\"aarch64\"]\n";
+    assert_eq!(count("", "", ""), 1);
+    assert_eq!(count(foreign, "", ""), 0);
+    assert_eq!(count("", foreign, ""), 0);
+    assert_eq!(count("", "", foreign), 0);
+    assert_eq!(count("", "", "  arch = [\"x86_64-v3\"]\n"), 1);
+}

@@ -20,7 +20,9 @@ pub struct RecipeRepo {
     pub name: Name,
     /// The directory, with symbolic links resolved.
     pub path: PathBuf,
-    /// The architectures it builds for.
+    /// The architectures it builds for. A package builds for an
+    /// architecture only when every repository that contributes to it
+    /// lists it.
     pub arch: BTreeSet<String>,
     /// The repositories it overlays, all earlier in the list.
     pub extends: Vec<Name>,
@@ -181,7 +183,7 @@ impl Repos {
         // evaluation stand for all of them.
         let (first, warnings) = self.evaluate_variant(name, &repos, Variant::Dynamic)?;
         let mut recipes = Vec::new();
-        let builds = convert::builds_for_arch(repos[0], first.arch.as_deref());
+        let builds = convert::builds_for_arch(&repos, first.arch.as_deref());
         for variant in first.variants.iter().copied().collect::<BTreeSet<_>>() {
             if !builds {
                 break;

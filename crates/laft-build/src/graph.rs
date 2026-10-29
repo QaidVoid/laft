@@ -1,6 +1,7 @@
 //! The dependencies between the recipes of one build run, and the order
 //! they are built in.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -98,13 +99,26 @@ impl BuildGraph {
     /// Returns every problem found: `R020` for a reference to a package of
     /// the run in a variant it does not build, such as a `static` build
     /// linking a library without a `static` variant, and `R021` for a
-    /// reference that neither a recipe nor a published package satisfies.
+    /// reference that neither a recipe nor a published package satisfies,
+    /// and `R022` for two recipes of one package and variant.
     pub fn new(
         recipes: impl IntoIterator<Item = Recipe>,
         published: &dyn Fn(&PkgRef) -> bool,
     ) -> Result<Self, Vec<Problem>> {
-        let recipes: BTreeMap<Item, Recipe> =
-            recipes.into_iter().map(|r| (Item::of(&r), r)).collect();
+        let mut problems = Vec::new();
+        let mut unique = BTreeMap::new();
+        for recipe in recipes {
+            match unique.entry(Item::of(&recipe)) {
+                Entry::Occupied(taken) => problems.push(Problem::new(
+                    "R022",
+                    format!("the run holds two recipes for {}", taken.key()),
+                )),
+                Entry::Vacant(free) => {
+                    free.insert(recipe);
+                }
+            }
+        }
+        let recipes = unique;
         let mut mains: BTreeMap<&str, Vec<&Item>> = BTreeMap::new();
         let mut subs: BTreeMap<String, Vec<&Item>> = BTreeMap::new();
         for (item, recipe) in &recipes {
@@ -137,7 +151,6 @@ impl BuildGraph {
             }
         };
 
-        let mut problems = Vec::new();
         let mut deps = BTreeMap::new();
         for (item, recipe) in &recipes {
             let mut resolve_all = |refs: &[PkgRef], verb: &str| {

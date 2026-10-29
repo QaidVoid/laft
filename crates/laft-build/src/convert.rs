@@ -78,12 +78,22 @@ pub(crate) fn convert(cx: &mut Cx<'_>, p: schema::Package) -> Option<Recipe> {
             );
         }
     }
-    for group in p.alternatives.keys() {
+    for (group, alternative) in &p.alternatives {
         if group.parse::<Name>().is_err() {
             cx.error(
                 &["alternatives", group],
                 "R003",
                 format!("alternative group `{group}` is not a valid group name"),
+            );
+        }
+        if let Some(suffix) = &alternative.subpackage
+            && !p.subpackages.contains_key(suffix)
+            && !p.split.iter().any(|s| s.as_str() == suffix)
+        {
+            cx.error(
+                &["alternatives", group, "subpackage"],
+                "R019",
+                format!("alternative group `{group}` names subpackage `{name}-{suffix}`, which {name} does not declare"),
             );
         }
     }
@@ -588,8 +598,8 @@ fn file_ref(cx: &mut Cx<'_>, keys: &[&str], path: &Path) -> Option<FileRef> {
     }
 }
 
-/// Whether the package builds for [`ARCH`]. A repository descriptor and
-/// the recipe can both restrict it.
-pub(crate) fn builds_for_arch(repo: &RecipeRepo, arch: Option<&[String]>) -> bool {
-    repo.arch.contains(ARCH) && arch.is_none_or(|a| a.iter().any(|a| a == ARCH))
+/// Whether the package builds for [`ARCH`]. The descriptor of every
+/// contributing repository and the recipe can each restrict it.
+pub(crate) fn builds_for_arch(repos: &[&RecipeRepo], arch: Option<&[String]>) -> bool {
+    repos.iter().all(|r| r.arch.contains(ARCH)) && arch.is_none_or(|a| a.iter().any(|a| a == ARCH))
 }

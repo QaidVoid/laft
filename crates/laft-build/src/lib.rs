@@ -53,6 +53,7 @@
 //! | `R016` | an empty package with sources or a style other than `custom`, or a package without sources that is not empty |
 //! | `R017` | the `cargo` or `go` style without the matching `vendor` block |
 //! | `R018` | a source label that is not a plain name of letters, digits, `-`, `_` and `.` |
+//! | `R019` | an alternative whose `subpackage` is neither an explicit nor an automatic subpackage of the package |
 //! | `R030` | an `env` key that does not match `[A-Z_][A-Z0-9_]*` |
 //! | `R031` | an `env` key that the builder sets itself |
 //! | `R050` | an `update` block without exactly one of `github`, `gitlab`, `anitya` and `url`, or with `pattern` and `url` not set together |
@@ -63,6 +64,7 @@
 //! |---|---|
 //! | `R020` | a reference to a package of the run in a variant it does not build |
 //! | `R021` | a reference that no recipe of the run and no published package satisfies |
+//! | `R022` | two recipes of the run for the same package and variant |
 //! | `B010` | dirty items that depend on each other in a cycle |
 //!
 //! Fetching and unpacking sources reports [`SourceError`]s:

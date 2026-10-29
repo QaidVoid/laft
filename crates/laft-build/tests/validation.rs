@@ -195,6 +195,24 @@ fn styles_and_empty_packages_fit_their_sources() {
             format!("{SOURCE}  build custom {{}}\n  alternative \"C\" {{ paths = [\"x\"] }}"),
             vec!["R003"],
         ),
+        (
+            format!(
+                "{SOURCE}  build custom {{}}\n  alternative cc {{ paths = [\"x\"], subpackage = \"tools\" }}"
+            ),
+            vec!["R019"],
+        ),
+        (
+            format!(
+                "{SOURCE}  build custom {{}}\n  subpackage tools {{ files = [\"x\"] }}\n  alternative cc {{ paths = [\"x\"], subpackage = \"tools\" }}"
+            ),
+            vec![],
+        ),
+        (
+            format!(
+                "{SOURCE}  build custom {{}}\n  alternative cc {{ paths = [\"x\"], subpackage = \"dev\" }}"
+            ),
+            vec![],
+        ),
     ];
     for (body, expected) in cases {
         assert_eq!(codes("foo", &body), expected, "{body}");

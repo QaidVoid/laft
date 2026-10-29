@@ -134,3 +134,21 @@ fn static_inputs_follow_static_link_dependencies_transitively() {
         items(&["a:static", "b:static"])
     );
 }
+
+#[test]
+fn two_recipes_for_one_item_are_reported() {
+    let problems = BuildGraph::new(
+        [
+            recipe("zlib"),
+            recipe("zlib"),
+            recipe("zlib:static"),
+            recipe("curl"),
+        ],
+        &everything,
+    )
+    .expect_err("zlib comes twice");
+    assert_eq!(
+        problems,
+        [Problem::new("R022", "the run holds two recipes for zlib")]
+    );
+}
