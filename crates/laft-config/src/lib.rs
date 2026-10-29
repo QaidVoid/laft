@@ -8,6 +8,8 @@
 //! implicit primary groups and a loader confined to the configuration
 //! directory. [`load`] evaluates the configuration, validates it and
 //! converts it into the plain values the rest of Laft works with.
+//! [`evaluate`] only type checks and evaluates a file with the same prelude,
+//! base part and catalog, for tools that print or inspect the value.
 //!
 //! # Validation
 //!
@@ -79,10 +81,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use laft_activate::{BootConfig, EtcConfig, Security};
-use laft_core::{Name, PkgRef};
+use laft_core::{Blake3Hash, Name, PkgRef};
 use laft_index::PublicKey;
 use laft_resolve::Request;
-use laft_store::GcPolicy;
+use laft_store::{ConfigFile, GcPolicy};
 use laft_svc::ServiceConfig;
 use serde::Deserialize;
 
@@ -128,6 +130,24 @@ pub struct Loaded {
     /// The configuration.
     pub config: SystemConfig,
     /// The warnings of the language and of validation. It holds no errors.
+    pub warnings: Report,
+    /// The evaluated value of `system` as canonical JSON, which a
+    /// generation keeps as `config.json`.
+    pub value: Vec<u8>,
+    /// Every file of the configuration directory that was read, with the
+    /// hash of its content, sorted by path.
+    pub files: Vec<ConfigFile>,
+}
+
+/// A configuration file that was type checked and evaluated, but neither
+/// validated nor converted.
+#[derive(Debug)]
+pub struct Evaluation {
+    /// The checked program, which also describes its schema.
+    pub checked: stav::Checked,
+    /// The evaluated value.
+    pub evaluated: stav::Evaluated,
+    /// The warnings of the language. It holds no errors.
     pub warnings: Report,
 }
 
@@ -252,25 +272,79 @@ pub fn load(
     root_dir: &Path,
     packages: &dyn Fn(&PkgRef) -> Result<(), PkgError>,
 ) -> Result<Loaded, Report> {
+    let Evaluation {
+        checked, evaluated, ..
+    } = evaluate(root_dir, &root_dir.join("system.stav"))?;
+    let cx = convert::Cx::new(&checked, &evaluated);
+    let mut found = checked.warnings().iter().cloned().collect::<Vec<_>>();
+    let config = validate::validate(&cx, packages, &mut found);
+    let report = evaluated.diagnostics(found);
+    let files = checked
+        .inputs()
+        .filter(|(path, _)| path.starts_with(root_dir))
+        .map(|(path, text)| ConfigFile {
+            path: path.to_string_lossy().into_owned(),
+            hash: Blake3Hash::of(text.as_bytes()),
+        })
+        .collect();
+    match config {
+        Some(config) if !report.has_errors() => Ok(Loaded {
+            config,
+            warnings: report,
+            value: system_json(&evaluated),
+            files,
+        }),
+        _ => Err(report),
+    }
+}
+
+/// The canonical JSON of the evaluated `system` value.
+fn system_json(evaluated: &stav::Evaluated) -> Vec<u8> {
+    evaluated
+        .value_at(&stav::AttrPath::new(["system"]))
+        .map_or_else(|_| b"{}".to_vec(), |v| v.to_canonical_json().into_bytes())
+}
+
+/// Type checks and evaluates the file `entry` of the configuration
+/// directory `root_dir`, with the prelude, the base part and the std
+/// catalog, as [`load`] does, but resolves no package and applies none of
+/// the rules of the crate documentation. Files can be imported or included
+/// only from inside `root_dir`.
+///
+/// # Errors
+///
+/// Returns a [`Report`] with every error found, together with the
+/// warnings, when the file does not load, type check or evaluate.
+///
+/// # Examples
+///
+/// ```
+/// let dir = laft_test::tempdir();
+/// std::fs::write(dir.path().join("part.stav"), "system { hostname = \"forge\" }\n")?;
+/// let evaluation = laft_config::evaluate(dir.path(), &dir.path().join("part.stav"))
+///     .expect("the file evaluates");
+/// let hostname: String = evaluation
+///     .evaluated
+///     .get(&stav::AttrPath::new(["system", "hostname"]))
+///     .expect("the hostname is a string");
+/// assert_eq!(hostname, "forge");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn evaluate(root_dir: &Path, entry: &Path) -> Result<Evaluation, Report> {
     let host = host::host(root_dir);
     let root = stav::RootSpec {
         root_struct: "Root".to_owned(),
-        entries: vec![root_dir.join("system.stav")],
+        entries: vec![entry.to_path_buf()],
         import_roots: vec![stav::ImportRoot::new(root_dir)],
     };
     let checked = stav::check(&host, &root)?;
     let evaluated = checked.eval(&stav::Limits::default()).map_err(|errors| {
         checked.diagnostics(errors.iter().chain(checked.warnings().iter()).cloned())
     })?;
-    let cx = convert::Cx::new(&checked, &evaluated);
-    let mut found = checked.warnings().iter().cloned().collect::<Vec<_>>();
-    let config = validate::validate(&cx, packages, &mut found);
-    let report = evaluated.diagnostics(found);
-    match config {
-        Some(config) if !report.has_errors() => Ok(Loaded {
-            config,
-            warnings: report,
-        }),
-        _ => Err(report),
-    }
+    let warnings = checked.warnings().clone();
+    Ok(Evaluation {
+        checked,
+        evaluated,
+        warnings,
+    })
 }
