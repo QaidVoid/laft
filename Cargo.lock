@@ -573,6 +573,7 @@ dependencies = [
  "laft-svc",
  "laft-test",
  "serde",
+ "serde_json",
  "stav",
 ]
 

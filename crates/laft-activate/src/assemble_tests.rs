@@ -4,12 +4,12 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use laft_store::{GenerationInput, Init, PackageInput, Plan, Reason, Transaction, ViewInput};
-use laft_svc::{ServiceConfig, ServiceSet, standard_services};
+use laft_svc::{ServiceConfig, ServiceSet};
 
 use super::*;
 use crate::test_support::{
     Built, Env, Pkg, base_users, mode, module_elf, read_cpio, sandbox_unavailable, shell_package,
-    zstd,
+    standard_services, zstd,
 };
 use crate::{BootConfig, Declared, EtcConfig, File, Fs, Privileged, Security, fault};
 

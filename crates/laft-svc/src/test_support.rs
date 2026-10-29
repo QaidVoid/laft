@@ -2,9 +2,14 @@
 
 use std::collections::BTreeMap;
 
-use crate::{
-    Dir, Limits, LogRotation, Ready, Restart, Service, ServiceConfig, ServiceSet, standard_services,
-};
+use crate::{Dir, Limits, LogRotation, Ready, Restart, Service, ServiceConfig, ServiceSet};
+
+/// The services the base part of the system configuration declares, which
+/// a test of the configuration renders from the base part itself.
+pub(crate) fn standard_services() -> BTreeMap<String, Service> {
+    serde_json::from_str(include_str!("../tests/fixtures/standard-services.json"))
+        .expect("the standard services fixture deserializes")
+}
 
 /// The standard services plus `extra`, with the default gettys.
 pub(crate) fn config(extra: &[(&str, Service)]) -> ServiceConfig {

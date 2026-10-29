@@ -1,0 +1,674 @@
+{
+  "boot-complete": {
+    "description": "Mark the boot as good",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/laft",
+      "boot",
+      "mark-good"
+    ],
+    "down": [],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [],
+    "ready": "immediate",
+    "log": "logged",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "ignore",
+    "early": false,
+    "packages": []
+  },
+  "clock": {
+    "description": "Set the system clock from the hardware clock",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/hwclock",
+      "--hctosys",
+      "--utc"
+    ],
+    "down": [
+      "/usr/bin/hwclock",
+      "--systohc",
+      "--utc"
+    ],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "kernel-fs"
+    ],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "ignore",
+    "early": true,
+    "packages": []
+  },
+  "console": {
+    "description": "Load the console keymap",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/laft",
+      "svc",
+      "builtin",
+      "console",
+      "up"
+    ],
+    "down": [],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "udev-trigger"
+    ],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "rerun",
+    "early": true,
+    "packages": []
+  },
+  "early": {
+    "description": "End of the early boot graph",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/true"
+    ],
+    "down": [],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "clock",
+      "console",
+      "hostname",
+      "kernel-fs",
+      "kmod",
+      "laft-activate",
+      "mount-fs",
+      "random-seed",
+      "swap",
+      "sysctl",
+      "udev-trigger"
+    ],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "ignore",
+    "early": true,
+    "packages": []
+  },
+  "hostname": {
+    "description": "Set the host name",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/laft",
+      "svc",
+      "builtin",
+      "hostname",
+      "up"
+    ],
+    "down": [],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "kernel-fs"
+    ],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "rerun",
+    "early": true,
+    "packages": []
+  },
+  "kernel-fs": {
+    "description": "Mount the kernel's pseudo filesystems",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/laft",
+      "svc",
+      "builtin",
+      "kernel-fs",
+      "up"
+    ],
+    "down": [],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "laft-activate"
+    ],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "ignore",
+    "early": true,
+    "packages": []
+  },
+  "kmod": {
+    "description": "Load the configured kernel modules",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/laft",
+      "svc",
+      "builtin",
+      "kmod",
+      "up"
+    ],
+    "down": [],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "kernel-fs"
+    ],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "rerun",
+    "early": true,
+    "packages": []
+  },
+  "laft-activate": {
+    "description": "Reconcile /etc and accounts with the booted generation",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/laft",
+      "activate",
+      "--boot"
+    ],
+    "down": [],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "ignore",
+    "early": true,
+    "packages": []
+  },
+  "mount-fs": {
+    "description": "Check and mount the configured filesystems",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/laft",
+      "svc",
+      "builtin",
+      "mount-fs",
+      "up"
+    ],
+    "down": [
+      "/usr/bin/laft",
+      "svc",
+      "builtin",
+      "mount-fs",
+      "down"
+    ],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "udev-trigger"
+    ],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "rerun",
+    "early": true,
+    "packages": []
+  },
+  "random-seed": {
+    "description": "Carry the random seed across boots",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/laft",
+      "svc",
+      "builtin",
+      "random-seed",
+      "up"
+    ],
+    "down": [
+      "/usr/bin/laft",
+      "svc",
+      "builtin",
+      "random-seed",
+      "down"
+    ],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "mount-fs"
+    ],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "ignore",
+    "early": true,
+    "packages": []
+  },
+  "swap": {
+    "description": "Enable swap",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/swapon",
+      "-a"
+    ],
+    "down": [
+      "/usr/bin/swapoff",
+      "-a"
+    ],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "mount-fs"
+    ],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "rerun",
+    "early": true,
+    "packages": []
+  },
+  "sysctl": {
+    "description": "Apply kernel parameters",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/sysctl",
+      "-q",
+      "-p",
+      "/etc/sysctl.d/laft.conf"
+    ],
+    "down": [],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "kmod",
+      "mount-fs"
+    ],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "rerun",
+    "early": true,
+    "packages": []
+  },
+  "turnstiled": {
+    "description": "Login session tracker",
+    "kind": "longrun",
+    "enable": true,
+    "exec": [
+      "/usr/bin/turnstiled"
+    ],
+    "up": [],
+    "down": [],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [],
+    "ready": "immediate",
+    "log": "logged",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "restart",
+    "early": false,
+    "packages": []
+  },
+  "udev-trigger": {
+    "description": "Replay kernel device events",
+    "kind": "oneshot",
+    "enable": true,
+    "exec": [],
+    "up": [
+      "/usr/bin/laft",
+      "svc",
+      "builtin",
+      "udev-trigger",
+      "up"
+    ],
+    "down": [],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "kmod"
+    ],
+    "ready": "immediate",
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "ignore",
+    "early": true,
+    "packages": []
+  },
+  "udevd": {
+    "description": "Device manager",
+    "kind": "longrun",
+    "enable": true,
+    "exec": [
+      "/usr/bin/udevd"
+    ],
+    "up": [],
+    "down": [],
+    "user": "root",
+    "group": null,
+    "groups": [],
+    "env": {},
+    "cwd": "/",
+    "umask": 18,
+    "after": [
+      "kernel-fs"
+    ],
+    "ready": {
+      "check": {
+        "cmd": [
+          "/usr/bin/udevadm",
+          "control",
+          "--ping"
+        ],
+        "interval": 1,
+        "timeout": 60
+      }
+    },
+    "log": "console",
+    "rotate": {
+      "size": 1000000,
+      "count": 10
+    },
+    "state_dirs": [],
+    "runtime_dirs": [],
+    "restart": "always",
+    "restart_delay": 1,
+    "stop_signal": "TERM",
+    "stop_timeout": 10,
+    "limits": {
+      "nofile": null,
+      "nproc": null,
+      "core": null,
+      "memlock": null
+    },
+    "on_change": "restart",
+    "early": true,
+    "packages": []
+  }
+}

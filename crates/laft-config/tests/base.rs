@@ -2,14 +2,41 @@
 
 mod support;
 
+use std::collections::BTreeSet;
+
 use laft_config::RundirOwner;
 use laft_core::{system_gid, system_uid};
+use laft_svc::{ACTIVATE, BOOT_COMPLETE, EARLY, ServiceKind, TURNSTILED};
 use support::{codes, config_dir, load, load_body};
 
 #[test]
-fn the_base_part_declares_the_standard_services() {
-    let config = load_body("").expect("an empty system is valid").config;
-    assert_eq!(config.services.services, laft_svc::standard_services());
+fn the_base_part_declares_an_early_graph_that_starts_with_activation() {
+    let loaded = load_body("").expect("an empty system is valid");
+    assert!(loaded.warnings.is_empty(), "{}", loaded.warnings);
+    let services = &loaded.config.services.services;
+    for name in [ACTIVATE, EARLY, BOOT_COMPLETE, TURNSTILED, "udevd"] {
+        assert!(services[name].enable, "{name}");
+    }
+    let oneshots: BTreeSet<&str> = services
+        .iter()
+        .filter(|(n, s)| s.early && s.kind == ServiceKind::Oneshot && *n != EARLY)
+        .map(|(n, _)| n.as_str())
+        .collect();
+    let after: BTreeSet<&str> = services[EARLY].after.iter().map(String::as_str).collect();
+    assert_eq!(after, oneshots, "early waits for every other early oneshot");
+    for (name, service) in services.iter().filter(|(n, s)| s.early && *n != ACTIVATE) {
+        let mut pending: Vec<&str> = service.after.iter().map(String::as_str).collect();
+        let mut seen = BTreeSet::new();
+        while let Some(dep) = pending.pop() {
+            if seen.insert(dep) {
+                pending.extend(services[dep].after.iter().map(String::as_str));
+            }
+        }
+        assert!(
+            seen.contains(ACTIVATE),
+            "{name} does not wait for {ACTIVATE}"
+        );
+    }
 }
 
 #[test]

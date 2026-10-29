@@ -83,9 +83,12 @@ pub struct Assembled {
 ///
 /// use laft_activate::{Assembly, BootConfig, EtcConfig, Host, Security, assemble};
 /// use laft_store::{GenerationInput, Plan, Root, Transaction};
-/// use laft_svc::{ServiceConfig, ServiceSet, standard_services};
+/// use laft_svc::{ServiceConfig, ServiceSet};
 ///
-/// # fn apply(input: &GenerationInput) -> Result<(), Box<dyn std::error::Error>> {
+/// # fn apply(
+/// #     input: &GenerationInput,
+/// #     services: &ServiceConfig,
+/// # ) -> Result<(), Box<dyn std::error::Error>> {
 /// let root = Root::default();
 /// let lock = root.lock("apply")?;
 /// lock.recover()?;
@@ -95,12 +98,11 @@ pub struct Assembled {
 ///     views: BTreeSet::new(),
 /// };
 /// let mut tx = Transaction::begin(&lock, &plan)?;
-/// let services = ServiceConfig { services: standard_services(), ..ServiceConfig::default() };
 /// let boot = BootConfig::default();
 /// let assembled = assemble(&lock, &mut tx, &Assembly {
 ///     generation: input,
 ///     etc: &EtcConfig::default(),
-///     services: &ServiceSet::new(&services).expect("valid services"),
+///     services: &ServiceSet::new(services).expect("valid services"),
 ///     boot: &boot,
 ///     security: &Security::default(),
 ///     host: &Host::detect(&boot),

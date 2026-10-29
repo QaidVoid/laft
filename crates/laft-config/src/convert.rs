@@ -82,6 +82,15 @@ impl<'a> Cx<'a> {
         })
     }
 
+    /// Returns where a contribution outside the prelude and the base part
+    /// wrote the attribute at `path`, if one did.
+    pub(crate) fn own_span(&self, path: &[&str]) -> Option<SourceSpan> {
+        self.evaluated
+            .spans(&AttrPath::new(path.iter().copied()))
+            .into_iter()
+            .find(|s| !self.host_files.contains(&s.file))
+    }
+
     /// Returns where the last element of the list or set at `path` whose
     /// text is `text` was written, or else where the list was.
     pub(crate) fn element_span(&self, path: &[&str], text: &str) -> Option<SourceSpan> {

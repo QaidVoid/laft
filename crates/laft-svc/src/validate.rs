@@ -9,7 +9,7 @@ use laft_core::Name;
 use crate::graph;
 use crate::model::{Dir, Init, Log, OnChange, Ready, Service, ServiceConfig, ServiceKind};
 use crate::spec::{SPEC_VERSION, Spec, SpecDir, SpecLimits, SpecLog, SpecReady};
-use crate::standard::{self, EARLY};
+use crate::standard::{self, ACTIVATE, EARLY};
 
 /// The longest service name, in bytes.
 const MAX_NAME: usize = 48;
@@ -250,29 +250,11 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-/// Something in the declared services that is allowed but probably wrong.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Warning {
-    /// A service that is not a standard one joins the early boot graph.
-    EarlyReserved(String),
-}
-
-impl fmt::Display for Warning {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EarlyReserved(service) => {
-                write!(f, "service {service}: early is reserved for the base part")
-            }
-        }
-    }
-}
-
 /// The enabled services of a generation, validated and resolved into specs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceSet {
     specs: BTreeMap<String, Spec>,
     packages: BTreeSet<Name>,
-    warnings: Vec<Warning>,
 }
 
 impl ServiceSet {
@@ -280,14 +262,17 @@ impl ServiceSet {
     /// including the generated gettys, into its spec.
     ///
     /// `config.services` holds every declared service after all
-    /// contributions are merged, so it includes the
-    /// [standard services](crate::standard_services).
+    /// contributions are merged, so it includes the standard services of
+    /// the base part, which end the early boot graph in [`EARLY`].
     ///
     /// ```
-    /// use laft_svc::{Service, ServiceConfig, ServiceSet, standard_services};
+    /// use laft_svc::{EARLY, Service, ServiceConfig, ServiceSet};
     ///
     /// let mut config = ServiceConfig::default();
-    /// config.services = standard_services();
+    /// config.getty.ttys.clear();
+    /// let mut early = Service::oneshot(&["/usr/bin/true"]);
+    /// early.early = true;
+    /// config.services.insert(EARLY.into(), early);
     /// config.services.insert("web".into(), Service::longrun(&["/usr/bin/web"]));
     /// let set = ServiceSet::new(&config).expect("the services are valid");
     /// assert_eq!(set.specs()["web"].after, ["early"]);
@@ -305,13 +290,11 @@ impl ServiceSet {
     /// Returns every problem found, in a stable order.
     pub fn new(config: &ServiceConfig) -> Result<Self, Vec<ConfigError>> {
         let mut errors = Vec::new();
-        let mut warnings = Vec::new();
         if config.init != Init::Runit {
             errors.push(ConfigError::UnsupportedInit(config.init));
         }
-        let standard = standard::standard_services();
         for name in config.services.keys() {
-            if let Some(reason) = name_problem(name, &standard) {
+            if let Some(reason) = name_problem(name) {
                 errors.push(ConfigError::InvalidName {
                     service: name.clone(),
                     reason,
@@ -338,10 +321,6 @@ impl ServiceSet {
             .collect();
         let mut specs = BTreeMap::new();
         for (&name, &service) in &enabled {
-            let standard_early = standard.get(name).is_some_and(|s| s.early);
-            if service.early && !standard_early {
-                warnings.push(Warning::EarlyReserved(name.to_owned()));
-            }
             check_service(name, service, &mut errors);
             let spec = resolve(name, service);
             check_after(&spec, &declared, &enabled, &mut errors);
@@ -362,11 +341,7 @@ impl ServiceSet {
             .values()
             .flat_map(|s| s.packages.iter().cloned())
             .collect();
-        Ok(Self {
-            specs,
-            packages,
-            warnings,
-        })
+        Ok(Self { specs, packages })
     }
 
     /// The spec of every enabled service, by name.
@@ -378,14 +353,9 @@ impl ServiceSet {
     pub fn packages(&self) -> &BTreeSet<Name> {
         &self.packages
     }
-
-    /// What validation found suspicious but allowed.
-    pub fn warnings(&self) -> &[Warning] {
-        &self.warnings
-    }
 }
 
-fn name_problem(name: &str, standard: &BTreeMap<String, Service>) -> Option<String> {
+fn name_problem(name: &str) -> Option<String> {
     let well_formed = name.len() <= MAX_NAME
         && name.starts_with(|c: char| c.is_ascii_lowercase())
         && name
@@ -397,7 +367,7 @@ fn name_problem(name: &str, standard: &BTreeMap<String, Service>) -> Option<Stri
         ))
     } else if name.ends_with("-log") {
         Some("names ending in -log are reserved for loggers".into())
-    } else if name.starts_with("laft-") && !standard.contains_key(name) {
+    } else if name.starts_with("laft-") && name != ACTIVATE {
         Some("names starting with laft- are reserved".into())
     } else {
         None

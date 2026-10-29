@@ -46,6 +46,15 @@ impl Env {
     }
 }
 
+/// The services the base part of the system configuration declares, which
+/// a test of the configuration renders from the base part itself.
+pub(crate) fn standard_services() -> BTreeMap<String, laft_svc::Service> {
+    serde_json::from_str(include_str!(
+        "../../laft-svc/tests/fixtures/standard-services.json"
+    ))
+    .expect("the standard services fixture deserializes")
+}
+
 /// `root`, `wheel`, `shadow`, `audio`, `users`, `sshd`, `nobody` and
 /// `nogroup`, as the base part declares them.
 pub(crate) fn base_users() -> Users {

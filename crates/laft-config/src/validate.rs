@@ -2,7 +2,7 @@
 
 use laft_activate::{BootConfig, ConfigError as EtcError, EtcConfig, Setting, check_config};
 use laft_core::{DeviceSpec, PkgRef, system_gid, system_uid};
-use laft_svc::{ConfigError as ServiceError, ServiceConfig, ServiceSet, Warning};
+use laft_svc::{ConfigError as ServiceError, ServiceConfig, ServiceSet};
 use stav::{Diagnostic, FileDiagnostic, SourceSpan, Value};
 
 use crate::convert::{self, Cx, entries, error_at, helped};
@@ -224,116 +224,113 @@ fn etc_error(cx: &Cx<'_>, error: &EtcError) -> Option<FileDiagnostic> {
 
 /// Checks the services with the rules of [`ServiceSet::new`].
 fn check_services(cx: &Cx<'_>, services: &ServiceConfig, found: &mut Vec<FileDiagnostic>) {
-    let set = match ServiceSet::new(services) {
-        Ok(set) => set,
-        Err(errors) => {
-            for error in &errors {
-                let message = error.to_string();
-                let d = match error {
-                    ServiceError::UnsupportedInit(_) => continue,
-                    ServiceError::InvalidName { service: s, .. } => {
-                        cx.error("C1201", &["system", "services", s], message)
-                    }
-                    ServiceError::InvalidTty { tty, .. } => {
-                        cx.element_error("C1202", &["system", "getty", "ttys"], tty, message)
-                    }
-                    ServiceError::MissingCommand { service: s, .. }
-                    | ServiceError::WrongKind { service: s, .. }
-                    | ServiceError::InvalidDirPath { service: s, .. } => {
-                        cx.error("C1203", &["system", "services", s], message)
-                    }
-                    ServiceError::UnexpectedCommand {
-                        service: s,
-                        field: f,
-                        ..
-                    } => cx.error("C1203", &["system", "services", s, f], message),
-                    ServiceError::OutOfRange {
-                        service: s,
-                        field: f,
-                        ..
-                    } => {
-                        let top = f.split_once('.').map_or(*f, |(top, _)| top);
-                        cx.error("C1203", &["system", "services", s, top], message)
-                    }
-                    ServiceError::RelativeCommand {
-                        service: s,
-                        field: f,
-                        program,
-                    } => cx.element_error("C1204", &["system", "services", s, f], program, message),
-                    ServiceError::RelativePath {
-                        service: s,
-                        field: f,
-                        ..
-                    } => cx.error("C1204", &["system", "services", s, f], message),
-                    ServiceError::UnknownDependency {
-                        service: s,
+    if let Err(errors) = ServiceSet::new(services) {
+        for error in &errors {
+            let message = error.to_string();
+            let d = match error {
+                ServiceError::UnsupportedInit(_) => continue,
+                ServiceError::InvalidName { service: s, .. } => {
+                    cx.error("C1201", &["system", "services", s], message)
+                }
+                ServiceError::InvalidTty { tty, .. } => {
+                    cx.element_error("C1202", &["system", "getty", "ttys"], tty, message)
+                }
+                ServiceError::MissingCommand { service: s, .. }
+                | ServiceError::WrongKind { service: s, .. }
+                | ServiceError::InvalidDirPath { service: s, .. } => {
+                    cx.error("C1203", &["system", "services", s], message)
+                }
+                ServiceError::UnexpectedCommand {
+                    service: s,
+                    field: f,
+                    ..
+                } => cx.error("C1203", &["system", "services", s, f], message),
+                ServiceError::OutOfRange {
+                    service: s,
+                    field: f,
+                    ..
+                } => {
+                    let top = f.split_once('.').map_or(*f, |(top, _)| top);
+                    cx.error("C1203", &["system", "services", s, top], message)
+                }
+                ServiceError::RelativeCommand {
+                    service: s,
+                    field: f,
+                    program,
+                } => cx.element_error("C1204", &["system", "services", s, f], program, message),
+                ServiceError::RelativePath {
+                    service: s,
+                    field: f,
+                    ..
+                } => cx.error("C1204", &["system", "services", s, f], message),
+                ServiceError::UnknownDependency {
+                    service: s,
+                    dep,
+                    suggestion,
+                } => {
+                    let mut d = cx.element_error(
+                        "C1205",
+                        &["system", "services", s, "after"],
                         dep,
-                        suggestion,
-                    } => {
-                        let mut d = cx.element_error(
-                            "C1205",
-                            &["system", "services", s, "after"],
-                            dep,
-                            message,
-                        );
-                        d.diagnostic.help =
-                            suggestion.as_ref().map(|s| format!("did you mean `{s}`?"));
-                        d
+                        message,
+                    );
+                    d.diagnostic.help = suggestion.as_ref().map(|s| format!("did you mean `{s}`?"));
+                    d
+                }
+                ServiceError::DisabledDependency { service: s, dep }
+                | ServiceError::EarlyDependency { service: s, dep } => {
+                    cx.element_error("C1205", &["system", "services", s, "after"], dep, message)
+                }
+                ServiceError::Cycle(cycle) => {
+                    let message =
+                        format!("dependency cycle between services: {}", cycle.join(" -> "));
+                    let after = |i: usize| {
+                        let name = cycle.get(i).map_or("", String::as_str);
+                        let next = cycle.get(i + 1).map_or("", String::as_str);
+                        cx.element_span(&["system", "services", name, "after"], next)
+                    };
+                    let mut d = error_at("C1206", after(0), message);
+                    for (i, name) in cycle
+                        .iter()
+                        .enumerate()
+                        .skip(1)
+                        .take(cycle.len().saturating_sub(2))
+                    {
+                        d = labeled_at(d, after(i), &format!("`{name}` continues the cycle"));
                     }
-                    ServiceError::DisabledDependency { service: s, dep }
-                    | ServiceError::EarlyDependency { service: s, dep } => {
-                        cx.element_error("C1205", &["system", "services", s, "after"], dep, message)
-                    }
-                    ServiceError::Cycle(cycle) => {
-                        let message =
-                            format!("dependency cycle between services: {}", cycle.join(" -> "));
-                        let after = |i: usize| {
-                            let name = cycle.get(i).map_or("", String::as_str);
-                            let next = cycle.get(i + 1).map_or("", String::as_str);
-                            cx.element_span(&["system", "services", name, "after"], next)
-                        };
-                        let mut d = error_at("C1206", after(0), message);
-                        for (i, name) in cycle
-                            .iter()
-                            .enumerate()
-                            .skip(1)
-                            .take(cycle.len().saturating_sub(2))
-                        {
-                            d = labeled_at(d, after(i), &format!("`{name}` continues the cycle"));
-                        }
-                        d
-                    }
-                    ServiceError::InvalidEnv {
-                        service: s, key, ..
-                    } => cx.error("C1207", &["system", "services", s, "env", key], message),
-                    ServiceError::SharedDir { first, second, .. } => {
-                        let d = cx.error("C1208", &["system", "services", second], message);
-                        labeled(
-                            cx,
-                            d,
-                            &["system", "services", first],
-                            "the other service is declared here",
-                        )
-                    }
-                };
-                found.push(d);
-            }
-            return;
+                    d
+                }
+                ServiceError::InvalidEnv {
+                    service: s, key, ..
+                } => cx.error("C1207", &["system", "services", s, "env", key], message),
+                ServiceError::SharedDir { first, second, .. } => {
+                    let d = cx.error("C1208", &["system", "services", second], message);
+                    labeled(
+                        cx,
+                        d,
+                        &["system", "services", first],
+                        "the other service is declared here",
+                    )
+                }
+            };
+            found.push(d);
         }
-    };
-    for warning in set.warnings() {
-        let Warning::EarlyReserved(s) = warning;
-        let d = cx.error(
-            "C1210",
-            &["system", "services", s, "early"],
-            warning.to_string(),
-        );
+        return;
+    }
+    for (name, service) in &services.services {
+        let path = ["system", "services", name, "early"];
+        let Some(span) = cx
+            .own_span(&path)
+            .filter(|_| service.enable && service.early)
+        else {
+            continue;
+        };
         found.push(FileDiagnostic {
-            file: d.file,
+            file: Some(span.file),
             diagnostic: Diagnostic::warning(
-                d.diagnostic.code,
-                d.diagnostic.span,
-                d.diagnostic.message,
+                "C1210",
+                span.span,
+                format!("service {name}: early is reserved for the base part"),
             ),
         });
     }

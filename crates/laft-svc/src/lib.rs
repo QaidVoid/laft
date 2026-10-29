@@ -35,6 +35,5 @@ pub use model::{
 pub use spec::{SPEC_VERSION, Spec, SpecDir, SpecLimits, SpecLog, SpecReady};
 pub use standard::{
     ACTIVATE, BOOT_COMPLETE, EARLY, GETTY_PREFIX, TURNSTILED, getty_name, getty_services,
-    standard_services,
 };
-pub use validate::{ConfigError, ServiceSet, Warning};
+pub use validate::{ConfigError, ServiceSet};

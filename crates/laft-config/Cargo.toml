@@ -23,3 +23,4 @@ stav.workspace = true
 [dev-dependencies]
 insta.workspace = true
 laft-test.workspace = true
+serde_json.workspace = true

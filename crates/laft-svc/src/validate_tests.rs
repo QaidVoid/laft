@@ -1,5 +1,5 @@
 use crate::test_support::{config, dbus, errors, example, myapp, valid};
-use crate::{Dir, Getty, Init, OnChange, Ready, Service, ServiceKind, SpecLog, SpecReady, Warning};
+use crate::{Dir, Getty, Init, OnChange, Ready, Service, ServiceKind, SpecLog, SpecReady};
 
 #[test]
 fn normal_services_depend_on_early_implicitly() {
@@ -186,19 +186,6 @@ fn early_services_cannot_wait_for_normal_ones() {
             "dependency cycle between services\n  \
              console -> udev-trigger -> kmod -> dbus -> early -> console",
         ]
-    );
-}
-
-#[test]
-fn early_outside_the_standard_services_is_a_warning() {
-    let mut job = Service::oneshot(&["/usr/bin/job"]);
-    job.early = true;
-    job.after = vec!["kernel-fs".into()];
-    let set = valid(&config(&[("job", job)]));
-    assert_eq!(set.warnings(), [Warning::EarlyReserved("job".into())]);
-    assert_eq!(
-        set.warnings()[0].to_string(),
-        "service job: early is reserved for the base part"
     );
 }
 

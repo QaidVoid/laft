@@ -84,9 +84,13 @@ pub struct Plan {
 /// [`Plan::reboot`] instead.
 ///
 /// ```
-/// use laft_svc::{ServiceConfig, ServiceSet, reconcile, runit, standard_services};
+/// use laft_svc::{EARLY, Service, ServiceConfig, ServiceSet, TURNSTILED, reconcile, runit};
 ///
-/// let config = ServiceConfig { services: standard_services(), ..ServiceConfig::default() };
+/// let mut config = ServiceConfig::default();
+/// let mut early = Service::oneshot(&["/usr/bin/true"]);
+/// early.early = true;
+/// config.services.insert(EARLY.into(), early);
+/// config.services.insert(TURNSTILED.into(), Service::longrun(&["/usr/bin/turnstiled"]));
 /// let set = ServiceSet::new(&config).expect("the services are valid");
 /// let units = runit::render(&set, 1)?.units().clone();
 /// let plan = reconcile::plan(&units, &units);
