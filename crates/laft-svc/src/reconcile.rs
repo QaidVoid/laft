@@ -1,12 +1,26 @@
-//! Planning how running services follow a switch to a new generation.
+//! Planning how running services follow a switch to a new generation, and
+//! applying the plan to runit.
 //!
-//! The plan is pure data. Executing it against the supervisor is a separate
-//! step.
+//! [`plan`] is pure data. [`apply`] executes it against the runit
+//! supervisor of a running system.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io;
+use std::os::unix::fs::{PermissionsExt, symlink};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::runit::Unit;
-use crate::{OnChange, ServiceKind, graph};
+use crate::{Launcher, OnChange, ServiceKind, graph};
+
+/// How long a new service directory may take until its supervisor
+/// accepts commands. runsvdir scans its directory every five seconds.
+const SUPERVISOR_WAIT: Duration = Duration::from_secs(7);
+
+/// How often the ready markers and the supervisor are looked at.
+const POLL: Duration = Duration::from_millis(100);
 
 /// How a service differs between the old and the new generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +176,143 @@ pub fn plan(old: &BTreeMap<String, Unit>, new: &BTreeMap<String, Unit>) -> Plan 
         }
     }
     plan
+}
+
+/// What applying a plan to runit did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Applied {
+    /// Services that did not become ready before their timeout.
+    pub not_ready: Vec<String>,
+    /// Steps that failed, as the service and why.
+    pub failed: Vec<(String, String)>,
+}
+
+/// Applies `plan` to the runit supervisor of the system below `root`,
+/// once the system has switched to the generation whose rendered services
+/// are in `services_dir`.
+///
+/// Services are stopped with `sv stop` in plan order, their service
+/// directories leave the scan directory `run/runit/service`, the new ones
+/// are copied in from `services_dir/runit/sv`, and the services to start
+/// are brought up with `sv up` in dependency order. A changed early
+/// oneshot is rerun through the launcher. Then every started service gets
+/// until its timeout to create its ready marker in `run/runit/ready`.
+/// `sv` is `usr/bin/sv` below `root`.
+///
+/// A step that fails is recorded and the others still run, so a failure
+/// never leaves the remaining services in the old state.
+pub fn apply(plan: &Plan, root: &Path, services_dir: &Path) -> Applied {
+    let scan = root.join("run/runit/service");
+    let sv = root.join("usr/bin/sv");
+    let mut applied = Applied::default();
+    let mut fail = |name: &str, why: String| applied.failed.push((name.to_owned(), why));
+    for name in &plan.stop {
+        let dir = scan.join(name);
+        if dir.exists()
+            && let Err(why) = run_sv(&sv, "stop", &dir)
+        {
+            fail(name, why);
+        }
+    }
+    for name in &plan.remove {
+        let dir = scan.join(name);
+        match fs::remove_dir_all(&dir) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                fail(name, format!("removing {}: {e}", dir.display()));
+            }
+            _ => {}
+        }
+    }
+    for name in &plan.add {
+        let from = services_dir.join("runit/sv").join(name);
+        if let Err(e) = copy_tree(&from, &scan.join(name)) {
+            fail(name, format!("adding {}: {e}", from.display()));
+        }
+    }
+    let launcher = Launcher::new(root);
+    let mut started = BTreeSet::new();
+    for step in &plan.start {
+        let result = match step {
+            Start::Start(name) => {
+                let dir = scan.join(name);
+                let deadline = Instant::now() + SUPERVISOR_WAIT;
+                loop {
+                    match run_sv(&sv, "up", &dir) {
+                        Ok(()) => break Ok(()),
+                        Err(_) if Instant::now() < deadline => std::thread::sleep(POLL),
+                        Err(why) => break Err(why),
+                    }
+                }
+            }
+            Start::Rerun(name) => launcher
+                .down(name)
+                .and_then(|_| launcher.up(name))
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+        };
+        match result {
+            Ok(()) => {
+                started.insert(step.name().to_owned());
+            }
+            Err(why) => fail(step.name(), why),
+        }
+    }
+    let ready = root.join("run/runit/ready");
+    let since = Instant::now();
+    for (name, timeout) in &plan.wait {
+        if !started.contains(name) {
+            continue;
+        }
+        let marker = ready.join(name);
+        while !marker.exists() && since.elapsed() < Duration::from_millis(*timeout) {
+            std::thread::sleep(POLL);
+        }
+        if !marker.exists() {
+            applied.not_ready.push(name.clone());
+        }
+    }
+    applied
+}
+
+/// Runs `sv <command> <dir>` and returns its complaint when it fails.
+fn run_sv(sv: &Path, command: &str, dir: &Path) -> Result<(), String> {
+    let output = Command::new(sv)
+        .arg(command)
+        .arg(dir)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("{}: {e}", sv.display()))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let text = text.trim();
+        Err(format!("sv {command} failed: {text}"))
+    }
+}
+
+/// Copies the directory tree `from` to `to`, keeping modes and symlinks.
+fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
+    fs::create_dir_all(to)?;
+    for item in fs::read_dir(from)? {
+        let item = item?;
+        let (source, target) = (item.path(), to.join(item.file_name()));
+        let meta = fs::symlink_metadata(&source)?;
+        if meta.file_type().is_symlink() {
+            symlink(fs::read_link(&source)?, &target)?;
+        } else if meta.is_dir() {
+            copy_tree(&source, &target)?;
+        } else {
+            fs::copy(&source, &target)?;
+        }
+        if !meta.file_type().is_symlink() {
+            fs::set_permissions(
+                &target,
+                fs::Permissions::from_mode(meta.permissions().mode()),
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// The services in dependency order, ties broken by name. A cycle, which

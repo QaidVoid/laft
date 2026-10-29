@@ -160,3 +160,72 @@ fn a_removed_early_oneshot_waits_for_a_reboot() {
     assert!(plan.stop.is_empty() && plan.start.is_empty());
     assert_eq!(plan.reboot, ["swap"]);
 }
+
+/// A root with a fake `sv` that logs its calls and marks services it
+/// brings up as ready, and the rendered services of `config`.
+fn runit_root(config: &ServiceConfig) -> Option<laft_test::TempDir> {
+    use std::os::unix::fs::PermissionsExt;
+    if !std::path::Path::new("/bin/sh").exists() {
+        return None;
+    }
+    let dir = laft_test::tempdir();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("usr/bin")).expect("writable");
+    std::fs::create_dir_all(root.join("run/runit/service")).expect("writable");
+    let script = format!(
+        "#!/bin/sh\necho \"$1 ${{2##*/}}\" >> {root}/sv.log\n\
+         if [ \"$1\" = up ]; then mkdir -p {root}/run/runit/ready && touch {root}/run/runit/ready/${{2##*/}}; fi\n",
+        root = root.display()
+    );
+    std::fs::write(root.join("usr/bin/sv"), script).expect("writable");
+    std::fs::set_permissions(
+        root.join("usr/bin/sv"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .expect("chmod");
+    render(&valid(config), 2)
+        .expect("renders")
+        .write(&root.join("gen"))
+        .expect("writes");
+    Some(dir)
+}
+
+#[test]
+fn applying_a_plan_stops_redefines_starts_and_waits() {
+    let mut app = myapp();
+    app.log = Log::Console;
+    let new = config(&[("dbus", dbus()), ("myapp", app)]);
+    let Some(dir) = runit_root(&new) else {
+        println!("skipping: the host has no /bin/sh for the fake sv");
+        return;
+    };
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("run/runit/service/myapp/old")).expect("writable");
+    let plan = reconcile(&example(), &new);
+    let applied = super::apply(&plan, root, &root.join("gen/services"));
+    assert_eq!(applied, super::Applied::default());
+    let log = std::fs::read_to_string(root.join("sv.log")).expect("sv ran");
+    assert_eq!(log, "stop myapp\nup myapp\n");
+    let service = root.join("run/runit/service/myapp");
+    assert!(
+        service.join("run").exists(),
+        "the new directory is in place"
+    );
+    assert!(!service.join("old").exists(), "the old directory is gone");
+}
+
+#[test]
+fn a_service_that_never_becomes_ready_is_reported() {
+    let new = config(&[("dbus", dbus()), ("myapp", myapp())]);
+    let Some(dir) = runit_root(&new) else {
+        println!("skipping: the host has no /bin/sh for the fake sv");
+        return;
+    };
+    let root = dir.path();
+    std::fs::write(root.join("usr/bin/sv"), "#!/bin/sh\nexit 0\n").expect("writable");
+    let mut plan = reconcile(&example(), &new);
+    plan.start = vec![Start::Start("myapp".into())];
+    plan.wait = vec![("myapp".into(), 200)];
+    let applied = super::apply(&plan, root, &root.join("gen/services"));
+    assert_eq!(applied.not_ready, ["myapp"]);
+}
