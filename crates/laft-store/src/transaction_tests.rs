@@ -200,3 +200,45 @@ fn activation_states_recover_as_recorded() {
     );
     assert_consistent(&env.root);
 }
+
+#[test]
+fn an_existing_generation_becomes_the_default() {
+    let env = Env::new();
+    let base = Pkg::new("base", "1")
+        .file("usr/lib/libbase.so.1", b"base")
+        .build(&env);
+    assert_eq!(commit(&env, &[&base]), 1);
+    assert_eq!(commit(&env, &[&base]), 2);
+    let lock = env.lock();
+    lock.set_default(1).expect("generation 1 is complete");
+    assert_eq!(env.root.default_generation().expect("readable"), Some(1));
+}
+
+#[test]
+fn a_missing_generation_never_becomes_the_default() {
+    let env = Env::new();
+    let base = Pkg::new("base", "1")
+        .file("usr/lib/libbase.so.1", b"base")
+        .build(&env);
+    assert_eq!(commit(&env, &[&base]), 1);
+    let lock = env.lock();
+    assert!(lock.set_default(7).is_err());
+    assert_eq!(env.root.default_generation().expect("readable"), Some(1));
+}
+
+#[test]
+fn the_default_does_not_move_while_a_transaction_awaits_recovery() {
+    let env = Env::new();
+    let base = Pkg::new("base", "1")
+        .file("usr/lib/libbase.so.1", b"base")
+        .build(&env);
+    assert_eq!(commit(&env, &[&base]), 1);
+    assert_eq!(commit(&env, &[&base]), 2);
+    let lock = env.lock();
+    fault::fail_at(Some("add.storing"));
+    let result = apply(&lock, &[&base], None);
+    fault::fail_at(None);
+    assert!(result.is_err());
+    assert!(matches!(lock.set_default(1), Err(Error::Pending { .. })));
+    assert_eq!(env.root.default_generation().expect("readable"), Some(2));
+}

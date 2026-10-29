@@ -615,6 +615,28 @@ impl fmt::Display for Recovery {
 }
 
 impl Lock {
+    /// Makes the existing generation `number` the one the machine boots by
+    /// default, pointing `laft/gens/default` at it with one rename. This is
+    /// how a switch to a generation that was built earlier, such as a
+    /// rollback, becomes permanent.
+    ///
+    /// # Errors
+    ///
+    /// Fails with [`Error::Pending`] while an interrupted transaction awaits
+    /// recovery, when the generation has no valid `gen.json`, and when the
+    /// link cannot be replaced. The old default stays then.
+    pub fn set_default(&self, number: u64) -> Result<()> {
+        let root = self.root();
+        if let Some(journal) = Journal::all(root)?.into_iter().next() {
+            return Err(Error::Pending {
+                txid: journal.txid,
+                state: journal.state,
+            });
+        }
+        root.generation(number)?;
+        set_default(root, number, &format!("set-{}", std::process::id()))
+    }
+
     /// Finishes or rolls back every interrupted transaction, according to
     /// the state its journal recorded, and reports what it did.
     ///
