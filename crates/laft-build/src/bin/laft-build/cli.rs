@@ -161,6 +161,15 @@ pub(crate) enum Command {
         #[command(flatten)]
         options: BuildOptions,
     },
+    /// Add package files that another build root made, such as the
+    /// packages of a bootstrap, to the build-side store as seeds. A seed
+    /// serves build views until a build here adds a package of the same
+    /// origin and variant.
+    Seed {
+        /// The package files.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
     /// Remove working trees, staging files and old sources.
     Gc {
         /// Also remove cached sources not used for this many days, at

@@ -119,6 +119,23 @@ pub fn store_entries(store: &Store) -> Result<Vec<StoreEntry>, BuildError> {
     Ok(entries)
 }
 
+/// The packages of `entries`, which [`store_entries`] read, that builds
+/// may use: every package that a build made, and every seed, a package
+/// whose store id `seeds` holds, whose origin and variant no such package
+/// has. A seed stands in for the packages of its origin only until a build
+/// made some.
+pub fn usable(mut entries: Vec<StoreEntry>, seeds: &BTreeSet<StoreId>) -> Vec<StoreEntry> {
+    let built: BTreeSet<(Name, Variant)> = entries
+        .iter()
+        .filter(|e| !seeds.contains(&e.id))
+        .map(|e| (e.meta.origin.clone(), e.meta.variant))
+        .collect();
+    entries.retain(|e| {
+        !seeds.contains(&e.id) || !built.contains(&(e.meta.origin.clone(), e.meta.variant))
+    });
+    entries
+}
+
 /// A build view, assembled by [`assemble`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildView {
@@ -133,12 +150,13 @@ pub struct BuildView {
     pub statics: Vec<StaticDep>,
 }
 
-/// Assembles the build view of `recipe` as `tree/usr` from the packages of
-/// `store`: [`requests`] and their runtime dependency closure, resolved like
-/// any view, with the alternatives the resolution chooses. With `pinned`,
-/// only the packages with those store ids are considered, so that a
-/// rebuild sees the view of an earlier build even after the store gained
-/// newer packages.
+/// Assembles the build view of `recipe` as `tree/usr` from the [`usable`]
+/// packages of `store` with the seeds `seeds`: [`requests`] and their
+/// runtime dependency closure, resolved like any view, with the
+/// alternatives the resolution chooses. With `pinned`, only the packages
+/// with those store ids are considered, seeds or not, so that a rebuild
+/// sees the view of an earlier build even after the store gained newer
+/// packages.
 ///
 /// # Errors
 ///
@@ -147,6 +165,7 @@ pub struct BuildView {
 /// be assembled.
 pub fn assemble(
     store: &Store,
+    seeds: &BTreeSet<StoreId>,
     recipe: &Recipe,
     check: bool,
     tree: &Path,
@@ -164,6 +183,8 @@ pub fn assemble(
                 format!("package {gone} of the earlier build view is no longer in the store"),
             ));
         }
+    } else {
+        entries = usable(entries, seeds);
     }
     let names = entries.iter().map(|e| e.meta.name.clone()).collect();
     let refs = requests(recipe, check, &names);
@@ -222,9 +243,10 @@ pub fn assemble(
     })
 }
 
-/// Assembles the view of a smoke test as `tree/usr`: the package `main`,
-/// which must be in `store`, its runtime dependency closure and
-/// [`SMOKE_BASE`]. Returns the `usr` tree.
+/// Assembles the view of a smoke test as `tree/usr` from the [`usable`]
+/// packages of `store` with the seeds `seeds`: the package `main`, which
+/// must be in `store`, its runtime dependency closure and [`SMOKE_BASE`].
+/// Returns the `usr` tree.
 ///
 /// # Errors
 ///
@@ -232,10 +254,11 @@ pub fn assemble(
 /// cannot be assembled.
 pub fn assemble_smoke(
     store: &Store,
+    seeds: &BTreeSet<StoreId>,
     main: &StoreEntry,
     tree: &Path,
 ) -> Result<PathBuf, BuildError> {
-    let entries = store_entries(store)?;
+    let entries = usable(store_entries(store)?, seeds);
     let mut refs = vec![PkgRef::new(main.meta.name.clone(), None, main.meta.variant)];
     refs.extend(
         SMOKE_BASE
@@ -337,21 +360,29 @@ fn name(text: &str) -> Name {
     text.parse().expect("the literal is a valid name")
 }
 
-/// The build key inputs of `recipe` against the packages of `store`: each
-/// link dependency's newest package of the right variant gives its
-/// `abi_epoch` and sonames, and in a `static` build its store id. A link
-/// dependency the store does not have yet contributes nothing, so its first
-/// build changes the key of its dependents.
+/// The build key inputs of `recipe` against the [`usable`] packages of
+/// `store` with the seeds `seeds`: each link dependency's newest package of
+/// the right variant gives its `abi_epoch` and sonames, and in a `static`
+/// build its store id. A link dependency the store does not have yet
+/// contributes nothing, so its first build changes the key of its
+/// dependents.
 ///
 /// # Errors
 ///
 /// Fails when the store cannot be read.
-pub fn key_inputs(recipe: &Recipe, store: &Store) -> Result<KeyInputs, BuildError> {
-    Ok(key_inputs_from(recipe, &store_entries(store)?))
+pub fn key_inputs(
+    recipe: &Recipe,
+    store: &Store,
+    seeds: &BTreeSet<StoreId>,
+) -> Result<KeyInputs, BuildError> {
+    Ok(key_inputs_from(
+        recipe,
+        &usable(store_entries(store)?, seeds),
+    ))
 }
 
-/// [`key_inputs`] against `entries`, which [`store_entries`] read, so that
-/// planning many recipes reads the store once.
+/// [`key_inputs`] against `entries`, the [`usable`] packages of the store,
+/// so that planning many recipes reads the store once.
 pub fn key_inputs_from(recipe: &Recipe, entries: &[StoreEntry]) -> KeyInputs {
     let mut links = Vec::new();
     let mut statics = Vec::new();

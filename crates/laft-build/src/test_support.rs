@@ -163,6 +163,8 @@ pub(crate) struct TestPkg<'a> {
     pub(crate) files: &'a [(&'a str, &'a [u8])],
     pub(crate) depends: &'a [&'a str],
     pub(crate) provides: &'a [&'a str],
+    /// The package its recipe is named after, `name` when unset.
+    pub(crate) origin: Option<&'a str>,
     /// An alternatives group with the paths it ships and its priority.
     pub(crate) alternative: Option<(&'a str, &'a [&'a str], i64)>,
 }
@@ -176,6 +178,7 @@ impl<'a> TestPkg<'a> {
             files: &[],
             depends: &[],
             provides: &[],
+            origin: None,
             alternative: None,
         }
     }
@@ -187,6 +190,16 @@ impl<'a> TestPkg<'a> {
         store: &laft_store::Store,
         dir: &std::path::Path,
     ) -> laft_core::StoreId {
+        let (file, id) = self.write(dir);
+        store
+            .insert(&file, &id, &dir.join("tmp"))
+            .expect("the package enters the store");
+        id
+    }
+
+    /// Writes the package file into `dir` and returns its path and store
+    /// id.
+    pub(crate) fn write(&self, dir: &std::path::Path) -> (std::path::PathBuf, laft_core::StoreId) {
         use std::os::unix::fs::PermissionsExt;
         let payload = dir.join(format!("payload-{}-{}", self.name, self.variant));
         let default = format!("usr/share/{}/file", self.name);
@@ -207,7 +220,11 @@ impl<'a> TestPkg<'a> {
             rev: 1,
             variant: self.variant,
             arch: laft_pkg::Arch::X86_64V3,
-            origin: self.name.parse().expect("a valid name"),
+            origin: self
+                .origin
+                .unwrap_or(self.name)
+                .parse()
+                .expect("a valid name"),
             summary: "A test package".into(),
             homepage: None,
             license: vec!["MIT".into()],
@@ -264,9 +281,6 @@ impl<'a> TestPkg<'a> {
             laft_pkg::Compression::DEVELOPMENT,
         )
         .expect("the package is written");
-        store
-            .insert(&file, &manifest.store_id(), &dir.join("tmp"))
-            .expect("the package enters the store");
-        manifest.store_id()
+        (file, manifest.store_id())
     }
 }

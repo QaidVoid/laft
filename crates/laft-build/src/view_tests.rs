@@ -1,6 +1,10 @@
 use super::*;
 use crate::test_support::{TestPkg, recipe, refs};
 
+fn none() -> BTreeSet<StoreId> {
+    BTreeSet::new()
+}
+
 fn names(refs: &[PkgRef]) -> Vec<String> {
     refs.iter()
         .map(ToString::to_string)
@@ -65,7 +69,15 @@ fn the_view_holds_the_closure_of_the_requests() {
     TestPkg::new("unrelated").add(&store, dir.path());
     let mut recipe = recipe("app");
     recipe.link_deps = refs(&["zlib"]);
-    let view = assemble(&store, &recipe, false, &dir.path().join("view"), None).unwrap();
+    let view = assemble(
+        &store,
+        &none(),
+        &recipe,
+        false,
+        &dir.path().join("view"),
+        None,
+    )
+    .unwrap();
     assert!(view.usr.join("lib/libz.so.1").is_file());
     assert!(view.usr.join("include/zlib.h").is_file());
     assert!(view.usr.join("share/dash/file").is_file());
@@ -97,7 +109,15 @@ fn a_static_view_records_the_static_libraries_it_links() {
     .add(&store, dir.path());
     let mut recipe = recipe("rg:static");
     recipe.link_deps = refs(&["pcre2:static"]);
-    let view = assemble(&store, &recipe, false, &dir.path().join("view"), None).unwrap();
+    let view = assemble(
+        &store,
+        &none(),
+        &recipe,
+        false,
+        &dir.path().join("view"),
+        None,
+    )
+    .unwrap();
     let statics: Vec<(&str, StoreId)> = view
         .statics
         .iter()
@@ -113,6 +133,7 @@ fn a_view_the_store_cannot_satisfy_fails() {
     TestPkg::new("dash").add(&store, dir.path());
     let error = assemble(
         &store,
+        &none(),
         &recipe("app"),
         false,
         &dir.path().join("view"),
@@ -139,7 +160,7 @@ fn a_smoke_view_holds_the_package_and_its_runtime_closure() {
         .iter()
         .find(|e| e.meta.name.as_str() == "app")
         .unwrap();
-    let usr = assemble_smoke(&store, app, &dir.path().join("smoke")).unwrap();
+    let usr = assemble_smoke(&store, &none(), app, &dir.path().join("smoke")).unwrap();
     for present in ["app", "zlib", "dash", "coreutils"] {
         assert!(usr.join("share").join(present).exists(), "{present}");
     }
@@ -157,7 +178,7 @@ fn key_inputs_take_link_dependencies_from_the_store() {
     .add(&store, dir.path());
     let mut recipe = recipe("app");
     recipe.link_deps = refs(&["zlib", "missing"]);
-    let inputs = key_inputs(&recipe, &store).unwrap();
+    let inputs = key_inputs(&recipe, &store, &none()).unwrap();
     assert_eq!(inputs.links.len(), 1);
     assert_eq!(inputs.links[0].abi_epoch, 2);
     assert_eq!(
@@ -181,7 +202,15 @@ fn the_view_takes_an_alternative_from_its_highest_priority_member() {
     }
     let mut recipe = recipe("app");
     recipe.build_deps = refs(&["clang", "gcc"]);
-    let view = assemble(&store, &recipe, false, &dir.path().join("view"), None).unwrap();
+    let view = assemble(
+        &store,
+        &none(),
+        &recipe,
+        false,
+        &dir.path().join("view"),
+        None,
+    )
+    .unwrap();
     assert_eq!(std::fs::read(view.usr.join("bin/cc")).unwrap(), b"gcc");
 }
 
@@ -209,6 +238,7 @@ fn a_pinned_view_keeps_the_packages_of_an_earlier_build() {
     recipe.link_deps = refs(&["zlib"]);
     let view = assemble(
         &store,
+        &none(),
         &recipe,
         false,
         &dir.path().join("view"),
@@ -226,6 +256,7 @@ fn a_pinned_view_keeps_the_packages_of_an_earlier_build() {
     )));
     let error = assemble(
         &store,
+        &none(),
         &recipe,
         false,
         &dir.path().join("again"),
@@ -233,4 +264,101 @@ fn a_pinned_view_keeps_the_packages_of_an_earlier_build() {
     )
     .unwrap_err();
     assert_eq!(error.code(), Some("B050"));
+}
+
+#[test]
+fn a_seed_serves_views_until_a_build_makes_a_package_of_its_origin() {
+    let dir = laft_test::tempdir();
+    let store = store_with_base(dir.path());
+    let seed = TestPkg {
+        files: &[("usr/lib/libz.so.1", b"seed")],
+        ..TestPkg::new("zlib")
+    }
+    .add(&store, dir.path());
+    let seed_dev = TestPkg {
+        files: &[("usr/include/zlib.h", b"seed")],
+        origin: Some("zlib"),
+        ..TestPkg::new("zlib-dev")
+    }
+    .add(&store, dir.path());
+    let seeds = BTreeSet::from([seed, seed_dev]);
+    let mut recipe = recipe("app");
+    recipe.link_deps = refs(&["zlib"]);
+    let view = assemble(&store, &seeds, &recipe, false, &dir.path().join("a"), None).unwrap();
+    assert_eq!(
+        std::fs::read(view.usr.join("lib/libz.so.1")).unwrap(),
+        b"seed"
+    );
+    assert!(view.usr.join("include/zlib.h").is_file());
+
+    std::fs::remove_dir_all(dir.path().join("payload-zlib-dynamic")).unwrap();
+    let built = TestPkg {
+        files: &[("usr/lib/libz.so.1", b"built")],
+        ..TestPkg::new("zlib")
+    }
+    .add(&store, dir.path());
+    let view = assemble(&store, &seeds, &recipe, false, &dir.path().join("b"), None).unwrap();
+    assert_eq!(
+        std::fs::read(view.usr.join("lib/libz.so.1")).unwrap(),
+        b"built"
+    );
+    assert!(
+        !view.usr.join("include/zlib.h").exists(),
+        "the seeded zlib-dev leaves with the seeded zlib"
+    );
+    let ids: Vec<StoreId> = view.packages.iter().map(|p| p.id).collect();
+    assert!(ids.contains(&built) && !ids.contains(&seed) && !ids.contains(&seed_dev));
+
+    let pinned: BTreeSet<StoreId> = store_entries(&store)
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .filter(|id| *id != built)
+        .collect();
+    let view = assemble(
+        &store,
+        &seeds,
+        &recipe,
+        false,
+        &dir.path().join("c"),
+        Some(&pinned),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read(view.usr.join("lib/libz.so.1")).unwrap(),
+        b"seed",
+        "a pinned view keeps the seeds it used"
+    );
+}
+
+#[test]
+fn key_inputs_follow_the_usable_packages() {
+    let dir = laft_test::tempdir();
+    let store = Store::at(dir.path().join("store"));
+    let seed = TestPkg {
+        provides: &["so:libz.so.1"],
+        ..TestPkg::new("zlib")
+    }
+    .add(&store, dir.path());
+    let seeds = BTreeSet::from([seed]);
+    let mut recipe = recipe("app");
+    recipe.link_deps = refs(&["zlib"]);
+    let inputs = key_inputs(&recipe, &store, &seeds).unwrap();
+    assert_eq!(
+        inputs.links[0].sonames.iter().collect::<Vec<_>>(),
+        ["libz.so.1"]
+    );
+
+    std::fs::remove_dir_all(dir.path().join("payload-zlib-dynamic")).unwrap();
+    TestPkg {
+        files: &[("usr/lib/libz.so.2", b"z")],
+        provides: &["so:libz.so.2"],
+        ..TestPkg::new("zlib")
+    }
+    .add(&store, dir.path());
+    let inputs = key_inputs(&recipe, &store, &seeds).unwrap();
+    assert_eq!(
+        inputs.links[0].sonames.iter().collect::<Vec<_>>(),
+        ["libz.so.2"]
+    );
 }

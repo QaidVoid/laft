@@ -28,6 +28,7 @@ use crate::{
 /// | Path | Contents |
 /// |---|---|
 /// | `store/` | the build-side store, with every package builds may use |
+/// | `seeds/<id>` | marks the store entry `<id>` as a seed, see [`crate::seed()`] |
 /// | `sources/sha256/<hex>` | sources and vendor tarballs, by hash |
 /// | `cache/` | the download cache |
 /// | `db/` | the [`Db`] of finished builds |
@@ -89,6 +90,11 @@ impl BuildRoot {
     /// The staging directory of the store.
     pub fn tmp(&self) -> PathBuf {
         self.path.join("tmp")
+    }
+
+    /// The directory that records the seeds of the store.
+    pub fn seeds(&self) -> PathBuf {
+        self.path.join("seeds")
     }
 }
 
@@ -209,6 +215,10 @@ pub struct Builder<'a> {
     pub sources: &'a SourceCache,
     /// The build-side store.
     pub store: Store,
+    /// The directory that records the seeds of the store, which stand in
+    /// for packages until a build makes some of the same origin, as
+    /// [`crate::seed()`] describes.
+    pub seed_records: PathBuf,
     /// A staging directory on the store's filesystem.
     pub store_tmp: PathBuf,
     /// Where tools come from.
@@ -253,6 +263,7 @@ impl<'a> Builder<'a> {
             repos,
             sources,
             store: root.store(),
+            seed_records: root.seeds(),
             store_tmp: root.tmp(),
             mode,
             work: root.work(),
@@ -277,12 +288,21 @@ impl<'a> Builder<'a> {
     ///
     /// # Errors
     ///
-    /// Fails when the store cannot be read.
+    /// Fails when the store or the seeds cannot be read.
     pub fn key_inputs(&self, recipe: &Recipe) -> Result<KeyInputs, BuildError> {
         match self.mode {
-            Mode::Store => view::key_inputs(recipe, &self.store),
+            Mode::Store => view::key_inputs(recipe, &self.store, &self.seeds()?),
             _ => Ok(KeyInputs::new(recipe, Vec::new(), Vec::new())),
         }
+    }
+
+    /// The store ids of the seeds of the store.
+    ///
+    /// # Errors
+    ///
+    /// Fails when their records cannot be read.
+    pub fn seeds(&self) -> Result<BTreeSet<StoreId>, BuildError> {
+        crate::seed::seeds(&self.seed_records)
     }
 
     /// Plans a run of `recipes`: the build graph and the schedule of the
@@ -306,7 +326,7 @@ impl<'a> Builder<'a> {
         use_published: &BTreeSet<Item>,
     ) -> Result<(BuildGraph, Schedule), BuildError> {
         let entries = match self.mode {
-            Mode::Store => view::store_entries(&self.store)?,
+            Mode::Store => view::usable(view::store_entries(&self.store)?, &self.seeds()?),
             _ => Vec::new(),
         };
         let names: BTreeSet<(Name, Variant)> = entries
@@ -573,6 +593,7 @@ impl<'a> Builder<'a> {
         let view = match &self.mode {
             Mode::Store => Some(view::assemble(
                 &self.store,
+                &self.seeds()?,
                 recipe,
                 check,
                 &dir.join("root"),
@@ -753,8 +774,9 @@ impl<'a> Builder<'a> {
             post::write_packages(&session.out, &output.packages, &self.out, self.compression)?;
         if self.mode == Mode::Store && self.add_to_store {
             for (package, path) in output.packages.iter().zip(&packages) {
-                self.store
-                    .insert(path, &package.manifest.store_id(), &self.store_tmp)?;
+                let id = package.manifest.store_id();
+                self.store.insert(path, &id, &self.store_tmp)?;
+                crate::seed::forget(&self.seed_records, &id)?;
             }
             if let (Some(script), Some(main)) = (&recipe.smoke, output.packages.first()) {
                 self.smoke(session, main, script)?;
@@ -834,7 +856,7 @@ impl<'a> Builder<'a> {
             meta: main.meta.clone(),
         };
         let tree = session.dir.join("smoke-root");
-        let usr = view::assemble_smoke(&self.store, &entry, &tree)?;
+        let usr = view::assemble_smoke(&self.store, &self.seeds()?, &entry, &tree)?;
         let result = post::smoke(
             &usr,
             script,

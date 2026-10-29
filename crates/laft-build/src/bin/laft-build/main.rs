@@ -8,13 +8,16 @@
 //! laft-build --recipes ~/src/stage0 bootstrap --root / --install ~/sys \
 //!     --path ~/sys/tools/bin binutils-pass1 gcc-pass1
 //! laft-build --recipes ~/src/laft-recipes bootstrap --root / --unpack / glibc
+//! laft-build seed ~/bootstrap/out/*.lpkg
 //! ```
 //!
 //! Everything lives in the build root: the build-side store, the source
 //! cache, the build database, the output directory with package files and
 //! buildinfo, working trees and logs. Builds take their dependencies from
 //! the build-side store, which every successful build adds its packages
-//! to, and run every phase in a sandbox without network.
+//! to, and run every phase in a sandbox without network. Seeds, packages
+//! that another build root made, stand in there until builds make their
+//! own.
 //!
 //! With `--json`, results go to standard output as JSON and progress to
 //! standard error.
@@ -124,6 +127,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
     let json = cli.json;
     match cli.command {
         Command::Gc { sources_older_than } => return gc(&root, sources_older_than),
+        Command::Seed { files } => return seed(&root, &files, json),
         Command::Stage {
             file,
             root: target,
@@ -212,7 +216,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
             &options,
             &packages,
         ),
-        Command::Gc { .. } | Command::Stage { .. } => Ok(()),
+        Command::Gc { .. } | Command::Seed { .. } | Command::Stage { .. } => Ok(()),
     }
 }
 
@@ -709,6 +713,21 @@ fn record(db: &Db, item: &Item, outcome: &Outcome) -> Result<(), Failure> {
     db.record(&outcome.stored)?;
     for warning in &outcome.warnings {
         eprintln!("{item}: {warning}");
+    }
+    Ok(())
+}
+
+fn seed(root: &BuildRoot, files: &[PathBuf], json: bool) -> Result<(), Failure> {
+    let mut report = Vec::new();
+    for file in files {
+        let entry = laft_build::seed(root, file)?;
+        if !json {
+            say(format_args!("{}: {entry}", file.display()));
+        }
+        report.push(json!({ "file": file.display().to_string(), "entry": entry }));
+    }
+    if json {
+        say(json!({ "seeded": report }));
     }
     Ok(())
 }

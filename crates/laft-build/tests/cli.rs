@@ -345,6 +345,21 @@ fn lint_checks_every_recipe() {
 }
 
 #[test]
+fn seeding_a_file_that_is_not_a_package_fails_and_leaves_the_store_alone() {
+    let dir = laft_test::tempdir();
+    let file = dir.path().join("junk.lpkg");
+    std::fs::write(&file, b"junk").unwrap();
+    let output = without_recipes(
+        &dir.path().join("root"),
+        &["seed", file.to_str().expect("a UTF-8 path")],
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(!dir.path().join("root/store").exists());
+    let output = without_recipes(&dir.path().join("root"), &["seed"]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
 fn gc_removes_working_trees() {
     let dir = laft_test::tempdir();
     std::fs::create_dir_all(dir.path().join("work/abc/build")).unwrap();

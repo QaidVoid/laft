@@ -32,8 +32,11 @@
 //!    ([`view`]), runs every phase in a sandbox with fixed paths and no
 //!    network through an [`Executor`], turns the output into packages with
 //!    [`post`], and feeds the store ids back into the schedule
-//!    ([`Builder::run`]). [`Mode::Bootstrap`] builds without sandbox or
-//!    store, for the first stages of a new system.
+//!    ([`Builder::run`]). [`seed()`] adds the packages of another build
+//!    root, such as those of a bootstrap, to the build-side store, where
+//!    they stand in until builds here make their own. [`Mode::Bootstrap`]
+//!    builds without sandbox or store, for the first stages of a new
+//!    system.
 //!    [`Builder::install`] installs such a build straight into a system
 //!    under construction instead of making packages, and
 //!    [`Builder::build_into`] makes the packages and unpacks them there. A
@@ -129,6 +132,7 @@ mod recipe;
 mod repo;
 mod repro;
 mod schema;
+mod seed;
 mod source;
 mod stage;
 mod style;
@@ -161,6 +165,7 @@ pub use recipe::{
 };
 pub use repo::{Evaluation, RecipeRepo, Repos};
 pub use repro::{DifferingFile, ReproReport, check_repro, compare, record_repro};
+pub use seed::seed;
 pub use source::{SourceCache, SourceError};
 pub use stage::{
     Install, Place, Stage, StageEvent, StageOptions, StageState, Step, Work, run_stage,
