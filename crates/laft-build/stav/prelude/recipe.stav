@@ -24,11 +24,19 @@ struct StageFile {
 ## Where a step of a stage runs.
 type Place = host | root
 
+## How the packages of a stage reach its root.
+type Install = direct | packages
+
 ## A stage of a bootstrap: steps that build packages from one recipe
-## repository straight into a root directory, or run scripts, in order.
+## repository into a root directory, or run scripts, in order.
 struct Stage {
   ## The recipe repository of the packages, relative to the stage file.
   recipes: Str
+  ## `direct` installs every build straight into the root and makes no
+  ## package. `packages` makes Laft packages, keeps them in the output
+  ## directory of the build root and unpacks them into the root, all but
+  ## the debug info.
+  install: Install = direct
   ## Directories below the root that steps on the host search for programs
   ## before the host's own, such as the bin directory of a cross toolchain.
   path:    List<Str> = []

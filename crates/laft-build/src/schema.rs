@@ -239,6 +239,7 @@ pub(crate) enum Build {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Stage {
     pub(crate) recipes: String,
+    pub(crate) install: crate::stage::Install,
     pub(crate) path: Vec<String>,
     pub(crate) steps: Vec<Step>,
 }

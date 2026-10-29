@@ -478,6 +478,53 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
+    /// Builds `recipe`, whose build key covers `inputs`, in bootstrap mode
+    /// like [`Builder::build`], then unpacks the packages it made over
+    /// `dest`, a system under construction, so that later builds there use
+    /// them. The debug info package, `<name>-dbg`, stays out, because no
+    /// build needs it. Once every package is in place, the build key is
+    /// recorded in `dest`, where [`installed`] finds it.
+    ///
+    /// Each package is unpacked into a staging directory inside `dest` and
+    /// moved into place from there. A directory that `dest` lacks is made,
+    /// an existing one is kept, and every file and symbolic link replaces
+    /// what is at its path with a rename. Symbolic links in `dest` are never
+    /// followed.
+    ///
+    /// # Errors
+    ///
+    /// Fails with `B041` outside [`Mode::Bootstrap`], like
+    /// [`Builder::build`] for the build, with `B043` when a payload path is
+    /// a directory in a package and something else in `dest` or the other
+    /// way round, and with [`BuildError::Package`] for a package that does
+    /// not match its manifest. A failed unpack may leave some files of the
+    /// package in `dest`.
+    pub fn build_into(
+        &self,
+        recipe: &Recipe,
+        inputs: &KeyInputs,
+        dest: &Path,
+    ) -> Result<Outcome, BuildError> {
+        if !matches!(self.mode, Mode::Bootstrap(_)) {
+            return Err(BuildError::problem(
+                "B041",
+                "only bootstrap mode unpacks packages into a directory",
+            ));
+        }
+        let outcome = self.build(recipe, inputs)?;
+        let debug = format!("{}-dbg", recipe.name);
+        for (output, file) in outcome.buildinfo.outputs.iter().zip(&outcome.packages) {
+            if output.name.as_str() != debug {
+                crate::deploy::unpack_into(file, dest)?;
+            }
+        }
+        write_key(
+            &installed_record(dest, &Item::of(recipe)),
+            &inputs.build_key(),
+        )?;
+        Ok(outcome)
+    }
+
     /// Prepares the build of `recipe` with the build key `key`: the working
     /// tree, the sources, the recipe files, the build view and the vendor
     /// trees. An existing working tree of the same key is replaced.

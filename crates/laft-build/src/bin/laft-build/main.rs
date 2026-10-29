@@ -7,6 +7,7 @@
 //! laft-build --recipes ~/src/laft-recipes bootstrap --root / zlib bzip2
 //! laft-build --recipes ~/src/stage0 bootstrap --root / --install ~/sys \
 //!     --path ~/sys/tools/bin binutils-pass1 gcc-pass1
+//! laft-build --recipes ~/src/laft-recipes bootstrap --root / --unpack / glibc
 //! ```
 //!
 //! Everything lives in the build root: the build-side store, the source
@@ -37,8 +38,8 @@ use std::time::{Duration, SystemTime};
 
 use clap::Parser;
 use laft_build::{
-    BuildError, BuildRoot, Builder, Buildinfo, Cutoff, Event, Item, Mode, Recipe, Repos,
-    SourceCache, Stage, StageEvent, StageOptions, check_repro, record_repro, run_stage,
+    BuildError, BuildRoot, Builder, Buildinfo, Cutoff, Db, Event, Item, Mode, Outcome, Recipe,
+    Repos, SourceCache, Stage, StageEvent, StageOptions, check_repro, record_repro, run_stage,
 };
 use laft_core::PkgRef;
 use laft_fetch::{Config, Fetcher};
@@ -197,6 +198,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
         Command::Bootstrap {
             root,
             install,
+            unpack,
             search,
             dry_run,
             options,
@@ -204,7 +206,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
         } => bootstrap(
             &cx,
             &root,
-            install.as_deref(),
+            Target::new(install, unpack)?,
             search,
             dry_run,
             &options,
@@ -607,10 +609,32 @@ fn lint(cx: &Context, packages: &[String]) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Where `bootstrap` puts what it builds.
+enum Target {
+    /// Package files in the output directory.
+    Packages,
+    /// Installed straight into this directory, without packages.
+    Install(PathBuf),
+    /// Package files, unpacked into this directory too.
+    Unpack(PathBuf),
+}
+
+impl Target {
+    /// The target of the `--install` and `--unpack` flags, which never come
+    /// together, with the directory made absolute.
+    fn new(install: Option<PathBuf>, unpack: Option<PathBuf>) -> Result<Self, Failure> {
+        Ok(match (install, unpack) {
+            (Some(dir), _) => Self::Install(absolute(&dir)?),
+            (None, Some(dir)) => Self::Unpack(absolute(&dir)?),
+            (None, None) => Self::Packages,
+        })
+    }
+}
+
 fn bootstrap(
     cx: &Context,
     root: &Path,
-    install: Option<&Path>,
+    target: Target,
     search: Vec<PathBuf>,
     dry_run: bool,
     options: &BuildOptions,
@@ -629,8 +653,6 @@ fn bootstrap(
             dir.display()
         )));
     }
-    let install = install.map(absolute).transpose()?;
-    let install = install.as_deref();
     let mut builder = builder(cx, Mode::Bootstrap(absolute(root)?), Some(options));
     builder.check = false;
     builder.search = search;
@@ -640,28 +662,34 @@ fn bootstrap(
         for recipe in recipes(cx, std::slice::from_ref(text))? {
             let item = Item::of(&recipe);
             let inputs = builder.key_inputs(&recipe)?;
-            let state = if let Some(dest) = install {
-                if laft_build::installed(dest, &item)? == Some(inputs.build_key()) {
+            let key = inputs.build_key();
+            let state = match &target {
+                Target::Install(dest) | Target::Unpack(dest)
+                    if laft_build::installed(dest, &item)? == Some(key) =>
+                {
                     "up to date"
-                } else if dry_run {
-                    "would install"
-                } else {
+                }
+                Target::Packages if db.find(&key)?.is_some() => "up to date",
+                Target::Install(_) if dry_run => "would install",
+                Target::Unpack(_) if dry_run => "would build and unpack",
+                Target::Packages if dry_run => "would build",
+                Target::Install(dest) => {
                     eprintln!("installing {item} into {}", dest.display());
                     builder.install(&recipe, &inputs, dest)?;
                     "installed"
                 }
-            } else if db.find(&inputs.build_key())?.is_some() {
-                "up to date"
-            } else if dry_run {
-                "would build"
-            } else {
-                eprintln!("building {item} in bootstrap mode");
-                let outcome = builder.build(&recipe, &inputs)?;
-                db.record(&outcome.stored)?;
-                for warning in &outcome.warnings {
-                    eprintln!("{item}: {warning}");
+                Target::Unpack(dest) => {
+                    eprintln!("building {item} and unpacking it into {}", dest.display());
+                    let outcome = builder.build_into(&recipe, &inputs, dest)?;
+                    record(&db, &item, &outcome)?;
+                    "built and unpacked"
                 }
-                "built"
+                Target::Packages => {
+                    eprintln!("building {item} in bootstrap mode");
+                    let outcome = builder.build(&recipe, &inputs)?;
+                    record(&db, &item, &outcome)?;
+                    "built"
+                }
             };
             if !cx.json {
                 say(format_args!("{item}: {state}"));
@@ -671,6 +699,15 @@ fn bootstrap(
     }
     if cx.json {
         say(json!({ "bootstrap": report }));
+    }
+    Ok(())
+}
+
+/// Records `outcome` in `db` and reports its warnings.
+fn record(db: &Db, item: &Item, outcome: &Outcome) -> Result<(), Failure> {
+    db.record(&outcome.stored)?;
+    for warning in &outcome.warnings {
+        eprintln!("{item}: {warning}");
     }
     Ok(())
 }

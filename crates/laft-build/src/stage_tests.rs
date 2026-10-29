@@ -204,6 +204,110 @@ fn a_stage_installs_runs_scripts_once_and_resumes() {
     );
 }
 
+/// Makes the stage of `file` a stage of packages whose `greet` installs
+/// the greeting from a source that a `file://` mirror below `dir` serves.
+fn packages_stage(dir: &Path, file: &Path) -> Stage {
+    use sha2::Digest;
+    let greeting = b"hi\n";
+    let hex: String = sha2::Sha256::digest(greeting)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let mirror = dir.join("mirror/sha256");
+    fs::create_dir_all(&mirror).unwrap();
+    fs::write(mirror.join(&hex), greeting).unwrap();
+    let repo = dir.join("repo");
+    fs::write(
+        repo.join("recipes.stav"),
+        format!(
+            "recipe_repo t {{\n  source_mirrors = [\"file://{}\"]\n}}\n",
+            dir.join("mirror").display()
+        ),
+    )
+    .unwrap();
+    let recipe = format!(
+        r#"package greet {{
+  version = "1"
+  summary = "Greets"
+  license = [MIT]
+  source main {{
+    url     = ["https://example.org/greeting"]
+    sha256  = "sha256:{hex}"
+    extract = false
+  }}
+  build custom {{}}
+  phases {{
+    install = """
+      install -Dm644 "$SRC/greeting" "$DESTDIR/usr/share/greeting"
+      """
+  }}
+}}
+"#
+    );
+    fs::write(repo.join("recipes/greet/package.stav"), recipe).unwrap();
+    let text = fs::read_to_string(file).unwrap();
+    fs::write(
+        file,
+        text.replace(
+            "recipes = \"repo\"",
+            "recipes = \"repo\"\n  install = packages",
+        ),
+    )
+    .unwrap();
+    Stage::load(file).unwrap()
+}
+
+#[test]
+fn a_stage_of_packages_unpacks_the_packages_it_makes_into_the_root() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let file = write_stage(dir.path(), STEPS);
+    let stage = packages_stage(dir.path(), &file);
+    assert_eq!(stage.install, Install::Packages);
+    let first = run(dir.path(), &stage, false).unwrap();
+    assert!(
+        first.iter().all(|(_, s)| *s == StageState::Done),
+        "{first:?}"
+    );
+    let root = dir.path().join("root");
+    assert_eq!(
+        fs::read_to_string(root.join("usr/share/greeting")).unwrap(),
+        "hi\n"
+    );
+    let build_root = BuildRoot::new(dir.path().join("build"));
+    let packages: Vec<String> = fs::read_dir(build_root.out())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".lpkg"))
+        .collect();
+    assert_eq!(packages.len(), 1, "{packages:?}");
+    assert!(packages[0].starts_with("greet-1-r1."), "{packages:?}");
+    let repos = Repos::open(&[&stage.recipes]).unwrap();
+    let recipe = recipes(&repos, &"greet".parse().unwrap())
+        .unwrap()
+        .remove(0);
+    let item = Item::of(&recipe);
+    let built = build_root.db().latest(&item).unwrap().expect("a record");
+    assert_eq!(installed(&root, &item).unwrap(), Some(built.record.key));
+
+    let second = run(dir.path(), &stage, false).unwrap();
+    assert!(
+        second.iter().all(|(_, s)| *s == StageState::UpToDate),
+        "{second:?}"
+    );
+    let direct = Stage {
+        install: Install::Direct,
+        ..stage
+    };
+    let third = run(dir.path(), &direct, false).unwrap();
+    assert!(
+        third.iter().all(|(_, s)| *s == StageState::Done),
+        "a stage that stops making packages runs again: {third:?}"
+    );
+}
+
 #[test]
 fn a_failing_script_stops_the_stage_and_runs_again_next_time() {
     if no_shell() {

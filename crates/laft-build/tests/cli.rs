@@ -149,6 +149,42 @@ fn an_installing_dry_run_lists_what_it_would_install() {
 }
 
 #[test]
+fn an_unpacking_dry_run_lists_what_it_would_build_and_unpack() {
+    let dir = laft_test::tempdir();
+    let dest = dir.path().join("system");
+    let dest = dest.to_str().expect("a UTF-8 path");
+    let output = laft_build(
+        dir.path(),
+        &[
+            "bootstrap",
+            "--root",
+            "/",
+            "--unpack",
+            dest,
+            "--dry-run",
+            "zlib:dynamic",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(stdout(&output), "zlib: would build and unpack\n");
+    let output = laft_build(
+        dir.path(),
+        &[
+            "bootstrap",
+            "--root",
+            "/",
+            "--unpack",
+            dest,
+            "--install",
+            dest,
+            "--dry-run",
+            "zlib",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
 fn relative_bootstrap_directories_mean_the_working_directory() {
     if !Path::new("/usr/bin/sh").exists() {
         println!("skipping: the host has no /usr/bin/sh");

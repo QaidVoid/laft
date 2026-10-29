@@ -398,6 +398,55 @@ fn an_installing_bootstrap_build_fills_the_destination_and_records_its_key() {
 }
 
 #[test]
+fn an_unpacking_bootstrap_build_makes_packages_and_fills_the_destination() {
+    let dir = laft_test::tempdir();
+    for tool in ["bash", "gcc", "make", "objcopy", "strip", "install", "ln"] {
+        if !Path::new("/usr/bin").join(tool).exists() {
+            println!("skipping: /usr/bin/{tool} is missing");
+            return;
+        }
+    }
+    let repos = repos(dir.path());
+    let recipe: Recipe = support::evaluate(&repos, "hello").remove(0);
+    let (root, cache) = offline_cache(dir.path());
+    let builder = Builder::new(&repos, &cache, &root, Mode::Bootstrap("/".into()));
+    let inputs = builder.key_inputs(&recipe).unwrap();
+    let dest = dir.path().join("system");
+    let item = Item::of(&recipe);
+    let outcome = match builder.build_into(&recipe, &inputs, &dest) {
+        Ok(outcome) => outcome,
+        Err(e) => panic!("the unpacking build fails: {e}"),
+    };
+    let names: Vec<&str> = outcome
+        .buildinfo
+        .outputs
+        .iter()
+        .map(|o| o.name.as_str())
+        .collect();
+    assert!(names.contains(&"hello-dbg"), "{names:?}");
+    assert!(names.contains(&"hello-dev"), "{names:?}");
+    assert!(outcome.packages.iter().all(|p| p.is_file()));
+    for file in [
+        "usr/bin/hello",
+        "usr/lib/libgreet.so.1.0.0",
+        "usr/include/greet.h",
+    ] {
+        assert!(dest.join(file).is_file(), "{file} is not unpacked");
+    }
+    assert!(
+        !dest.join("usr/lib/debug").exists(),
+        "the debug info stays out"
+    );
+    assert_eq!(installed(&dest, &item).unwrap(), Some(inputs.build_key()));
+
+    let other = Builder::new(&repos, &cache, &root, Mode::View("/usr".into()));
+    let error = other
+        .build_into(&recipe, &inputs, &dest)
+        .expect_err("only bootstrap mode unpacks");
+    assert_eq!(error.code(), Some("B041"));
+}
+
+#[test]
 fn an_installing_build_sees_the_destination_and_no_toolchain() {
     let dir = laft_test::tempdir();
     let repos = repos_with(

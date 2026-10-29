@@ -1,6 +1,6 @@
 //! Bootstrap stages: a list of steps in a Stav file that build packages
-//! straight into a root directory, on the host or inside the root entered
-//! as a chroot, and run scripts such as checkpoints.
+//! into a root directory, on the host or inside the root entered as a
+//! chroot, and run scripts such as checkpoints.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -34,6 +34,19 @@ pub enum Place {
     Root,
 }
 
+/// How the packages of a [`Stage`] reach its root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Install {
+    /// Every build installs straight into the root with
+    /// [`Builder::install`], and no package is made.
+    Direct,
+    /// Every build makes Laft packages, which stay in the output directory
+    /// of the build root and are unpacked into the root with
+    /// [`Builder::build_into`].
+    Packages,
+}
+
 /// A bootstrap stage, read from a stage file with [`Stage::load`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stage {
@@ -42,6 +55,8 @@ pub struct Stage {
     /// The recipe repository of its packages, with symbolic links
     /// resolved.
     pub recipes: PathBuf,
+    /// How its packages reach the root.
+    pub install: Install,
     /// Directories relative to the root that steps on the host search for
     /// programs before the host's own.
     pub path: Vec<PathBuf>,
@@ -176,6 +191,7 @@ impl Stage {
         Ok(Self {
             name,
             recipes,
+            install: stage.install,
             path,
             steps,
         })
@@ -280,8 +296,10 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 ///
 /// The root gets Laft's top-level layout first: `usr/bin` and `usr/lib`,
 /// with `bin` and `sbin` linking to `usr/bin` and `lib` and `lib64` to
-/// `usr/lib`. Each package is built in bootstrap mode and installed into
-/// the root with [`Builder::install`]. On the host, a build uses the
+/// `usr/lib`. Each package is built in bootstrap mode and reaches the root
+/// as [`Stage::install`] says: with [`Builder::install`], or as packages
+/// that [`Builder::build_into`] makes and unpacks, which the build
+/// database records like any build. On the host, a build uses the
 /// host's tools after the stage's search directories. Inside the root,
 /// `laft-build` itself runs the build in a [`RootSandbox`], with the build
 /// root and the recipe repository bound below `/run`, after the host
@@ -293,8 +311,9 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// `PATH=/usr/bin`.
 ///
 /// Every step has a key that covers where it runs, its script and
-/// environment or the build keys of its packages, and the key of the step
-/// before it, so it covers every earlier step too. Once a step succeeded,
+/// environment or the build keys of its packages and whether they are
+/// made into packages, and the key of the step before it, so it covers
+/// every earlier step too. Once a step succeeded,
 /// its key is recorded in the root. A step whose recorded key matches is
 /// skipped unless [`StageOptions::rebuild`] is set, so a changed step runs
 /// again together with every step after it, and a failed run continues
@@ -308,7 +327,8 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 ///
 /// # Errors
 ///
-/// Fails like [`Builder::install`], with `B040` for a script or a build
+/// Fails like [`Builder::install`] or [`Builder::build_into`], with
+/// `B040` for a script or a build
 /// inside the root that fails, with `B030` for a script that runs longer
 /// than [`StageOptions::timeout`], and with `B042` when the root's top-level
 /// entries differ from Laft's layout or when `laft-build` is not static
@@ -531,7 +551,11 @@ impl StageRun<'_> {
             inputs.push(self.builder.key_inputs(recipe)?);
         }
         let keys: Vec<String> = inputs.iter().map(|i| i.build_key().to_string()).collect();
-        let key = step_key(step, previous, serde_json::json!({ "packages": keys }))?;
+        let work = match self.stage.install {
+            Install::Direct => serde_json::json!({ "packages": keys }),
+            Install::Packages => serde_json::json!({ "packages": keys, "install": "packages" }),
+        };
+        let key = step_key(step, previous, work)?;
         if let Some(state) = self.skipped(step, key)? {
             for recipe in recipes {
                 let what = Item::of(recipe).to_string();
@@ -566,7 +590,13 @@ impl StageRun<'_> {
         });
         let started = Instant::now();
         match step.place {
-            Place::Host => self.builder.install(recipe, inputs, root)?,
+            Place::Host => match self.stage.install {
+                Install::Direct => self.builder.install(recipe, inputs, root)?,
+                Install::Packages => {
+                    let outcome = self.builder.build_into(recipe, inputs, root)?;
+                    self.build_root.db().record(&outcome.stored)?;
+                }
+            },
             Place::Root => {
                 // The build inside skips a package whose record shows its
                 // key, so the record goes first to make it build again.
@@ -614,7 +644,10 @@ impl StageRun<'_> {
             "bootstrap",
             "--root",
             "/",
-            "--install",
+            match self.stage.install {
+                Install::Direct => "--install",
+                Install::Packages => "--unpack",
+            },
             "/",
             "--jobs",
             &jobs,

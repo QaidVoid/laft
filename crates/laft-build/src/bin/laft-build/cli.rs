@@ -105,8 +105,14 @@ pub(crate) enum Command {
         /// Install every build straight into this directory, a system
         /// under construction, instead of making packages. A package is up
         /// to date when its build key matches the one installed there.
-        #[arg(long, value_name = "DIR")]
+        #[arg(long, value_name = "DIR", conflicts_with = "unpack")]
         install: Option<PathBuf>,
+        /// Make packages as usual, then unpack all but the debug info into
+        /// this directory, a system under construction, so that later
+        /// builds there use them. A package is up to date when its build
+        /// key matches the one unpacked there.
+        #[arg(long, value_name = "DIR")]
+        unpack: Option<PathBuf>,
         /// A directory to search for programs before the root's
         /// `usr/bin`, such as the `bin` directory of a cross toolchain that
         /// the bootstrap builds. Repeat for more, searched in order.
