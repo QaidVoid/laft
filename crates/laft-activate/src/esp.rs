@@ -11,9 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use laft_core::{Blake3Hash, BootState, Timestamp};
 use laft_store::Root;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::config::{Boot, BootConfig};
+use crate::config::Boot;
 use crate::error::{Error, Result, corrupt, io};
 use crate::{BootRecord, fault};
 
@@ -237,15 +237,45 @@ fn gen_dir(root: &Root, number: u64) -> std::path::PathBuf {
     root.path().join("laft/gens").join(number.to_string())
 }
 
+/// The part of a generation's `config.json` that the boot menu reads.
+/// Every other field is ignored, so that the configuration of a generation
+/// assembled with an older schema still reads.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct MenuConfig {
+    boot: MenuSettings,
+}
+
+/// The boot menu and boot counting settings, with the defaults of
+/// [`Boot`].
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+struct MenuSettings {
+    timeout: Option<u32>,
+    editor: bool,
+    tries: u32,
+}
+
+impl Default for MenuSettings {
+    fn default() -> Self {
+        let boot = Boot::default();
+        Self {
+            timeout: boot.timeout,
+            editor: boot.editor,
+            tries: boot.tries,
+        }
+    }
+}
+
 /// The boot settings of generation `number`, from its configuration, or
 /// the defaults when there is no generation.
-fn menu_settings(root: &Root, number: Option<u64>) -> Result<Boot> {
+fn menu_settings(root: &Root, number: Option<u64>) -> Result<MenuSettings> {
     let Some(number) = number else {
-        return Ok(Boot::default());
+        return Ok(MenuSettings::default());
     };
     let path = gen_dir(root, number).join("config.json");
     let bytes = fs::read(&path).map_err(io(&path))?;
-    let config: BootConfig = serde_json::from_slice(&bytes).map_err(|e| corrupt(&path, e))?;
+    let config: MenuConfig = serde_json::from_slice(&bytes).map_err(|e| corrupt(&path, e))?;
     Ok(config.boot)
 }
 
@@ -263,7 +293,7 @@ fn failed_generations(root: &Root) -> Result<BTreeSet<u64>> {
 
 /// `limine.conf` for `entries`, newest first, booting entry
 /// `default_index` (1-based) by default.
-fn render_limine(entries: &[MenuEntry], default_index: usize, settings: &Boot) -> String {
+fn render_limine(entries: &[MenuEntry], default_index: usize, settings: &MenuSettings) -> String {
     let mut out = String::from("# Rendered by laft. Changes are overwritten on the next apply.\n");
     match settings.timeout {
         Some(seconds) => {

@@ -314,6 +314,23 @@ fn removed_files_are_reported_in_name_order() {
 }
 
 #[test]
+fn the_menu_reads_the_settings_of_an_older_configuration_schema() {
+    let env = Env::new();
+    let old = r#"{
+        "boot": {"timeout": 7, "editor": true, "tries": 0, "splash": "old"},
+        "fs": {"/": {"device": "UUID=1234", "fstype": "ext4", "auto": true}},
+        "retired": {"field": 1}
+    }"#;
+    generation(&env, 1, "6.17.4-laft1", b"one", old);
+    set_default(&env, 1);
+    let esp = esp(&env);
+    install_boot(&env.root, &esp).unwrap();
+    let conf = fs::read_to_string(esp.join("limine.conf")).unwrap();
+    assert!(conf.contains("timeout: 7\n"), "{conf}");
+    assert!(conf.contains("editor_enabled: yes\n"), "{conf}");
+}
+
+#[test]
 fn installing_a_new_default_starts_its_trial_until_it_is_marked_good() {
     let env = Env::new();
     generation(&env, 1, "6.17.4-laft1", b"one", "{}");
