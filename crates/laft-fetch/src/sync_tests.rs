@@ -463,3 +463,63 @@ fn a_cached_index_whose_pin_a_revocation_cleared_is_refused() {
     );
     assert!(error.to_string().contains("cached index"), "{error}");
 }
+
+impl Client {
+    fn cached(&self) -> Result<Cached, Error> {
+        let mirrors = Mirrors::new(&refusing_url(), &[] as &[&str], true).expect("valid URL");
+        let request = SyncRequest {
+            repo: &self.repo,
+            mirrors: &mirrors,
+            state: &self.state,
+            now: now(),
+            allow_expired: false,
+        };
+        self.fetcher.cached(&request)
+    }
+}
+
+#[test]
+fn the_accepted_index_is_read_back_from_the_cache_without_a_request() {
+    let root = TestKey::generate();
+    let server = Server::start();
+    server.put_all(&publish(&root, None, &index(T0)));
+    let client = Client::new(&root);
+    let synced = client.sync(&[server.url()]).expect("synced");
+    let before = server.paths().len();
+    let cached = client.cached().expect("the cache holds the accepted index");
+    assert_eq!(cached.index.record, synced.index.record);
+    assert_eq!(cached.index.index.generation, T0);
+    assert!(cached.synced <= std::time::SystemTime::now());
+    assert_eq!(server.paths().len(), before, "nothing was requested");
+}
+
+#[test]
+fn reading_the_cache_before_any_sync_fails_with_not_found() {
+    let client = Client::new(&TestKey::generate());
+    let error = client.cached().expect_err("nothing was accepted");
+    assert!(matches!(error.kind(), ErrorKind::NotFound), "{error}");
+    assert!(
+        !client.dir.path().join("state").exists(),
+        "nothing was written"
+    );
+}
+
+#[test]
+fn a_cached_file_that_is_not_the_accepted_index_is_refused() {
+    let root = TestKey::generate();
+    let dir = laft_test::tempdir();
+    write_tree(dir.path(), &publish(&root, None, &index(T0)));
+    let client = Client::new(&root);
+    let url = format!("file://{}", dir.path().display());
+    client.sync(std::slice::from_ref(&url)).expect("synced");
+    let cached = client
+        .dir
+        .path()
+        .join(format!("cache/index/core/{CHANNEL}/index.json.zst"));
+    std::fs::write(&cached, index(T0 + DAY).encode().expect("encodes")).expect("writable");
+    let error = client.cached().expect_err("the file was replaced");
+    assert!(
+        matches!(error.kind(), ErrorKind::HashMismatch { .. }),
+        "{error}"
+    );
+}

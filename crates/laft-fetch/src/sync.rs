@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use laft_core::{Blake3Hash, Timestamp};
 use laft_index::{
@@ -39,6 +40,17 @@ pub struct Synced {
     pub index: AcceptedIndex,
     /// Where the index came from.
     pub source: Source,
+}
+
+/// An index that an earlier sync accepted, read back from the cache by
+/// [`Fetcher::cached`].
+#[derive(Debug)]
+pub struct Cached {
+    /// The accepted index. Its `expired` flag is set when it expired and
+    /// expired indexes were allowed.
+    pub index: AcceptedIndex,
+    /// When the last sync that accepted it wrote it to the cache.
+    pub synced: SystemTime,
 }
 
 /// Where a synced index came from.
@@ -135,6 +147,31 @@ impl Fetcher {
                 Err(ErrorKind::AllFailed { what, attempts }.into())
             }
         }
+    }
+
+    /// Reads the index that an earlier sync accepted for the channel of
+    /// `request.repo` from the cache, without network access and without
+    /// writing anything, so that a command which only reads can use it.
+    /// `request.mirrors` is not used.
+    ///
+    /// The index must still be the accepted one, its record must still pin
+    /// its hash, and it must not have expired unless `request.allow_expired`
+    /// is set.
+    ///
+    /// # Errors
+    ///
+    /// Fails with [`ErrorKind::NotFound`] when no index of the channel was
+    /// accepted, with [`ErrorKind::HashMismatch`] when the cached file is
+    /// not the accepted index, with [`ErrorKind::CachedIndexUnpinned`] when
+    /// a revocation cleared its pin, and with [`ErrorKind::Trust`] when it
+    /// expired or the state records cannot be read.
+    pub fn cached(&self, request: &SyncRequest<'_>) -> Result<Cached, Error> {
+        let index = self.cached_index(request, None)?;
+        let path = self.index_path(request.repo);
+        let synced = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .map_err(crate::error::io(&path))?;
+        Ok(Cached { index, synced })
     }
 
     fn sync_keys(
@@ -260,8 +297,8 @@ impl Fetcher {
         trust: Option<&Trust>,
     ) -> Result<AcceptedIndex, Error> {
         let repo = request.repo;
+        let path = self.index_path(repo);
         let dir = self.repo_cache(repo).join(channel_dir(repo));
-        let path = dir.join(INDEX);
         let url = format!("file://{}", path.display());
         let trust_error = |e| Error::new(&url, ErrorKind::Trust(Box::new(e)));
         let record = request
@@ -308,6 +345,11 @@ impl Fetcher {
             record,
             expired,
         })
+    }
+
+    /// The cached index file of the channel of `repo`.
+    fn index_path(&self, repo: &Repo) -> PathBuf {
+        self.repo_cache(repo).join(channel_dir(repo)).join(INDEX)
     }
 
     fn repo_cache(&self, repo: &Repo) -> PathBuf {

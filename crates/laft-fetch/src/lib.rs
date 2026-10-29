@@ -14,7 +14,8 @@
 //! caller verifies itself. [`Fetcher::sync`] syncs one
 //! repository channel: it downloads `keys.json` and the index, hands them
 //! to `laft-index` for every trust decision, and falls back to the cached
-//! index when no URL works.
+//! index when no URL works. [`Fetcher::cached`] reads the accepted index
+//! back from the cache without syncing, for commands that only read.
 //!
 //! Every error names the URL and the reason. Nothing is printed. Progress
 //! goes to a callback.
@@ -68,5 +69,5 @@ mod test_support;
 
 pub use error::{Error, ErrorKind};
 pub use fetch::{Config, Fetcher, ObjectKind, Progress};
-pub use sync::{Source, SyncRequest, Synced};
+pub use sync::{Cached, Source, SyncRequest, Synced};
 pub use url::{BaseUrl, Mirrors, Scheme};
