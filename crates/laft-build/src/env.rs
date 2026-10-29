@@ -373,10 +373,11 @@ pub(crate) fn environment(input: &EnvInput<'_>) -> BTreeMap<String, String> {
 }
 
 /// Returns the environment `env` of a build that installs into a system
-/// under construction: without the variables of Laft's toolchain, even
-/// forced ones, and with `DESTDIR` at `/out`. Such a system is built with
-/// tools that are not Laft's toolchain, so its build systems choose their
-/// own compilers and flags, for example from `--host`.
+/// under construction: without the [`TOOLCHAIN`] variables, even forced
+/// ones, and with `DESTDIR` at `/out`. Such a system is built with tools
+/// that are not Laft's toolchain, so its build systems choose their own
+/// compilers and flags, for example from `--host`. The Go and Cargo
+/// settings and `LAFT_CROSS_DIR` stay.
 pub(crate) fn install(mut env: BTreeMap<String, String>) -> BTreeMap<String, String> {
     env.retain(|key, _| !TOOLCHAIN.contains(&key.as_str()));
     env.insert("DESTDIR".to_owned(), "/out".to_owned());

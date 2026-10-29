@@ -436,12 +436,14 @@ impl<'a> Builder<'a> {
     /// tree is removed unless it is kept.
     ///
     /// The phases run like those of a bootstrap build, except that
-    /// `$DESTDIR` and `$OUT` are `dest` and that the environment names no
-    /// compiler, binutils, pkg-config or flags. A system under construction
-    /// is built with tools that are not Laft's toolchain, so its build
-    /// systems choose their own, for example from `--host`. No license
-    /// files are added, nothing is post-processed, and no package or
-    /// buildinfo is written.
+    /// `$DESTDIR` and `$OUT` are `dest` and that the environment names none
+    /// of the compilers, binutils, pkg-config, sysroot or compiler flags of
+    /// Laft's toolchain. A system under construction is built with other
+    /// tools, so its build systems choose their own, for example from
+    /// `--host`. The Go and Cargo settings stay, and so do the cross files
+    /// of a `static` recipe, which name the musl cross toolchain. No
+    /// license files are added, nothing is post-processed, and no package
+    /// or buildinfo is written.
     ///
     /// # Errors
     ///
