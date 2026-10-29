@@ -315,10 +315,12 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// with the stage's search directories, its script and environment or the
 /// build keys of its packages and whether they are made into packages, and
 /// the key of the step before it, so it covers every earlier step too.
-/// Once a step succeeded, its key is recorded in the root. A step whose recorded key matches is
-/// skipped unless [`StageOptions::rebuild`] is set, so a changed step runs
-/// again together with every step after it, and a failed run continues
-/// with the step that failed, from its first package.
+/// Once a step succeeded, its key is recorded in the root. A step whose
+/// recorded key matches is skipped unless [`StageOptions::rebuild`] is
+/// set, so a changed step runs again together with every step after it.
+/// Each package of a step is recorded too, with the key the step would
+/// have if it ended with that package, so a failed run continues with the
+/// package that failed.
 ///
 /// A build whose recipe has `ci.runner = big` first waits until the host
 /// has [`StageOptions::min_available`] of memory available. Every script
@@ -554,23 +556,54 @@ impl StageRun<'_> {
             inputs.push(self.builder.key_inputs(recipe)?);
         }
         let keys: Vec<String> = inputs.iter().map(|i| i.build_key().to_string()).collect();
-        let work = match self.stage.install {
+        let work = |keys: &[String]| match self.stage.install {
             Install::Direct => serde_json::json!({ "packages": keys }),
             Install::Packages => serde_json::json!({ "packages": keys, "install": "packages" }),
         };
-        let key = step_key(step, previous, &self.stage.path, work)?;
-        if let Some(state) = self.skipped(step, key)? {
+        let key = step_key(step, previous, &self.stage.path, work(&keys))?;
+        if !self.options.rebuild && read_key(&self.record(step))? == Some(key) {
             for recipe in recipes {
                 let what = Item::of(recipe).to_string();
-                progress(finished(&step.name, &what, state, Duration::ZERO));
+                progress(finished(
+                    &step.name,
+                    &what,
+                    StageState::UpToDate,
+                    Duration::ZERO,
+                ));
             }
             return Ok(key);
         }
-        for (recipe, inputs) in recipes.iter().zip(&inputs) {
+        for (index, (recipe, inputs)) in recipes.iter().zip(&inputs).enumerate() {
+            let done = step_key(step, previous, &self.stage.path, work(&keys[..=index]))?;
+            let record = self.package_record(step, recipe);
+            let state = if !self.options.rebuild && read_key(&record)? == Some(done) {
+                Some(StageState::UpToDate)
+            } else if self.options.dry_run {
+                Some(StageState::Pending)
+            } else {
+                None
+            };
+            if let Some(state) = state {
+                let what = Item::of(recipe).to_string();
+                progress(finished(&step.name, &what, state, Duration::ZERO));
+                continue;
+            }
             self.package(step, tag, recipe, inputs, progress)?;
+            write_key(&record, &done)?;
         }
-        write_key(&self.record(step), &key)?;
+        if !self.options.dry_run {
+            write_key(&self.record(step), &key)?;
+        }
         Ok(key)
+    }
+
+    /// The record of `recipe` in the packages step `step`, which holds the
+    /// key of the step as if it ended with `recipe`, so that a failed step
+    /// resumes with the package that failed.
+    fn package_record(&self, step: &Step, recipe: &Recipe) -> PathBuf {
+        let mut record = self.record(step).into_os_string();
+        record.push(".packages");
+        PathBuf::from(record).join(format!("{}+{}", recipe.name, recipe.variant))
     }
 
     fn package(

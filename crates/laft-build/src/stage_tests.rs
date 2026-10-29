@@ -309,6 +309,65 @@ fn a_stage_of_packages_unpacks_the_packages_it_makes_into_the_root() {
 }
 
 #[test]
+fn a_failed_packages_step_resumes_with_the_package_that_failed() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "build", packages = [greet, wave] },"#;
+    let file = write_stage(dir.path(), steps);
+    let repo = dir.path().join("repo");
+    let builds = dir.path().join("greet-builds");
+    fs::write(
+        repo.join("recipes/greet/package.stav"),
+        RECIPE.replace(
+            "echo hi > \"$DESTDIR/usr/share/greeting\"",
+            &format!(
+                "echo hi > \"$DESTDIR/usr/share/greeting\"\n      echo built >> '{}'",
+                builds.display()
+            ),
+        ),
+    )
+    .unwrap();
+    let allow = dir.path().join("allow");
+    fs::create_dir_all(repo.join("recipes/wave")).unwrap();
+    fs::write(
+        repo.join("recipes/wave/package.stav"),
+        RECIPE.replace("package greet", "package wave").replace(
+            "mkdir -p",
+            &format!("test -f '{}'\n      mkdir -p", allow.display()),
+        ),
+    )
+    .unwrap();
+    let stage = Stage::load(&file).unwrap();
+    let error = run(dir.path(), &stage, false).unwrap_err();
+    assert_eq!(error.code(), Some("B040"), "{error}");
+
+    fs::write(&allow, "").unwrap();
+    let states = run(dir.path(), &stage, false).unwrap();
+    assert_eq!(
+        states,
+        [
+            ("build".to_owned(), StageState::UpToDate),
+            ("build".to_owned(), StageState::Done)
+        ]
+    );
+    assert_eq!(fs::read_to_string(&builds).unwrap(), "built\n");
+    let states = run(dir.path(), &stage, false).unwrap();
+    assert!(
+        states.iter().all(|(_, s)| *s == StageState::UpToDate),
+        "{states:?}"
+    );
+
+    let rebuild = StageOptions {
+        rebuild: true,
+        ..options(dir.path())
+    };
+    run_with(dir.path(), &stage, &rebuild).unwrap();
+    assert_eq!(fs::read_to_string(&builds).unwrap(), "built\nbuilt\n");
+}
+
+#[test]
 fn a_failing_script_stops_the_stage_and_runs_again_next_time() {
     if no_shell() {
         return;
