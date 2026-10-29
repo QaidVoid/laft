@@ -471,3 +471,24 @@ fn capability_text_must_parse() {
     let body = r#"security { privileged "/usr/bin/foo" { caps = "cap_setuid+x" } }"#;
     assert_rejected(rejected(body), "C1303", r#""cap_setuid+x""#);
 }
+
+#[test]
+fn swap_devices_take_the_fstab_forms() {
+    let swap = |device: &str| format!("swap \"{device}\" {{ priority = 1 }}");
+    for device in [
+        "/dev/nvme0n1p3",
+        "/dev/disk/by-id/nvme-x-part3",
+        "/swapfile",
+        "UUID=0f3e8c1a",
+        "LABEL=swap",
+        "PARTUUID=0f3e8c1a-03",
+        "PARTLABEL=swap",
+    ] {
+        let config = load_body(&swap(device)).unwrap_or_else(|e| panic!("{device}:\n{e}"));
+        assert!(config.config.swap.contains_key(device), "{device}");
+    }
+    for device in ["sda3", "LABEL=", "UUID=a b", "/dev/../sda3", "label=swap"] {
+        let body = swap(device);
+        assert_rejected(rejected(&body), "C1110", &body);
+    }
+}

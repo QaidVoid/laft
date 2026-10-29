@@ -51,6 +51,7 @@
 //! | `C1107` | `boot.esp` without a `vfat` filesystem |
 //! | `C1108` | `/dev/mapper/<name>` device without `luks <name>` |
 //! | `C1109` | filesystem without a device |
+//! | `C1110` | swap device that is not a path or a `UUID=`, `LABEL=`, `PARTUUID=` or `PARTLABEL=` tag |
 //! | `C1201` | invalid or reserved service name |
 //! | `C1202` | invalid or repeated getty terminal |
 //! | `C1203` | service setting that does not fit its kind |

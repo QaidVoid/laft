@@ -1,7 +1,7 @@
 //! The checks that follow evaluation, and the assembly of the result.
 
 use laft_activate::{BootConfig, ConfigError as EtcError, EtcConfig, Setting, check_config};
-use laft_core::{PkgRef, system_gid, system_uid};
+use laft_core::{DeviceSpec, PkgRef, system_gid, system_uid};
 use laft_svc::{ConfigError as ServiceError, ServiceConfig, ServiceSet, Warning};
 use stav::{Diagnostic, FileDiagnostic, SourceSpan, Value};
 
@@ -33,6 +33,7 @@ pub(crate) fn validate(
     if let Some(boot) = &boot {
         check_boot(cx, boot, found);
     }
+    check_swap(cx, found);
     let views = convert::views(cx, found);
     if let Some(etc) = &etc {
         check_view_members(cx, etc, found);
@@ -414,10 +415,11 @@ fn check_boot(cx: &Cx<'_>, boot: &BootConfig, found: &mut Vec<FileDiagnostic>) {
             )),
             None => {}
         }
-        if let Some(name) = entry
+        let spec = entry
             .device
             .as_deref()
-            .and_then(|d| d.strip_prefix("/dev/mapper/"))
+            .and_then(|d| d.parse::<DeviceSpec>().ok());
+        if let Some(name) = spec.as_ref().and_then(DeviceSpec::mapper_name)
             && !boot.luks.contains_key(name)
         {
             found.push(cx.error(
@@ -443,7 +445,7 @@ fn check_boot(cx: &Cx<'_>, boot: &BootConfig, found: &mut Vec<FileDiagnostic>) {
         ));
     }
     for (name, luks) in &boot.luks {
-        if !device_name(name) {
+        if !mapper_name(name) {
             found.push(cx.error(
                 "C1105",
                 &["system", "luks", name],
@@ -452,7 +454,11 @@ fn check_boot(cx: &Cx<'_>, boot: &BootConfig, found: &mut Vec<FileDiagnostic>) {
                 ),
             ));
         }
-        if luks.device.starts_with("/dev/mapper/") || !boot_device(&luks.device) {
+        let unlockable = luks
+            .device
+            .parse::<DeviceSpec>()
+            .is_ok_and(|d| d.resolved_at_boot() && d.mapper_name().is_none());
+        if !unlockable {
             found.push(cx.error(
                 "C1105",
                 &["system", "luks", name, "device"],
@@ -465,22 +471,34 @@ fn check_boot(cx: &Cx<'_>, boot: &BootConfig, found: &mut Vec<FileDiagnostic>) {
     }
 }
 
-/// Whether `name` can follow `/dev/` or `/dev/mapper/`: one path component
-/// other than `.` and `..`.
-fn device_name(name: &str) -> bool {
-    !name.is_empty() && !name.contains('/') && name != "." && name != ".."
+/// Whether `name` is a device-mapper name, so that the unlocked device is
+/// `/dev/mapper/<name>`.
+fn mapper_name(name: &str) -> bool {
+    format!("/dev/mapper/{name}")
+        .parse::<DeviceSpec>()
+        .is_ok_and(|d| d.mapper_name() == Some(name))
 }
 
-/// Whether laft-boot can resolve `device`: `UUID=` and printable ASCII
-/// without spaces, or `/dev/<name>` or `/dev/mapper/<name>` with a
-/// [`device_name`].
+/// Whether laft-boot can resolve `device`.
 fn boot_device(device: &str) -> bool {
-    match device.strip_prefix("UUID=") {
-        Some(uuid) => !uuid.is_empty() && uuid.bytes().all(|b| b.is_ascii_graphic()),
-        None => device
-            .strip_prefix("/dev/mapper/")
-            .or_else(|| device.strip_prefix("/dev/"))
-            .is_some_and(device_name),
+    device
+        .parse::<DeviceSpec>()
+        .is_ok_and(|d| d.resolved_at_boot())
+}
+
+/// Checks that every swap device is named in an fstab form (`C1110`).
+fn check_swap(cx: &Cx<'_>, found: &mut Vec<FileDiagnostic>) {
+    for (device, _) in entries(cx, &["system", "swap"]) {
+        if let Err(e) = device.parse::<DeviceSpec>() {
+            found.push(helped(
+                cx.error(
+                    "C1110",
+                    &["system", "swap", device],
+                    format!("swap {device:?}: {}", e.reason()),
+                ),
+                "name a swap device by its path or by UUID=, LABEL=, PARTUUID= or PARTLABEL=",
+            ));
+        }
     }
 }
 
