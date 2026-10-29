@@ -136,6 +136,21 @@ fn a_direct_phase_finds_programs_in_the_search_directories_first() {
 }
 
 #[test]
+fn a_direct_phase_runs_the_shell_of_the_roots_usr_bin() {
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("root");
+    let bin = root.join("usr/bin");
+    fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink("/bin/sh", bin.join("sh")).unwrap();
+    let work = dir.path().join("work");
+    fs::create_dir_all(&work).unwrap();
+    let exec = Executor::direct(&root, &work, &work, dir.path().join("logs"));
+    exec.run("build", "echo ran > ran", &BTreeMap::new())
+        .expect("the shell of usr/bin runs the script");
+    assert_eq!(fs::read_to_string(work.join("ran")).unwrap(), "ran\n");
+}
+
+#[test]
 fn a_search_directory_with_a_colon_is_refused() {
     let dir = laft_test::tempdir();
     let exec = Executor::direct("/", dir.path(), dir.path(), dir.path().join("logs"))

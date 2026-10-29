@@ -111,9 +111,13 @@ impl Executor {
         self
     }
 
-    /// The shell program of a direct executor with the tools of `root`.
+    /// The shell program of a direct executor, from `<root>/usr/bin`
+    /// because a bootstrap root need not have a `bin` link.
     fn direct_shell(&self, root: &Path) -> PathBuf {
-        root.join(self.shell.program().trim_start_matches('/'))
+        let name = Path::new(self.shell.program())
+            .file_name()
+            .expect("shell programs are absolute file paths");
+        root.join("usr/bin").join(name)
     }
 
     /// Makes a direct executor look for programs in `dirs`, in order,
