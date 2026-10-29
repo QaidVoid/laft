@@ -89,3 +89,32 @@ fn a_privileged_entry_that_grants_nothing_is_rejected() {
     let errors = check_config(&EtcConfig::default(), &security);
     assert_eq!(errors, [ConfigError::Unprivileged("/usr/bin/foo".into())]);
 }
+
+#[test]
+fn privileged_entry_errors_carry_their_codes() {
+    let mut security = Security::default();
+    let entries = [
+        ("/opt/x", Privileged::default()),
+        (
+            "/usr/bin/plain",
+            Privileged {
+                mode: 0o755,
+                ..Privileged::default()
+            },
+        ),
+        (
+            "/usr/bin/caps",
+            Privileged {
+                caps: Some("cap_setuid+x".into()),
+                ..Privileged::default()
+            },
+        ),
+    ];
+    for (path, entry) in entries {
+        security.privileged.insert(path.into(), entry);
+    }
+    assert_eq!(
+        codes(&EtcConfig::default(), &security),
+        [Some("C1301"), Some("C1303"), Some("C1302")]
+    );
+}

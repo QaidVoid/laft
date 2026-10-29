@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::accounts::DATABASES;
 use crate::config::{EtcConfig, File};
-use crate::error::{ConfigError, Error, Result, Warning, io};
+use crate::error::{ConfigError, Error, Result, Setting, Warning, io};
 use crate::{Declared, format, fsx};
 
 /// The first line of every file Laft generates from kernel settings.
@@ -414,7 +414,7 @@ fn check_identity(config: &EtcConfig, errors: &mut Vec<ConfigError>) {
     for (field, value, valid, reason) in checks {
         if value.is_some_and(|v| !valid(v)) {
             errors.push(ConfigError::InvalidValue {
-                context: field.to_owned(),
+                setting: Setting::System(field),
                 reason,
             });
         }
@@ -469,7 +469,10 @@ fn derived(config: &EtcConfig, errors: &mut Vec<ConfigError>) -> Vec<(String, No
         }
         if user.ssh_keys.iter().any(|k| k.contains(['\n', '\r'])) {
             errors.push(ConfigError::InvalidValue {
-                context: format!("user {name:?}: ssh_keys"),
+                setting: Setting::User {
+                    name: name.clone(),
+                    field: "ssh_keys",
+                },
                 reason: "a key cannot contain a line break",
             });
         }
@@ -497,7 +500,7 @@ fn kernel_files(config: &EtcConfig, errors: &mut Vec<ConfigError>) -> Vec<(Strin
     for module in names {
         if !module_name(module) {
             errors.push(ConfigError::InvalidValue {
-                context: format!("kernel module {module:?}"),
+                setting: Setting::KernelModule(module.clone()),
                 reason: "a module name holds only A-Z, a-z, 0-9, `_` and `-`",
             });
         }
@@ -519,7 +522,7 @@ fn kernel_files(config: &EtcConfig, errors: &mut Vec<ConfigError>) -> Vec<(Strin
     for (module, options) in &kernel.options {
         if options.contains(['\n', '\r']) {
             errors.push(ConfigError::InvalidValue {
-                context: format!("kernel options of {module:?}"),
+                setting: Setting::KernelOptions(module.clone()),
                 reason: "options cannot contain a line break",
             });
         }
@@ -627,7 +630,7 @@ fn file_node(
         return Ok(None);
     }
     let invalid = |reason| ConfigError::InvalidValue {
-        context: format!("file {label:?}"),
+        setting: Setting::File(label.to_owned()),
         reason,
     };
     if let Some(target) = &file.link {

@@ -13,7 +13,7 @@ use super::{
     valid_path,
 };
 use crate::config::Users;
-use crate::error::{ConfigError, Error, Result};
+use crate::error::{ConfigError, Error, Result, Setting};
 use crate::state::{self, Record};
 
 /// The ids allocated to system accounts that do not set one.
@@ -290,8 +290,11 @@ fn check_users(
         if user.password_hash.is_some() && user.password_file.is_some() {
             errors.push(ConfigError::PasswordSources(name.clone()));
         }
-        let invalid = |field: &str, reason| ConfigError::InvalidValue {
-            context: format!("user {name:?}: {field}"),
+        let invalid = |field, reason| ConfigError::InvalidValue {
+            setting: Setting::User {
+                name: name.clone(),
+                field,
+            },
             reason,
         };
         if user

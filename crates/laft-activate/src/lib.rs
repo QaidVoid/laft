@@ -65,7 +65,7 @@ pub use config::{
     Boot, BootConfig, EtcConfig, File, Fs, Group, Initrd, Kernel, Loader, Luks, Microcode,
     Privileged, Security, User, Users,
 };
-pub use error::{ConfigError, Conflict, ConflictKind, Error, Result, Warning};
+pub use error::{ConfigError, Conflict, ConflictKind, Error, Result, Setting, Warning};
 pub use esp::{BootInstall, check_esp, install_boot};
 pub use etc::{EtcReport, OnConflict, check_etc, reconcile_etc, reset_etc};
 pub use initramfs::{BootRecord, Host};

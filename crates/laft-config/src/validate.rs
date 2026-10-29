@@ -1,6 +1,6 @@
 //! The checks that follow evaluation, and the assembly of the result.
 
-use laft_activate::{BootConfig, ConfigError as EtcError, EtcConfig, check_config};
+use laft_activate::{BootConfig, ConfigError as EtcError, EtcConfig, Setting, check_config};
 use laft_core::{PkgRef, system_gid, system_uid};
 use laft_svc::{ConfigError as ServiceError, ServiceConfig, ServiceSet, Warning};
 use stav::{Diagnostic, FileDiagnostic, Value};
@@ -111,12 +111,7 @@ fn init(cx: &Cx<'_>, found: &mut Vec<FileDiagnostic>) {
 fn etc_error(cx: &Cx<'_>, error: &EtcError) -> Option<FileDiagnostic> {
     let declared_group = |name: &str| cx.value(&["system", "users", "groups", name]).is_some();
     let id = |kind: &str| if kind == "user" { "uid" } else { "gid" };
-    let code = error.code().unwrap_or(match error {
-        EtcError::PrivilegedPath(_) => "C1301",
-        EtcError::Unprivileged(_) => "C1302",
-        EtcError::InvalidCaps { .. } => "C1303",
-        _ => "C0490",
-    });
+    let code = error.code().unwrap_or("C0490");
     let message = error.to_string();
     let d = match error {
         EtcError::InvalidName { kind, name } => {
@@ -192,24 +187,38 @@ fn etc_error(cx: &Cx<'_>, error: &EtcError) -> Option<FileDiagnostic> {
                 "the module is loaded here",
             )
         }
-        EtcError::PrivilegedPath(path) | EtcError::Unprivileged(path) => {
+        EtcError::PrivilegedPath(path) => {
             cx.error(code, &["system", "security", "privileged", path], message)
         }
+        EtcError::Unprivileged(path) => helped(
+            cx.error(code, &["system", "security", "privileged", path], message),
+            "set `enable = false` to drop the entry, or give the file the setuid or setgid bit or capabilities",
+        ),
         EtcError::InvalidCaps { path, .. } => cx.error(
             code,
             &["system", "security", "privileged", path, "caps"],
             message,
         ),
-        EtcError::InvalidValue { context, .. } => {
-            let identity = ["hostname", "timezone", "locale", "keymap", "console_font"];
-            match identity.iter().find(|&&f| f == context) {
-                Some(field) => cx.error(code, &["system", field], message),
-                None => cx.error(code, &["system"], message),
-            }
+        EtcError::InvalidValue { setting, .. } => {
+            let path = match setting {
+                Setting::System(field) => vec!["system", field],
+                Setting::User { name, field } => vec!["system", "users", "accounts", name, field],
+                Setting::KernelOptions(module) => vec!["system", "kernel", "options", module],
+                Setting::KernelModule(module) => {
+                    let options = ["system", "kernel", "options", module];
+                    if cx.value(&options).is_some() {
+                        options.to_vec()
+                    } else {
+                        vec!["system", "kernel"]
+                    }
+                }
+                Setting::File(path) => vec!["system", "files", path],
+                Setting::Privileged(path) => vec!["system", "security", "privileged", path],
+            };
+            cx.error(code, &path, message)
         }
-        EtcError::IdsExhausted { .. } | EtcError::UnknownAccount { .. } => {
-            cx.error(code, &["system", "users"], message)
-        }
+        EtcError::IdsExhausted { kind, name } => cx.error(code, &account(kind, name), message),
+        EtcError::UnknownAccount { .. } => cx.error(code, &["system", "users"], message),
     };
     Some(d)
 }

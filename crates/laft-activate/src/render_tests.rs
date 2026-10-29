@@ -382,7 +382,7 @@ fn identity_values_that_would_corrupt_their_files_are_rejected() {
         match err {
             Error::Config(errors) => assert!(
                 errors.iter().any(
-                    |e| matches!(e, ConfigError::InvalidValue { context, .. } if context == field)
+                    |e| matches!(e, ConfigError::InvalidValue { setting: Setting::System(f), .. } if *f == field)
                 ),
                 "{field}: {errors:?}"
             ),

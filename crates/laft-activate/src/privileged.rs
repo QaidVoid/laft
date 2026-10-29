@@ -13,7 +13,7 @@ use laft_store::{Generation, Reason, Root};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Privileged;
-use crate::error::{ConfigError, Error, Result, Warning, corrupt, io};
+use crate::error::{ConfigError, Error, Result, Setting, Warning, corrupt, io};
 use crate::{Declared, fsx, tree};
 
 /// The name of the privileged copies record in a generation.
@@ -203,9 +203,10 @@ fn plan(
     }
 }
 
-/// Checks the path, mode and capabilities of one enabled entry, and returns
-/// its capabilities with their text, or `None` after recording why the
-/// entry is invalid.
+/// Checks the path, mode and capabilities of one entry without looking at
+/// its `enable` field, so callers pass only enabled entries. Returns its
+/// capabilities with their text, or `None` after recording why the entry
+/// is invalid.
 pub(crate) fn check_entry(
     path: &str,
     entry: &Privileged,
@@ -224,7 +225,7 @@ pub(crate) fn check_entry(
     }
     if entry.mode > 0o7777 {
         errors.push(ConfigError::InvalidValue {
-            context: format!("privileged {path:?}"),
+            setting: Setting::Privileged(path.to_owned()),
             reason: "the mode may only hold permission bits up to 0o7777",
         });
         return None;

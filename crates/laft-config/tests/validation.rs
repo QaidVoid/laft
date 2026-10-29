@@ -137,9 +137,46 @@ fn only_runit_is_available() {
 }
 
 #[test]
-fn values_that_cannot_be_written_are_rejected() {
-    let body = r#"users { user alice { description = "a:b" } }"#;
-    assert_eq!(rejected(body).0, ["C0490"]);
+fn values_that_cannot_be_written_are_rejected_where_they_are_set() {
+    let cases = [
+        (
+            r#"users { user alice { description = "a:b" } }"#,
+            r#""a:b""#,
+        ),
+        (r#"users { user alice { home = "/a:b" } }"#, r#""/a:b""#),
+        (
+            r#"users { user alice { ssh_keys = ["a\nb"] } }"#,
+            r#"["a\nb"]"#,
+        ),
+        (
+            r#"kernel { options = { snd = "a\nb" } }"#,
+            r#"{ snd = "a\nb" }"#,
+        ),
+        (
+            r#"kernel { options = { "a b" = "x" } }"#,
+            r#"{ "a b" = "x" }"#,
+        ),
+        (
+            r#"file "/etc/x" { link = "/y", copy = true }"#,
+            r#"file "/etc/x" { link = "/y", copy = true }"#,
+        ),
+    ];
+    for (body, at) in cases {
+        assert_rejected(rejected(body), "C0490", at);
+    }
+}
+
+#[test]
+fn running_out_of_ids_points_at_the_account() {
+    let users: String = (0..1000)
+        .map(|i| format!("user s{i} {{ system = true, group = users }}\n"))
+        .collect();
+    let report = load_body(&format!("users {{\n{users}}}")).expect_err("no ids are left");
+    assert!(codes(&report).iter().all(|&c| c == "C0490"));
+    for i in 0..report.iter().count() {
+        let at = pointed_at(&report, i);
+        assert!(at.starts_with("user s"), "{at}");
+    }
 }
 
 #[test]
@@ -416,10 +453,19 @@ fn privileged_files_live_in_usr() {
 #[test]
 fn privileged_files_must_grant_something() {
     let body = r#"security { privileged "/usr/bin/foo" { mode = 0o755 } }"#;
-    assert_rejected(
-        rejected(body),
-        "C1302",
-        r#"privileged "/usr/bin/foo" { mode = 0o755 }"#,
+    let report = load_body(body).expect_err("the entry grants nothing");
+    assert_eq!(codes(&report), ["C1302"]);
+    assert_eq!(
+        pointed_at(&report, 0),
+        r#"privileged "/usr/bin/foo" { mode = 0o755 }"#
+    );
+    let help = report
+        .iter()
+        .next()
+        .and_then(|d| d.diagnostic.help.as_deref());
+    assert!(
+        help.is_some_and(|h| h.contains("enable = false")),
+        "{help:?}"
     );
 }
 

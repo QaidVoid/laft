@@ -175,6 +175,41 @@ impl fmt::Display for Conflict {
     }
 }
 
+/// Where a value that [`ConfigError::InvalidValue`] rejects is set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Setting {
+    /// A field of the system identity, such as `hostname`.
+    System(&'static str),
+    /// A field of a user.
+    User {
+        /// The user.
+        name: String,
+        /// The field, such as `home`.
+        field: &'static str,
+    },
+    /// A kernel module name, loaded, blacklisted or given options.
+    KernelModule(String),
+    /// The options of a kernel module.
+    KernelOptions(String),
+    /// A declared file, by its path.
+    File(String),
+    /// A privileged file, by its path.
+    Privileged(String),
+}
+
+impl fmt::Display for Setting {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::System(field) => f.write_str(field),
+            Self::User { name, field } => write!(f, "user {name:?}: {field}"),
+            Self::KernelModule(module) => write!(f, "kernel module {module:?}"),
+            Self::KernelOptions(module) => write!(f, "kernel options of {module:?}"),
+            Self::File(path) => write!(f, "file {path:?}"),
+            Self::Privileged(path) => write!(f, "privileged {path:?}"),
+        }
+    }
+}
+
 /// One way in which the configuration is invalid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
@@ -240,7 +275,7 @@ pub enum ConfigError {
     /// file, for example because it contains a colon or a line break.
     InvalidValue {
         /// Where the value is set.
-        context: String,
+        setting: Setting,
         /// What is wrong with it.
         reason: &'static str,
     },
@@ -283,12 +318,12 @@ pub enum ConfigError {
     /// `C0434`.
     SysctlValue(String),
     /// A privileged path is not an absolute, normalized path below
-    /// `/usr/bin/` or `/usr/lib/`.
+    /// `/usr/bin/` or `/usr/lib/`. Code `C1301`.
     PrivilegedPath(String),
     /// A privileged file has neither the setuid or setgid bit nor
-    /// capabilities, so the entry grants nothing.
+    /// capabilities, so the entry grants nothing. Code `C1302`.
     Unprivileged(String),
-    /// The capabilities of a privileged file do not parse.
+    /// The capabilities of a privileged file do not parse. Code `C1303`.
     InvalidCaps {
         /// The privileged path.
         path: String,
@@ -317,12 +352,10 @@ impl ConfigError {
             Self::SysctlKey(_) => "C0431",
             Self::BlacklistedModule(_) => "C0433",
             Self::SysctlValue(_) => "C0434",
-            Self::IdsExhausted { .. }
-            | Self::UnknownAccount { .. }
-            | Self::InvalidValue { .. }
-            | Self::PrivilegedPath(_)
-            | Self::Unprivileged(_)
-            | Self::InvalidCaps { .. } => {
+            Self::PrivilegedPath(_) => "C1301",
+            Self::Unprivileged(_) => "C1302",
+            Self::InvalidCaps { .. } => "C1303",
+            Self::IdsExhausted { .. } | Self::UnknownAccount { .. } | Self::InvalidValue { .. } => {
                 return None;
             }
         })
@@ -369,7 +402,7 @@ impl fmt::Display for ConfigError {
                 name,
                 context,
             } => write!(f, "{context}: no {kind} named {name:?} is declared"),
-            Self::InvalidValue { context, reason } => write!(f, "{context}: {reason}"),
+            Self::InvalidValue { setting, reason } => write!(f, "{setting}: {reason}"),
             Self::InvalidPath(path) => write!(
                 f,
                 "file {path:?}: expected an absolute, normalized path below /etc/"

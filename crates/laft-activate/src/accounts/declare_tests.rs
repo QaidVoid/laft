@@ -269,7 +269,7 @@ fn account_paths_must_be_normalized_absolute_paths() {
             let errors = resolve_fresh(&users_with(&[("bob", user)])).expect_err("rejected");
             assert!(
                 errors.iter().any(
-                    |e| matches!(e, ConfigError::InvalidValue { context, .. } if context.ends_with(field))
+                    |e| matches!(e, ConfigError::InvalidValue { setting: Setting::User { field: f, .. }, .. } if *f == field)
                 ),
                 "{field} {path:?}: {errors:?}"
             );
