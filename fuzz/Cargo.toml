@@ -30,7 +30,16 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "unpack"
+path = "fuzz_targets/unpack.rs"
+test = false
+doc = false
+bench = false
+
 [dependencies]
+laft-build = { version = "0.1.0", path = "../crates/laft-build" }
+laft-core = { version = "0.1.0", path = "../crates/laft-core" }
 laft-elf = { version = "0.1.0", path = "../crates/laft-elf" }
 laft-index = { version = "0.1.0", path = "../crates/laft-index" }
 laft-pkg = { version = "0.1.0", path = "../crates/laft-pkg" }

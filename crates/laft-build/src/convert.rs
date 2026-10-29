@@ -17,11 +17,6 @@ use crate::schema::{self, Build};
 use crate::style::{self, StyleInput};
 use crate::target::{ARCH, Target};
 
-/// File extensions that are extracted unless the recipe says otherwise.
-pub(crate) const ARCHIVE_EXTENSIONS: &[&str] = &[
-    ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".txz", ".tar.zst", ".tar.lz", ".zip",
-];
-
 /// The evaluated package being converted, and the problems found so far.
 pub(crate) struct Cx<'a> {
     pub(crate) evaluated: &'a stav::Evaluated,
@@ -333,7 +328,7 @@ fn sources(cx: &mut Cx<'_>, p: &schema::Package) -> Vec<Source> {
                 }
                 let extract = s
                     .extract
-                    .unwrap_or_else(|| ARCHIVE_EXTENSIONS.iter().any(|ext| file.ends_with(ext)));
+                    .unwrap_or_else(|| crate::extract::is_archive(&file));
                 Fetch::Url {
                     urls: urls.clone(),
                     sha256,

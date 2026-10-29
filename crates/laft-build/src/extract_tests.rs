@@ -332,3 +332,160 @@ fn every_archive_format_extracts_the_same_tree() {
         .expect_err("garbage");
     assert_eq!(error.code(), "B024");
 }
+
+#[test]
+fn the_source_label_never_names_a_path() {
+    let tree = Tree::new();
+    let victim = tree.dir.path().join("victim");
+    fs::create_dir(&victim).expect("mkdir");
+    fs::write(victim.join("keep"), b"keep").expect("write");
+    let mut source = source("x.tar", "", Some(0));
+    source.label = "/../../victim".into();
+    tree.unpack(&source, &tar(&[E::File("a", 0o644, b"a")]))
+        .expect("a safe archive");
+    assert_eq!(tree.listing(), ["a"]);
+    assert_eq!(fs::read(victim.join("keep")).expect("kept"), b"keep");
+    assert_eq!(
+        fs::read_dir(tree.dir.path().join("scratch"))
+            .expect("readable")
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn destinations_outside_the_source_tree_are_refused() {
+    for dest in ["../up", "/abs", "a/../.."] {
+        let tree = Tree::new();
+        let error = tree
+            .unpack(
+                &source("x.tar", dest, Some(0)),
+                &tar(&[E::File("a", 0o644, b"a")]),
+            )
+            .expect_err(dest);
+        assert_eq!(error.code(), "B023", "{dest}");
+        let error = tree
+            .unpack(&source("x.patch", dest, None), b"diff")
+            .expect_err(dest);
+        assert_eq!(error.code(), "B023", "{dest}");
+        assert_eq!(tree.listing(), Vec::<String>::new(), "{dest}");
+        assert!(!tree.dir.path().join("up").exists(), "{dest}");
+    }
+}
+
+#[test]
+fn link_chains_that_leave_the_destination_are_refused() {
+    let cases: [&[E<'_>]; 5] = [
+        // Each link stays inside on its own, but `l` passes through `d/a`.
+        &[E::Symlink("d/a", ".."), E::Symlink("l", "d/a/../x")],
+        // The link that changes where `l` leads comes after it.
+        &[E::Symlink("l", "d/a/../x"), E::Symlink("d/a", "..")],
+        // Three links: `l3` passes through `s2/l2`, which passes through
+        // `s1/l1`.
+        &[
+            E::Symlink("s1/l1", ".."),
+            E::Symlink("s2/l2", "../s1/l1"),
+            E::Symlink("l3", "s2/l2/../x"),
+        ],
+        &[
+            E::Symlink("l3", "s2/l2/../x"),
+            E::Symlink("s2/l2", "../s1/l1"),
+            E::Symlink("s1/l1", ".."),
+        ],
+        // A link that never resolves.
+        &[E::Symlink("a", "b"), E::Symlink("b", "a")],
+    ];
+    for entries in cases {
+        let tree = Tree::new();
+        let error = tree
+            .unpack(&source("evil.tar", "", Some(0)), &tar(entries))
+            .expect_err("an escaping chain");
+        assert_eq!(error.code(), "B021", "{error}");
+        assert_eq!(tree.listing(), Vec::<String>::new(), "{error}");
+    }
+
+    let tree = Tree::new();
+    let inside = tar(&[
+        E::Dir("d/e/"),
+        E::Symlink("d/a", "e"),
+        E::Symlink("s/l", "../d/a/../e"),
+        E::Symlink("dangling", "missing/../x"),
+    ]);
+    tree.unpack(&source("ok.tar", "", Some(0)), &inside)
+        .expect("every link stays inside");
+}
+
+#[test]
+fn a_link_cannot_leave_through_a_link_of_an_earlier_source() {
+    let tree = Tree::new();
+    tree.unpack(
+        &source("one.tar", "", Some(0)),
+        &tar(&[E::Symlink("d", ".")]),
+    )
+    .expect("stays inside");
+    let error = tree
+        .unpack(
+            &source("two.tar", "", Some(0)),
+            &tar(&[E::Symlink("l", "d/../x")]),
+        )
+        .expect_err("leaves through the earlier link");
+    assert_eq!(error.code(), "B021");
+}
+
+#[test]
+fn hard_links_point_only_at_earlier_files() {
+    let cases: [(&[E<'_>], &str); 4] = [
+        (
+            &[E::Symlink("s", "a"), E::Link("h", "s")],
+            "archive entry h is a hard link to s, which is not an earlier file of the archive",
+        ),
+        (
+            &[
+                E::File("d/f", 0o644, b"f"),
+                E::Symlink("d/f", "../.."),
+                E::Link("h", "d/f"),
+            ],
+            "archive entry h is a hard link to d/f, which is not an earlier file of the archive",
+        ),
+        (
+            &[E::File("f", 0o644, b"f"), E::Link("h", "../f")],
+            "archive entry ../f escapes the destination",
+        ),
+        (
+            &[E::File("f", 0o644, b"f"), E::Link("f", "f")],
+            "archive entry f is a hard link to f, which is not an earlier file of the archive",
+        ),
+    ];
+    for (entries, message) in cases {
+        let tree = Tree::new();
+        let error = tree
+            .unpack(&source("evil.tar", "", Some(0)), &tar(entries))
+            .expect_err(message);
+        assert_eq!(error.code(), "B021");
+        assert!(error.to_string().ends_with(message), "{error}");
+    }
+
+    let tree = Tree::new();
+    tree.unpack(
+        &source("ok.tar", "", Some(0)),
+        &tar(&[E::File("d/f", 0o600, b"f"), E::Link("e/h", "d/f")]),
+    )
+    .expect("a link to an earlier file");
+    assert_eq!(
+        fs::read(tree.dir.path().join("src/e/h")).expect("linked"),
+        b"f"
+    );
+}
+
+#[test]
+fn an_oversized_zip_link_target_is_refused() {
+    let mut w = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    w.add_symlink("l", "a".repeat(5000), options).expect("zip");
+    let zip = w.finish().expect("zip").into_inner();
+    let tree = Tree::new();
+    let error = tree
+        .unpack(&source("x.zip", "", Some(0)), &zip)
+        .expect_err("too long");
+    assert_eq!(error.code(), "B024");
+}

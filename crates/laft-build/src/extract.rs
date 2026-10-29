@@ -2,10 +2,16 @@
 //! rules that keep every entry inside its destination.
 
 use std::collections::BTreeSet;
-use std::fs::{self, File, OpenOptions};
+use std::ffi::{OsStr, OsString};
+use std::fs::{self, File};
 use std::io::{self, BufReader, Read};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt, symlink};
+use std::os::fd::OwnedFd;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use rustix::fs::{AtFlags, FileType, Mode, OFlags, ResolveFlags};
+use rustix::io::Errno;
 
 use crate::source::{SourceError, io_error};
 use crate::{Fetch, Source};
@@ -13,6 +19,16 @@ use crate::{Fetch, Source};
 /// The mode bits extraction keeps from an archive.
 const EXEC_BITS: u32 = 0o111;
 
+/// The longest symbolic link target a zip archive may hold, `PATH_MAX`
+/// without its terminating NUL.
+const LINK_MAX: u64 = 4095;
+
+/// How many symbolic links resolving one path may pass through, the limit
+/// the kernel applies.
+const MAX_HOPS: usize = 40;
+
+/// Tells concurrent extractions of one process apart in `scratch`.
+static UNPACKS: AtomicU64 = AtomicU64::new(0);
 /// How an archive is stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Format {
@@ -23,6 +39,12 @@ enum Format {
     TarZst,
     TarLz,
     Zip,
+}
+
+/// Whether a file named `file` is in an archive format that can be
+/// extracted.
+pub(crate) fn is_archive(file: &str) -> bool {
+    Format::of(file).is_some()
 }
 
 impl Format {
@@ -52,28 +74,35 @@ impl Format {
 /// archive is extracted into `<src>/<dest>`, by these rules:
 ///
 /// 1. Entries with an absolute path or a `..` component are refused.
-/// 2. A symbolic link is allowed only when its target, resolved inside
-///    the destination, stays inside it, and nothing is ever written
-///    through one. A hard link must point to an earlier file of the same
+/// 2. Nothing is ever written through a symbolic link, and every
+///    directory is opened beneath the extraction root without following
+///    one. A hard link must point to an earlier regular file of the same
 ///    archive.
-/// 3. Ownership is ignored.
-/// 4. Files keep their executable bits and are otherwise `0644`,
+/// 3. Every symbolic link must resolve inside the destination, following
+///    the links it passes through as the kernel would, once the whole
+///    archive is extracted. After the archive is moved into place, every
+///    link in `src` must still resolve inside `src`, so links of
+///    different sources cannot combine to leave it.
+/// 4. Ownership is ignored.
+/// 5. Files keep their executable bits and are otherwise `0644`,
 ///    directories are `0755`.
-/// 5. Device nodes and FIFOs are skipped with a warning.
-/// 6. `strip_components` leading components are dropped. When the source
+/// 6. Device nodes and FIFOs are skipped with a warning.
+/// 7. `strip_components` leading components are dropped. When the source
 ///    leaves it unset, one is dropped exactly when the archive holds a
 ///    single directory at its top.
 ///
-/// The archive is extracted into `scratch` first, which must be on the
-/// same filesystem as `src`, then moved into place. The returned strings
-/// are warnings about skipped entries.
+/// The archive is extracted into a new directory in `scratch` first,
+/// which must be on the same filesystem as `src`, then moved into place.
+/// The source's label is never part of a path. The returned strings are
+/// warnings about skipped entries.
 ///
 /// # Errors
 ///
 /// Fails with [`SourceError::Unsafe`] for an entry that breaks a rule,
 /// with [`SourceError::Unsupported`] for a file that cannot be read as its
 /// archive format, and with [`SourceError::Io`] when the tree cannot be
-/// written.
+/// written or when `dest` or the file name is not a plain relative path.
+/// After an error the source tree is incomplete and must be discarded.
 pub fn unpack(
     source: &Source,
     file: &Path,
@@ -81,13 +110,19 @@ pub fn unpack(
     scratch: &Path,
 ) -> Result<Vec<String>, SourceError> {
     let dest = src.join(&source.dest);
+    if !is_plain(Path::new(&source.dest)) {
+        return Err(not_plain(&dest, "destination"));
+    }
     let (name, extract) = match &source.fetch {
         Fetch::Url { file, extract, .. } => (file.as_str(), *extract),
         Fetch::Git { .. } => ("git.tar", true),
     };
     if !extract {
-        fs::create_dir_all(&dest).map_err(io_error(&dest))?;
         let target = dest.join(name);
+        if Path::new(name).components().count() != 1 || !is_plain(Path::new(name)) {
+            return Err(not_plain(&target, "file name"));
+        }
+        fs::create_dir_all(&dest).map_err(io_error(&dest))?;
         fs::copy(file, &target).map_err(io_error(&target))?;
         fs::set_permissions(&target, fs::Permissions::from_mode(0o644))
             .map_err(io_error(&target))?;
@@ -99,54 +134,121 @@ pub fn unpack(
             reason: format!("{name} is not an archive format that can be extracted"),
         });
     };
-    let staging = scratch.join(format!("unpack-{}", source.label));
+    let staging = scratch.join(format!(
+        "unpack-{}-{}",
+        std::process::id(),
+        UNPACKS.fetch_add(1, Ordering::Relaxed)
+    ));
     remove_tree(&staging)?;
-    fs::create_dir_all(&staging).map_err(io_error(&staging))?;
-    let strip = source.strip_components.unwrap_or(0) as usize;
+    fs::create_dir(&staging).map_err(io_error(&staging))?;
+    let placed = place(source, format, file, &staging, &dest);
+    let removed = remove_tree(&staging);
+    let warnings = placed?;
+    removed?;
+    check_links(file, src)?;
+    Ok(warnings)
+}
+
+/// Extracts `file` into `staging`, checks its links and moves its tree
+/// into `dest`.
+fn place(
+    source: &Source,
+    format: Format,
+    file: &Path,
+    staging: &Path,
+    dest: &Path,
+) -> Result<Vec<String>, SourceError> {
+    let root = rustix::fs::open(
+        staging,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(errno(staging))?;
     let mut extractor = Extractor {
         archive: file.to_path_buf(),
-        root: staging.clone(),
-        strip,
+        root,
+        root_path: staging.to_path_buf(),
+        strip: source.strip_components.unwrap_or(0) as usize,
         files: BTreeSet::new(),
-        lowest: usize::MAX,
         warnings: Vec::new(),
     };
     extractor.extract(format)?;
-    let mut top = staging.clone();
+    let mut top = staging.to_path_buf();
     if source.strip_components.is_none() {
-        let entries = fs::read_dir(&staging)
-            .map_err(io_error(&staging))?
+        let entries = fs::read_dir(staging)
+            .map_err(io_error(staging))?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(io_error(&staging))?;
+            .map_err(io_error(staging))?;
         if let [only] = entries.as_slice()
             && only.file_type().map_err(io_error(&only.path()))?.is_dir()
         {
-            if extractor.lowest == 0 {
-                return Err(SourceError::Unsafe {
-                    archive: file.to_path_buf(),
-                    entry: only.file_name().to_string_lossy().into_owned(),
-                    reason: "holds a symbolic link that leads out of it, and it is stripped"
-                        .to_owned(),
-                });
-            }
             top = only.path();
         }
     }
-    merge(&top, &dest)?;
-    remove_tree(&staging)?;
+    check_links(file, &top)?;
+    merge(&top, dest)?;
     Ok(extractor.warnings)
+}
+
+/// Whether `path` is empty or relative with only normal components.
+fn is_plain(path: &Path) -> bool {
+    path.components().all(|c| matches!(c, Component::Normal(_)))
+}
+
+/// The error for a `what` that would place a source outside the tree.
+fn not_plain(path: &Path, what: &str) -> SourceError {
+    SourceError::Io {
+        path: path.to_path_buf(),
+        error: io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("the {what} is not a plain relative path"),
+        ),
+    }
+}
+
+/// Wraps an error of a system call on `path`.
+fn errno(path: &Path) -> impl Fn(Errno) -> SourceError + '_ {
+    move |e| io_error(path)(e.into())
+}
+
+/// The flags for opening anything below the extraction root: never above
+/// it and never through a symbolic link.
+fn beneath() -> ResolveFlags {
+    ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS
+}
+
+/// Opens the directory `name` in `dir`, creating it when it is missing,
+/// and gives it mode `0755`. Fails with `ELOOP` or `ENOTDIR` for anything
+/// that is not a directory, symbolic links included.
+fn make_dir(dir: &OwnedFd, name: &OsStr) -> rustix::io::Result<OwnedFd> {
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let fd = match rustix::fs::openat2(dir, name, flags, Mode::empty(), beneath()) {
+        Err(Errno::NOENT) => {
+            rustix::fs::mkdirat(dir, name, Mode::from_raw_mode(0o755))?;
+            rustix::fs::openat2(dir, name, flags, Mode::empty(), beneath())?
+        }
+        other => other?,
+    };
+    rustix::fs::fchmod(&fd, Mode::from_raw_mode(0o755))?;
+    Ok(fd)
+}
+
+/// Whether `name` in `dir` is a symbolic link.
+fn is_link(dir: &OwnedFd, name: &OsStr) -> bool {
+    rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)
+        .is_ok_and(|stat| FileType::from_raw_mode(stat.st_mode) == FileType::Symlink)
 }
 
 /// Writes the entries of one archive below `root`.
 struct Extractor {
     archive: PathBuf,
-    root: PathBuf,
+    /// The extraction root, which every entry is opened beneath.
+    root: OwnedFd,
+    root_path: PathBuf,
     strip: usize,
-    /// The regular files written so far, which hard links may point to.
+    /// The regular files written so far that are still in place, which
+    /// hard links may point to.
     files: BTreeSet<PathBuf>,
-    /// The fewest components below the root that resolving any symbolic
-    /// link passed through.
-    lowest: usize,
     warnings: Vec<String>,
 }
 
@@ -182,6 +284,11 @@ impl Extractor {
             entry: entry.to_owned(),
             reason: reason.into(),
         }
+    }
+
+    fn io(&self, rel: &Path) -> impl Fn(Errno) -> SourceError + use<> {
+        let path = self.root_path.join(rel);
+        move |e| io_error(&path)(e.into())
     }
 
     fn tar(&mut self, reader: impl Read) -> Result<(), SourceError> {
@@ -243,9 +350,15 @@ impl Extractor {
                 self.dir(&raw, &rel)?;
             } else if mode & 0o170_000 == 0o120_000 {
                 let mut target = String::new();
-                entry
+                (&mut entry)
+                    .take(LINK_MAX + 1)
                     .read_to_string(&mut target)
                     .map_err(|e| self.unreadable(e))?;
+                if target.len() as u64 > LINK_MAX {
+                    return Err(self.unreadable(format!(
+                        "{raw} is a symbolic link with a target longer than {LINK_MAX} bytes"
+                    )));
+                }
                 self.symlink(&raw, &rel, &target)?;
             } else if mode & 0o170_000 == 0 || mode & 0o170_000 == 0o100_000 {
                 self.file(&raw, &rel, mode, &mut entry)?;
@@ -283,47 +396,70 @@ impl Extractor {
         Ok(out)
     }
 
-    /// Creates the directories above `rel`, refusing to pass through a
-    /// symbolic link or a file.
-    fn parents(&self, raw: &str, rel: &Path) -> Result<(), SourceError> {
-        let mut path = self.root.clone();
-        let parents: Vec<_> = rel.components().collect();
-        for part in &parents[..parents.len().saturating_sub(1)] {
+    /// Opens the directory that holds `rel`, creating the missing ones and
+    /// refusing to pass through a symbolic link or a file, and returns it
+    /// with the last component of `rel`.
+    fn parent<'r>(&self, raw: &str, rel: &'r Path) -> Result<(OwnedFd, &'r OsStr), SourceError> {
+        let mut parts: Vec<&OsStr> = rel.iter().collect();
+        let name = parts
+            .pop()
+            .expect("an entry that survives stripping has a component");
+        let mut dir = rustix::fs::openat2(
+            &self.root,
+            ".",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+            beneath(),
+        )
+        .map_err(self.io(Path::new("")))?;
+        let mut path = PathBuf::new();
+        for part in parts {
             path.push(part);
-            match fs::symlink_metadata(&path) {
-                Ok(m) if m.is_dir() => {}
-                Ok(m) if m.file_type().is_symlink() => {
+            dir = match make_dir(&dir, part) {
+                Ok(fd) => fd,
+                Err(Errno::LOOP | Errno::NOTDIR | Errno::EXIST) if is_link(&dir, part) => {
                     return Err(self.unsafe_entry(raw, "would be written through a symbolic link"));
                 }
-                Ok(_) => return Err(self.unsafe_entry(raw, "is below a file")),
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                    fs::create_dir(&path).map_err(io_error(&path))?;
-                    set_mode(&path, 0o755)?;
+                Err(Errno::LOOP | Errno::NOTDIR | Errno::EXIST) => {
+                    return Err(self.unsafe_entry(raw, "is below a file"));
                 }
-                Err(e) => return Err(io_error(&path)(e)),
-            }
+                Err(e) => return Err(self.io(&path)(e)),
+            };
         }
-        Ok(())
+        Ok((dir, name))
     }
 
-    /// Removes whatever is at `path` unless it is a directory.
-    fn clear(&self, raw: &str, path: &Path) -> Result<(), SourceError> {
-        match fs::symlink_metadata(path) {
-            Ok(m) if m.is_dir() => Err(self.unsafe_entry(raw, "replaces a directory")),
-            Ok(_) => fs::remove_file(path).map_err(io_error(path)),
-            Err(_) => Ok(()),
+    /// Removes whatever is at `name` in `dir` unless it is a directory.
+    fn clear(
+        &mut self,
+        raw: &str,
+        dir: &OwnedFd,
+        name: &OsStr,
+        rel: &Path,
+    ) -> Result<(), SourceError> {
+        match rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) if FileType::from_raw_mode(stat.st_mode) == FileType::Directory => {
+                Err(self.unsafe_entry(raw, "replaces a directory"))
+            }
+            Ok(_) => {
+                rustix::fs::unlinkat(dir, name, AtFlags::empty()).map_err(self.io(rel))?;
+                self.files.remove(rel);
+                Ok(())
+            }
+            Err(Errno::NOENT) => Ok(()),
+            Err(e) => Err(self.io(rel)(e)),
         }
     }
 
     fn dir(&mut self, raw: &str, rel: &Path) -> Result<(), SourceError> {
-        self.parents(raw, rel)?;
-        let path = self.root.join(rel);
-        match fs::symlink_metadata(&path) {
-            Ok(m) if m.is_dir() => {}
-            Ok(_) => return Err(self.unsafe_entry(raw, "replaces a file with a directory")),
-            Err(_) => fs::create_dir(&path).map_err(io_error(&path))?,
+        let (parent, name) = self.parent(raw, rel)?;
+        match make_dir(&parent, name) {
+            Ok(_) => Ok(()),
+            Err(Errno::LOOP | Errno::NOTDIR | Errno::EXIST) => {
+                Err(self.unsafe_entry(raw, "replaces a file with a directory"))
+            }
+            Err(e) => Err(self.io(rel)(e)),
         }
-        set_mode(&path, 0o755)
     }
 
     fn file(
@@ -333,70 +469,156 @@ impl Extractor {
         mode: u32,
         content: &mut dyn Read,
     ) -> Result<(), SourceError> {
-        self.parents(raw, rel)?;
-        let path = self.root.join(rel);
-        self.clear(raw, &path)?;
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(io_error(&path))?;
+        let (dir, name) = self.parent(raw, rel)?;
+        self.clear(raw, &dir, name, rel)?;
+        let fd = rustix::fs::openat2(
+            &dir,
+            name,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
+            beneath(),
+        )
+        .map_err(self.io(rel))?;
+        let mut file = File::from(fd);
         io::copy(content, &mut file).map_err(|e| self.unreadable(e))?;
-        set_mode(&path, 0o644 | (mode & EXEC_BITS))?;
+        rustix::fs::fchmod(&file, Mode::from_raw_mode(0o644 | (mode & EXEC_BITS)))
+            .map_err(self.io(rel))?;
         self.files.insert(rel.to_path_buf());
         Ok(())
     }
 
+    /// Creates a symbolic link. Where it leads is checked once the whole
+    /// archive is extracted, because a later link can change it.
     fn symlink(&mut self, raw: &str, rel: &Path, target: &str) -> Result<(), SourceError> {
         if target.is_empty() || target.starts_with('/') {
             return Err(
                 self.unsafe_entry(raw, format!("links to {target}, outside the destination"))
             );
         }
-        // Resolve the target lexically from the link's own directory, as
-        // the link would, and require every step to stay inside.
-        let mut depth = rel.components().count() - 1;
-        for part in target.split('/') {
-            match part {
-                "" | "." => {}
-                ".." if depth == 0 => {
-                    return Err(self
-                        .unsafe_entry(raw, format!("links to {target}, outside the destination")));
-                }
-                ".." => {
-                    depth -= 1;
-                    self.lowest = self.lowest.min(depth);
-                }
-                _ => depth += 1,
-            }
-        }
-        self.parents(raw, rel)?;
-        let path = self.root.join(rel);
-        self.clear(raw, &path)?;
-        symlink(target, &path).map_err(io_error(&path))
+        let (dir, name) = self.parent(raw, rel)?;
+        self.clear(raw, &dir, name, rel)?;
+        rustix::fs::symlinkat(target, &dir, name).map_err(self.io(rel))
     }
 
     fn hard_link(&mut self, raw: &str, rel: &Path, target: &str) -> Result<(), SourceError> {
         let earlier = self.target(target)?;
+        let (dir, name) = self.parent(raw, rel)?;
+        self.clear(raw, &dir, name, rel)?;
         let Some(earlier) = earlier.filter(|t| self.files.contains(t)) else {
             return Err(self.unsafe_entry(
                 raw,
                 format!("is a hard link to {target}, which is not an earlier file of the archive"),
             ));
         };
-        self.parents(raw, rel)?;
-        let path = self.root.join(rel);
-        self.clear(raw, &path)?;
-        let from = self.root.join(&earlier);
-        fs::hard_link(&from, &path).map_err(io_error(&path))?;
+        let (from, from_name) = self.parent(raw, &earlier)?;
+        rustix::fs::linkat(&from, from_name, &dir, name, AtFlags::empty()).map_err(self.io(rel))?;
         self.files.insert(rel.to_path_buf());
         Ok(())
     }
 }
 
-fn set_mode(path: &Path, mode: u32) -> Result<(), SourceError> {
-    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(io_error(path))
+/// Checks that every symbolic link below `root` resolves inside it.
+fn check_links(archive: &Path, root: &Path) -> Result<(), SourceError> {
+    let mut todo = vec![PathBuf::new()];
+    while let Some(rel) = todo.pop() {
+        let dir = root.join(&rel);
+        for entry in fs::read_dir(&dir).map_err(io_error(&dir))? {
+            let entry = entry.map_err(io_error(&dir))?;
+            let kind = entry.file_type().map_err(io_error(&entry.path()))?;
+            let rel = rel.join(entry.file_name());
+            if kind.is_dir() {
+                todo.push(rel);
+            } else if kind.is_symlink()
+                && let Some(reason) = escape(root, &rel).map_err(io_error(&root.join(&rel)))?
+            {
+                return Err(SourceError::Unsafe {
+                    archive: archive.to_path_buf(),
+                    entry: rel.display().to_string(),
+                    reason,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolves the symbolic link `link` below `root` one component at a time,
+/// following the links it passes through, and returns why it leaves
+/// `root`, or `None` when it stays inside.
+///
+/// A component that does not exist, or that a file stands in for, is taken
+/// as a directory, so the link stays inside if one is created there later.
+fn escape(root: &Path, link: &Path) -> io::Result<Option<String>> {
+    let target = fs::read_link(root.join(link))?;
+    let outside = || {
+        Some(format!(
+            "links to {}, outside the destination",
+            target.display()
+        ))
+    };
+    let mut at: Vec<OsString> = link
+        .parent()
+        .into_iter()
+        .flat_map(Path::iter)
+        .map(OsStr::to_os_string)
+        .collect();
+    // The components still to resolve, the next one last. `..` stands for
+    // a parent directory component, which a normal one can never be.
+    let mut todo = Vec::new();
+    if !push_target(&mut todo, &target) {
+        return Ok(outside());
+    }
+    let mut hops = 1;
+    while let Some(part) = todo.pop() {
+        if part == ".." {
+            if at.pop().is_none() {
+                return Ok(outside());
+            }
+            continue;
+        }
+        at.push(part);
+        let path: PathBuf = root.join(at.iter().collect::<PathBuf>());
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                ) =>
+            {
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        if meta.file_type().is_symlink() {
+            hops += 1;
+            if hops > MAX_HOPS {
+                return Ok(Some(format!(
+                    "links to {}, which does not resolve through {MAX_HOPS} links",
+                    target.display()
+                )));
+            }
+            at.pop();
+            if !push_target(&mut todo, &fs::read_link(&path)?) {
+                return Ok(outside());
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Pushes the components of the link target `target` onto `todo`, the
+/// first one last. Returns `false` for an absolute target.
+fn push_target(todo: &mut Vec<OsString>, target: &Path) -> bool {
+    for part in target.components().rev() {
+        match part {
+            Component::Normal(name) => todo.push(name.to_os_string()),
+            Component::ParentDir => todo.push("..".into()),
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) => return false,
+        }
+    }
+    true
 }
 
 /// Moves everything below `from` into `to`, merging directories that
