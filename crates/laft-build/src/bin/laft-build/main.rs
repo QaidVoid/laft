@@ -131,6 +131,12 @@ fn run(cli: Cli) -> Result<(), Failure> {
             rebuild,
             options,
         } => {
+            if !cli.recipes.is_empty() {
+                return Err(Failure::Usage(
+                    "stage takes its recipe repository from the stage file, not from --recipes"
+                        .into(),
+                ));
+            }
             let run = StageRun {
                 min_free_gib,
                 dry_run,
@@ -747,7 +753,10 @@ fn stage(
     if json {
         say(json!({ "stage": stage.name, "steps": report }));
     }
-    result.map_err(Failure::from)
+    result.map_err(|e| match e.code() {
+        Some(code) if code.starts_with('R') => Failure::Usage(e.to_string()),
+        _ => Failure::from(e),
+    })
 }
 
 /// `path` made absolute against the working directory, because builds

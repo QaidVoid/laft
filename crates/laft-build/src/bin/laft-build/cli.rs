@@ -13,7 +13,8 @@ pub(crate) struct Cli {
     #[arg(long, value_name = "DIR")]
     pub(crate) root: Option<PathBuf>,
     /// A recipe repository, lowest priority first. Repeat for overlays.
-    /// Defaults to the colon separated list in `$LAFT_RECIPES`.
+    /// Defaults to the colon separated list in `$LAFT_RECIPES`. The
+    /// `stage` command takes its repository from the stage file instead.
     #[arg(long = "recipes", value_name = "DIR")]
     pub(crate) recipes: Vec<PathBuf>,
     /// Print machine readable JSON on standard output.
@@ -134,8 +135,13 @@ pub(crate) enum Command {
         #[arg(long, value_name = "DIR")]
         root: PathBuf,
         /// The available memory, in GiB, that a build of a recipe whose CI
-        /// runner is `big` waits for.
-        #[arg(long, value_name = "GIB", default_value_t = 6)]
+        /// runner is `big` waits for, at most 1048576.
+        #[arg(
+            long,
+            value_name = "GIB",
+            default_value_t = 6,
+            value_parser = clap::value_parser!(u64).range(..=1 << 20)
+        )]
         min_free_gib: u64,
         /// Print what is up to date and what would run, without running.
         #[arg(long)]

@@ -7,16 +7,38 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 fn laft_build(root: &Path, args: &[&str]) -> Output {
+    let recipes = support::core();
+    let mut all = vec!["--recipes", recipes.to_str().expect("a UTF-8 path")];
+    all.extend(args);
+    without_recipes(root, &all)
+}
+
+/// Runs `laft-build` with the build root `root` and `args` only.
+fn without_recipes(root: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_laft-build"))
         .env_remove("LAFT_RECIPES")
         .env_remove("LAFT_BUILD_ROOT")
         .arg("--root")
         .arg(root)
-        .arg("--recipes")
-        .arg(support::core())
         .args(args)
         .output()
         .expect("the binary runs")
+}
+
+/// Writes a stage file below `dir` that builds `packages` from the example
+/// recipes and runs a script inside the root, and returns it.
+fn stage_file(dir: &Path, packages: &str) -> String {
+    let file = dir.join("stage.stav");
+    std::fs::write(
+        &file,
+        format!(
+            "stage s {{\n  recipes = \"{}\"\n  steps = [\n    {{ name = \"tools\", packages = [{packages}] }},\n    \
+             {{ name = \"check\", place = root, script = \"true\" }},\n  ]\n}}\n",
+            support::core().display()
+        ),
+    )
+    .expect("the test directory is writable");
+    file.to_str().expect("a UTF-8 path").to_owned()
 }
 
 fn stdout(output: &Output) -> String {
@@ -174,33 +196,16 @@ fn relative_bootstrap_directories_mean_the_working_directory() {
 #[test]
 fn a_stage_dry_run_lists_its_steps_without_touching_the_root() {
     let dir = laft_test::tempdir();
-    let file = dir.path().join("stage.stav");
-    std::fs::write(
-        &file,
-        format!(
-            "stage s {{\n  recipes = \"{}\"\n  steps = [\n    {{ name = \"tools\", packages = [zlib] }},\n    \
-             {{ name = \"check\", place = root, script = \"true\" }},\n  ]\n}}\n",
-            support::core().display()
-        ),
-    )
-    .unwrap();
+    let file = stage_file(dir.path(), "zlib");
     let root = dir.path().join("system");
-    let output = laft_build(
-        dir.path(),
-        &[
-            "stage",
-            file.to_str().unwrap(),
-            "--root",
-            root.to_str().unwrap(),
-            "--dry-run",
-        ],
-    );
+    let root = root.to_str().unwrap();
+    let output = without_recipes(dir.path(), &["stage", &file, "--root", root, "--dry-run"]);
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
         stdout(&output),
         "tools: zlib: pending (0s)\ncheck: script: pending (0s)\n"
     );
-    assert!(!root.exists());
+    assert!(!Path::new(root).exists());
 }
 
 #[test]
@@ -219,6 +224,32 @@ fn usage_errors_exit_with_2() {
     assert_eq!(output.status.code(), Some(2));
     let output = laft_build(dir.path(), &["eval", "base:static"]);
     assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn stage_usage_errors_exit_with_2() {
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("system");
+    let root = root.to_str().unwrap();
+    let file = stage_file(dir.path(), "zlib");
+    let output = laft_build(dir.path(), &["stage", &file, "--root", root, "--dry-run"]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--recipes"));
+    let output = without_recipes(
+        dir.path(),
+        &[
+            "stage",
+            &file,
+            "--root",
+            root,
+            "--min-free-gib",
+            "17179869184",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let file = stage_file(dir.path(), "nonexistent");
+    let output = without_recipes(dir.path(), &["stage", &file, "--root", root, "--dry-run"]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
 }
 
 #[test]
