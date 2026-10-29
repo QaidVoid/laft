@@ -58,7 +58,7 @@
 //! | `R012` | a URL source without `sha256` |
 //! | `R013` | a git source without `commit` |
 //! | `R014` | a vendor block whose `source` names no source |
-//! | `R015` | a `dest`, `dir`, `subdir` or file name that is not a plain relative path |
+//! | `R015` | a `dest`, `dir`, `subdir`, file name, license file, or `setuid`, `caps` or alternative path that is not a plain relative path |
 //! | `R016` | an empty package with sources or a style other than `custom`, or a package without sources that is not empty |
 //! | `R017` | the `cargo` or `go` style without the matching `vendor` block |
 //! | `R018` | a source label that is not a plain name of letters, digits, `-`, `_` and `.` |

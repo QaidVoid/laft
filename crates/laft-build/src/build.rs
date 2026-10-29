@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -534,9 +535,13 @@ impl<'a> Builder<'a> {
             }
         }
         for file in recipe.patches.iter().chain(&recipe.files) {
-            let rel = file.path.trim_start_matches("/build/");
-            let path = build.join(rel);
-            let bytes = fs::read(&path).map_err(io(&path))?;
+            let rel = file.path.strip_prefix("/build/").unwrap_or(&file.path);
+            let mut bytes = Vec::new();
+            fsx::open_beneath(build, rel)
+                .and_then(|mut f| f.read_to_end(&mut bytes))
+                .map_err(|e| {
+                    BuildError::problem("B023", format!("{} cannot be read: {e}", file.path))
+                })?;
             if Blake3Hash::of(&bytes) != file.blake3 {
                 return Err(BuildError::problem(
                     "B023",
@@ -793,18 +798,44 @@ fn install_licenses(recipe: &Recipe, src: &Path, out: &Path) -> Result<(), Build
     if files.is_empty() {
         return Ok(());
     }
-    let dir = out.join("usr/share/licenses").join(recipe.name.as_str());
-    fs::create_dir_all(&dir).map_err(io(&dir))?;
+    fs::create_dir_all(out).map_err(io(out))?;
+    let mut dir = out.to_path_buf();
+    for part in ["usr", "share", "licenses", recipe.name.as_str()] {
+        dir.push(part);
+        match fs::symlink_metadata(&dir) {
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => {
+                return Err(BuildError::problem(
+                    "B023",
+                    format!("{} is not a directory", dir.display()),
+                ));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&dir).map_err(io(&dir))?;
+            }
+            Err(e) => return Err(io(&dir)(e)),
+        }
+    }
     for file in files {
-        let from = src.join(&file);
-        if !from.is_file() {
-            return Err(BuildError::problem(
+        let mut from = fsx::open_beneath(src, &file).map_err(|_| {
+            BuildError::problem(
                 "B023",
                 format!("license file {file} is not a file of the source tree"),
-            ));
-        }
+            )
+        })?;
         let to = dir.join(fsx::file_name(&file));
-        fs::copy(&from, &to).map_err(io(&to))?;
+        // The install phase may have left a symbolic link here, which a
+        // plain create would follow out of the tree.
+        match fs::remove_file(&to) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(io(&to)(e)),
+            _ => {}
+        }
+        let mut dest = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&to)
+            .map_err(io(&to))?;
+        std::io::copy(&mut from, &mut dest).map_err(io(&to))?;
         fsx::set_mode(&to, 0o644)?;
     }
     Ok(())

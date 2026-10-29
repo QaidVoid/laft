@@ -58,3 +58,30 @@ fn a_read_only_file_is_replaced_with_its_mode() {
         0o555
     );
 }
+
+#[test]
+fn files_open_beneath_their_root_only() {
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("root");
+    fs::create_dir_all(root.join("doc")).unwrap();
+    fs::write(root.join("doc/LICENSE"), b"x").unwrap();
+    fs::write(dir.path().join("secret"), b"s").unwrap();
+    symlink("doc/LICENSE", root.join("inside")).unwrap();
+    symlink(dir.path().join("secret"), root.join("absolute")).unwrap();
+    symlink("../secret", root.join("relative")).unwrap();
+    assert!(open_beneath(&root, "doc/LICENSE").is_ok());
+    assert!(open_beneath(&root, "inside").is_ok());
+    let secret = dir.path().join("secret");
+    for rel in [
+        secret.to_str().unwrap(),
+        "../secret",
+        "doc/../../secret",
+        "./doc/LICENSE",
+        "",
+        "absolute",
+        "relative",
+        "doc",
+    ] {
+        assert!(open_beneath(&root, rel).is_err(), "{rel}");
+    }
+}

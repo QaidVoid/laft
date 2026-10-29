@@ -7,6 +7,7 @@ use laft_core::{Blake3Hash, Name, PkgRef, Sha256Hash, Variant};
 use stav::{AttrPath, Diagnostic, FileDiagnostic, Priority, Span};
 
 use crate::env::{self, EnvInput, RESERVED};
+use crate::fsx;
 use crate::loader::{COMMON, RECIPES};
 use crate::recipe::{
     Alternative, BuildOptions, Fetch, FileRef, Metadata, Operations, Outputs, Recipe, Source,
@@ -65,6 +66,7 @@ pub(crate) fn convert(cx: &mut Cx<'_>, p: schema::Package) -> Option<Recipe> {
     let sources = sources(cx, &p);
     let vendors = vendors(cx, &p);
     check_package_shape(cx, &p);
+    check_paths(cx, &p);
     check_env(cx, &p.env);
     if let Some(update) = &p.update {
         check_update(cx, update);
@@ -520,14 +522,46 @@ fn check_update(cx: &mut Cx<'_>, update: &Update) {
     }
 }
 
+/// Checks that the license files and the payload paths the recipe names
+/// are plain relative paths, so that none can lead out of the tree it is
+/// joined to.
+fn check_paths(cx: &mut Cx<'_>, p: &schema::Package) {
+    let mut found: Vec<(Vec<String>, &str, &str)> = Vec::new();
+    for (i, file) in p.license_files.iter().flatten().enumerate() {
+        found.push((
+            vec!["license_files".into(), i.to_string()],
+            "license file",
+            file,
+        ));
+    }
+    for path in &p.setuid {
+        found.push((vec!["setuid".into()], "setuid path", path));
+    }
+    for path in p.caps.keys() {
+        found.push((vec!["caps".into(), path.clone()], "caps path", path));
+    }
+    for (group, alternative) in &p.alternatives {
+        for path in &alternative.paths {
+            let keys = vec!["alternatives".into(), group.clone(), "paths".into()];
+            found.push((keys, "alternative path", path));
+        }
+    }
+    for (keys, field, path) in found {
+        if !fsx::is_plain_relative(path) {
+            let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+            cx.error(
+                &keys,
+                "R015",
+                format!("{field} `{path}` is not a relative path without `.` and `..` components"),
+            );
+        }
+    }
+}
+
 /// Checks that `path` is a relative path without `.` or `..` components
 /// that is safe to place inside double quotes in a script.
 fn check_relative(cx: &mut Cx<'_>, keys: &[&str], field: &str, path: &str) {
-    let valid = !path.starts_with('/')
-        && path
-            .split('/')
-            .all(|c| !c.is_empty() && c != "." && c != "..")
-        && !path.contains(['"', '$', '`', '\\', '\n']);
+    let valid = fsx::is_plain_relative(path) && !path.contains(['"', '$', '`', '\\', '\n']);
     if !valid {
         cx.error(
             keys,
@@ -572,11 +606,13 @@ fn file_ref(cx: &mut Cx<'_>, keys: &[&str], path: &Path) -> Option<FileRef> {
         let rel = rel.to_str()?;
         if let Some(rest) = rel
             .strip_prefix(&format!("{RECIPES}/{name}/"))
-            .filter(|r| !r.is_empty())
+            .filter(|r| fsx::is_plain_relative(r))
         {
             Some(format!("/build/recipes/{}/{name}/{rest}", repo.name))
         } else {
-            let rest = rel.strip_prefix(&format!("{COMMON}/"))?;
+            let rest = rel
+                .strip_prefix(&format!("{COMMON}/"))
+                .filter(|r| fsx::is_plain_relative(r))?;
             Some(format!("/build/common/{}/{rest}", repo.name))
         }
     });

@@ -368,3 +368,26 @@ fn a_missing_patch_is_reported_where_the_list_names_it() {
     let source = report.source(item.file.expect("a place")).expect("known");
     assert_eq!(&source[item.diagnostic.span.range()], "./missing.patch");
 }
+
+#[test]
+fn recipe_paths_are_relative_and_stay_below_their_tree() {
+    let body = |field: &str| format!("{SOURCE}  build custom {{}}\n  {field}");
+    for field in [
+        "license_files = [\"/etc/shadow\"]",
+        "license_files = [\"../../../../etc/shadow\"]",
+        "license_files = [\"doc/../../x\"]",
+        "license_files = [\"\"]",
+        "setuid = [\"/usr/bin/su\"]",
+        "caps = { \"usr/../../bin/ping\" = \"cap_net_raw+ep\" }",
+        "alternative cc { paths = [\"/usr/bin/cc\"] }",
+    ] {
+        assert_eq!(codes("foo", &body(field)), ["R015"], "{field}");
+    }
+    for field in [
+        "license_files = [\"doc/LICENSE\", \"COPYING $1\"]",
+        "setuid = [\"usr/bin/su\"]",
+        "alternative cc { paths = [\"usr/bin/cc\"] }",
+    ] {
+        assert_eq!(codes("foo", &body(field)), Vec::<String>::new(), "{field}");
+    }
+}

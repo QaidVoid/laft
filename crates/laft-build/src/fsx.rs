@@ -5,6 +5,8 @@ use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 
+use rustix::fs::{Mode, OFlags, ResolveFlags};
+
 use crate::error::{BuildError, io};
 
 /// Writes `bytes` to `path` so that a crash leaves either the old file or
@@ -197,6 +199,48 @@ pub(crate) fn replace_file(path: &Path, bytes: &[u8]) -> Result<(), BuildError> 
         .and_then(|()| fs::set_permissions(&tmp, fs::Permissions::from_mode(mode)))
         .and_then(|()| fs::rename(&tmp, path))
         .map_err(io(path))
+}
+
+/// Whether `rel` is a plain relative path: not empty, not absolute, and
+/// without empty, `.` or `..` components.
+pub(crate) fn is_plain_relative(rel: &str) -> bool {
+    rel.split('/')
+        .all(|c| !c.is_empty() && c != "." && c != "..")
+}
+
+/// Opens the regular file `rel` below `root` for reading. `rel` must be a
+/// plain relative path, and no symbolic link on the way may lead out of
+/// `root`, so a name a recipe or a build controls never reaches a host
+/// file.
+pub(crate) fn open_beneath(root: &Path, rel: &str) -> io::Result<File> {
+    if !is_plain_relative(rel) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{rel} is not a plain relative path"),
+        ));
+    }
+    let dir = rustix::fs::open(
+        root,
+        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    // Nonblocking, so that opening a FIFO returns at once and is refused
+    // below instead of waiting for a writer.
+    let fd = rustix::fs::openat2(
+        &dir,
+        rel,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+        ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+    )?;
+    let file = File::from(fd);
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{rel} is not a regular file"),
+        ));
+    }
+    Ok(file)
 }
 
 /// Copies the tree `from` to `to`, with symlinks copied as symlinks.
