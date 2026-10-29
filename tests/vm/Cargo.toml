@@ -1,0 +1,17 @@
+[package]
+name = "laft-vmtest"
+description = "Installs a minimal Laft system on a disk image and boots it in a virtual machine"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+laft-core.workspace = true
+laft-pkg.workspace = true
+serde_json.workspace = true

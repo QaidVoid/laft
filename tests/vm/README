@@ -4,6 +4,31 @@ The tests in this directory boot a real machine. They are not part of the
 validation gates, because they need QEMU with UEFI firmware, a kernel and
 disk images.
 
+Running
+
+    tests/vm/run [--keep]
+
+builds the static Laft binaries with four jobs and runs laft-vmtest, the
+harness in src/. It needs qemu-system-x86_64 with the edk2 firmware in
+/usr/share/qemu, x86_64-linux-musl-gcc, sfdisk, mkfs.vfat, mkfs.ext4 and
+1.5 GiB of free memory, and uses KVM when /dev/kvm is usable. Nothing runs
+as root. Downloads, builds, images and console logs live in
+~/.cache/laft-vm, and --keep keeps the disk image after a successful run.
+
+laft-build builds busybox, runit, the kernel and Limine in bootstrap mode
+from the recipes in recipes/, which pin every source by URL and SHA-256.
+The Laft binaries become the laft package, and laft-repo publishes all of
+them as a signed file:// repository. An installer machine boots the kernel
+directly, mounts the empty ext4 root and FAT32 EFI system partition of a
+GPT disk image, and runs laft hardware --write and laft install with the
+configuration in system.stav. The install runs in a machine because laft
+install wants the EFI system partition mounted as FAT, which an
+unprivileged user cannot do on the host. The disk then boots through the
+firmware, Limine and laft-boot into runit, and the harness checks each
+stage on the serial console, logs in as root, checks the boot state and
+the mounts of /laft and the generation, and powers off with runit-init 0.
+A second boot checks that the first one was recorded as good.
+
 laft-boot
 
 The unit tests of crates/laft-boot cover its decisions: the kernel command

@@ -1,0 +1,22 @@
+package limine {
+  version  = "11.2.1"
+  summary  = "The Limine boot loader for UEFI machines"
+  homepage = "https://codeberg.org/Limine/Limine"
+  license  = [BSD-2-Clause]
+
+  source main {
+    url     = ["https://codeberg.org/Limine/Limine/raw/tag/v#{self.version}-binary/BOOTX64.EFI"]
+    sha256  = "sha256:698013c27ce2102766d399451fc3520c12662e84ebecc504f09f77417a5103d1"
+    extract = false
+  }
+
+  build custom {}
+  strip = false
+  split = []
+
+  phases {
+    install = """
+      install -Dm644 "$SRC/BOOTX64.EFI" "$DESTDIR/usr/share/limine/BOOTX64.EFI"
+      """
+  }
+}

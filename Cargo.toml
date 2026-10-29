@@ -19,6 +19,7 @@ members = [
   "crates/laft-store",
   "crates/laft-svc",
   "crates/laft-test",
+  "tests/vm",
 ]
 
 [workspace.package]

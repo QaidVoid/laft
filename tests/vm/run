@@ -1,0 +1,9 @@
+#!/bin/sh
+# Builds the static Laft binaries and runs the virtual machine test. Extra
+# arguments go to laft-vmtest, for example --keep to keep the disk image.
+set -eu
+cd "$(dirname "$0")/../.."
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+cargo build --release --target x86_64-unknown-linux-musl \
+  -p laft -p laft-boot -p laft-enter -p laft-build -p laft-repo
+exec cargo run --release -p laft-vmtest -- "$@"

@@ -1,0 +1,40 @@
+package linux {
+  version  = "7.2.13"
+  summary  = "A prebuilt Linux kernel with the modules a virtual machine boots with"
+  homepage = "https://www.kernel.org"
+  license  = [GPL-2.0-only]
+
+  source main {
+    url              = ["https://repo-default.voidlinux.org/current/linux7.2-7.2.13_1.x86_64.xbps"]
+    file             = "linux7.2-7.2.13_1.x86_64.tar.zst"
+    strip_components = 0
+    sha256           = "sha256:78634cbfc7c674a04131c32feb634e490215d59623cd2cc8f344065764c3c2eb"
+  }
+
+  build custom {}
+  strip = false
+  split = []
+
+  # The modules are decompressed, because the depmod that runs the depmod
+  # trigger reads plain modules only. The set covers virtio disks, ext4 and
+  # the FAT filesystem of the EFI system partition, with their dependencies.
+  phases {
+    install = """
+      release=7.2.13_1
+      from="$SRC/usr/lib/modules/$release"
+      to="$DESTDIR/usr/lib/modules/$release"
+      install -Dm644 "$SRC/boot/vmlinuz-$release" "$to/vmlinuz"
+      for module in \
+          drivers/virtio/virtio drivers/virtio/virtio_ring \
+          drivers/virtio/virtio_pci drivers/virtio/virtio_pci_legacy_dev \
+          drivers/virtio/virtio_pci_modern_dev drivers/block/virtio_blk \
+          lib/crc/crc16 fs/mbcache fs/jbd2/jbd2 fs/ext4/ext4 \
+          fs/fat/fat fs/fat/vfat fs/nls/nls_cp437 fs/nls/nls_iso8859-1; do
+        install -d "$(dirname "$to/kernel/$module.ko")"
+        zstd -q -d -c "$from/kernel/$module.ko.zst" > "$to/kernel/$module.ko"
+        echo "kernel/$module.ko" >> "$to/modules.order"
+      done
+      install -m644 "$from/modules.builtin" "$from/modules.builtin.modinfo" "$to/"
+      """
+  }
+}
