@@ -368,6 +368,53 @@ fn a_failed_packages_step_resumes_with_the_package_that_failed() {
 }
 
 #[test]
+fn a_step_that_failed_after_a_change_runs_again_when_the_change_is_undone() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let file = write_stage(dir.path(), STEPS);
+    let recipe = dir.path().join("repo/recipes/greet/package.stav");
+    let stage = Stage::load(&file).unwrap();
+    run(dir.path(), &stage, false).unwrap();
+
+    let failing = RECIPE.replace("mkdir -p", "exit 1\n      mkdir -p");
+    fs::write(&recipe, failing).unwrap();
+    let error = run(dir.path(), &stage, false).unwrap_err();
+    assert_eq!(error.code(), Some("B040"), "{error}");
+    fs::write(&recipe, RECIPE).unwrap();
+    let states = run(dir.path(), &stage, false).unwrap();
+    assert_eq!(
+        states,
+        [
+            ("build".to_owned(), StageState::Done),
+            ("check".to_owned(), StageState::UpToDate)
+        ],
+        "the failed build may have left files, so the package builds again"
+    );
+
+    let text = fs::read_to_string(&file).unwrap();
+    let checked = "echo checked >> \"$ROOT/count\"";
+    fs::write(
+        &file,
+        text.replace(checked, &format!("{checked}\n        exit 1")),
+    )
+    .unwrap();
+    let error = run(dir.path(), &Stage::load(&file).unwrap(), false).unwrap_err();
+    assert_eq!(error.code(), Some("B040"), "{error}");
+    fs::write(&file, text).unwrap();
+    let states = run(dir.path(), &Stage::load(&file).unwrap(), false).unwrap();
+    assert_eq!(
+        states,
+        [
+            ("build".to_owned(), StageState::UpToDate),
+            ("check".to_owned(), StageState::Done)
+        ],
+        "the failed script may have changed the root, so it runs again"
+    );
+}
+
+#[test]
 fn a_failing_script_stops_the_stage_and_runs_again_next_time() {
     if no_shell() {
         return;

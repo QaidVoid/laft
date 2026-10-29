@@ -431,9 +431,10 @@ impl<'a> Builder<'a> {
 
     /// Builds `recipe`, whose build key covers `inputs`, in bootstrap mode
     /// and installs it straight into `dest`, a system under construction,
-    /// instead of making packages. Once every phase succeeded, the build key
-    /// is recorded in `dest`, where [`installed`] finds it, and the working
-    /// tree is removed unless it is kept.
+    /// instead of making packages. The record of an earlier install goes
+    /// before the first phase runs. Once every phase succeeded, the build
+    /// key is recorded in `dest`, where [`installed`] finds it, and the
+    /// working tree is removed unless it is kept.
     ///
     /// The phases run like those of a bootstrap build, except that
     /// `$DESTDIR` and `$OUT` are `dest` and that the environment names none
@@ -470,8 +471,10 @@ impl<'a> Builder<'a> {
             .timeout(self.timeout)
             .shell(recipe.shell);
         session.env = env::install(recipe.environment(self.jobs));
+        let record = installed_record(dest, &Item::of(recipe));
+        forget_key(&record)?;
         self.phases(&session, recipe, None)?;
-        write_key(&installed_record(dest, &Item::of(recipe)), &key)?;
+        write_key(&record, &key)?;
         if !self.keep_work {
             fsx::remove_tree(&session.dir)?;
         }
@@ -483,8 +486,10 @@ impl<'a> Builder<'a> {
     /// `dest`, a system under construction, so that later builds there use
     /// them. The automatic debug info package, `<name>-dbg`, stays out,
     /// because no build needs it. A `dbg` subpackage that the recipe
-    /// declares itself is unpacked like any other. Once every package is in place, the build key is
-    /// recorded in `dest`, where [`installed`] finds it.
+    /// declares itself is unpacked like any other. The record of an earlier
+    /// unpack goes before the first package is unpacked. Once every package
+    /// is in place, the build key is recorded in `dest`, where [`installed`]
+    /// finds it.
     ///
     /// Each package is unpacked into a staging directory inside `dest` and
     /// moved into place from there. A directory that `dest` lacks is made
@@ -513,6 +518,8 @@ impl<'a> Builder<'a> {
             ));
         }
         let outcome = self.build(recipe, inputs)?;
+        let record = installed_record(dest, &Item::of(recipe));
+        forget_key(&record)?;
         let outputs = &recipe.outputs;
         let debug = (outputs.split.contains(&Split::Dbg)
             && !outputs.subpackages.contains_key("dbg"))
@@ -522,10 +529,7 @@ impl<'a> Builder<'a> {
                 crate::deploy::unpack_into(file, dest)?;
             }
         }
-        write_key(
-            &installed_record(dest, &Item::of(recipe)),
-            &inputs.build_key(),
-        )?;
+        write_key(&record, &inputs.build_key())?;
         Ok(outcome)
     }
 
@@ -870,6 +874,20 @@ pub(crate) fn write_key(path: &Path, key: &Blake3Hash) -> Result<(), BuildError>
         .map_err(|e| BuildError::problem("B023", format!("{}: {e}", path.display())))?;
     bytes.push(b'\n');
     fsx::write_atomic(path, &bytes, 0o644)
+}
+
+/// Removes the record at `path`, so that work which may leave a partial
+/// result is never taken for done. A missing record is fine.
+pub(crate) fn forget_key(path: &Path) -> Result<(), BuildError> {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(io(path)(e)),
+    }
+    let dir = path.parent().unwrap_or(Path::new("."));
+    fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(io(dir))
 }
 
 /// The build key that [`write_key`] recorded at `path`, or `None` when

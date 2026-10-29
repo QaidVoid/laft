@@ -484,6 +484,38 @@ fn an_unpacking_build_unpacks_an_explicit_dbg_subpackage() {
 }
 
 #[test]
+fn a_failed_install_forgets_the_earlier_one() {
+    let dir = laft_test::tempdir();
+    if !Path::new("/bin/sh").exists() {
+        println!("skipping: the host has no /bin/sh");
+        return;
+    }
+    let dest = dir.path().join("system");
+    let (root, cache) = offline_cache(dir.path());
+    let attempt = |name: &str, install: &str| {
+        let repos = repos_with(
+            &dir.path().join(name),
+            &format!("  build custom {{}}\n  phases {{\n    install = \"{install}\"\n  }}"),
+        );
+        let recipe: Recipe = support::evaluate(&repos, "hello").remove(0);
+        let builder = Builder::new(&repos, &cache, &root, Mode::Bootstrap("/".into()));
+        let inputs = builder.key_inputs(&recipe).unwrap();
+        let result = builder.install(&recipe, &inputs, &dest);
+        (Item::of(&recipe), inputs.build_key(), result)
+    };
+    let (item, key, result) = attempt("good", "true");
+    result.unwrap();
+    assert_eq!(installed(&dest, &item).unwrap(), Some(key));
+    let (item, _, result) = attempt("bad", "false");
+    result.expect_err("the install phase fails");
+    assert_eq!(
+        installed(&dest, &item).unwrap(),
+        None,
+        "the destination may hold files of the failed install"
+    );
+}
+
+#[test]
 fn an_installing_build_sees_the_destination_and_no_toolchain() {
     let dir = laft_test::tempdir();
     let repos = repos_with(

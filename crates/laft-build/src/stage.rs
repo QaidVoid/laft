@@ -15,7 +15,7 @@ use laft_sandbox::RootSandbox;
 use serde::Deserialize;
 use stav::{AttrPath, ImportRoot, Limits, RootSpec};
 
-use crate::build::{installed_record, read_key, write_key};
+use crate::build::{forget_key, installed_record, read_key, write_key};
 use crate::error::{BuildError, io};
 use crate::exec::{Executor, tail, wait};
 use crate::loader::Scope;
@@ -320,7 +320,9 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// set, so a changed step runs again together with every step after it.
 /// Each package of a step is recorded too, with the key the step would
 /// have if it ended with that package, so a failed run continues with the
-/// package that failed.
+/// package that failed. A record goes before the script or package it
+/// stands for runs, so work that fails partway never counts as done, even
+/// when a later run brings back the key it had before.
 ///
 /// A build whose recipe has `ci.runner = big` first waits until the host
 /// has [`StageOptions::min_available`] of memory available. Every script
@@ -573,6 +575,9 @@ impl StageRun<'_> {
             }
             return Ok(key);
         }
+        if !self.options.dry_run {
+            forget_key(&self.record(step))?;
+        }
         for (index, (recipe, inputs)) in recipes.iter().zip(&inputs).enumerate() {
             let done = step_key(step, previous, &self.stage.path, work(&keys[..=index]))?;
             let record = self.package_record(step, recipe);
@@ -588,6 +593,7 @@ impl StageRun<'_> {
                 progress(finished(&step.name, &what, state, Duration::ZERO));
                 continue;
             }
+            forget_key(&record)?;
             self.package(step, tag, recipe, inputs, progress)?;
             write_key(&record, &done)?;
         }
@@ -636,13 +642,7 @@ impl StageRun<'_> {
             Place::Root => {
                 // The build inside skips a package whose record shows its
                 // key, so the record goes first to make it build again.
-                let record = installed_record(root, &item);
-                match fs::remove_file(&record) {
-                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                        return Err(io(&record)(e));
-                    }
-                    _ => {}
-                }
+                forget_key(&installed_record(root, &item))?;
                 self.builder.fetch(recipe)?;
                 let log = self.logs.join(format!("{tag}-{}.log", recipe.name));
                 self.build_inside(&what, &log)?;
@@ -768,6 +768,7 @@ impl StageRun<'_> {
             progress(finished(&step.name, "script", state, Duration::ZERO));
             return Ok(key);
         }
+        forget_key(&self.record(step))?;
         progress(StageEvent::Start {
             step: &step.name,
             what: "script",
