@@ -442,6 +442,12 @@ fn early_outside_the_base_part_is_a_warning() {
 }
 
 #[test]
+fn repeating_early_on_a_base_service_is_not_a_warning() {
+    let loaded = load_body("service udevd { early = true }").expect("early is allowed");
+    assert_eq!(codes(&loaded.warnings), Vec::<&str>::new());
+}
+
+#[test]
 fn privileged_files_live_in_usr() {
     let body = r#"security { privileged "/opt/x" { } }"#;
     assert_rejected(rejected(body), "C1301", r#"privileged "/opt/x" { }"#);

@@ -321,7 +321,7 @@ fn check_services(cx: &Cx<'_>, services: &ServiceConfig, found: &mut Vec<FileDia
         let path = ["system", "services", name, "early"];
         let Some(span) = cx
             .own_span(&path)
-            .filter(|_| service.enable && service.early)
+            .filter(|_| service.enable && service.early && !cx.base_sets(&path))
         else {
             continue;
         };

@@ -28,6 +28,8 @@ pub(crate) struct Cx<'a> {
     /// The prelude and the base part, which diagnostics point into only
     /// when nothing else contributed.
     host_files: Vec<FileId>,
+    /// The base part alone.
+    base_files: Vec<FileId>,
 }
 
 impl<'a> Cx<'a> {
@@ -42,11 +44,17 @@ impl<'a> Cx<'a> {
             .filter(|&(_, name)| name == host::PRELUDE_NAME || name == host::BASE_NAME)
             .map(|(file, _)| file)
             .collect();
+        let base_files = checked
+            .files()
+            .filter(|&(_, name)| name == host::BASE_NAME)
+            .map(|(file, _)| file)
+            .collect();
         Self {
             checked,
             evaluated,
             pkgs,
             host_files,
+            base_files,
         }
     }
 
@@ -89,6 +97,14 @@ impl<'a> Cx<'a> {
             .spans(&AttrPath::new(path.iter().copied()))
             .into_iter()
             .find(|s| !self.host_files.contains(&s.file))
+    }
+
+    /// Whether the base part sets the attribute at `path`.
+    pub(crate) fn base_sets(&self, path: &[&str]) -> bool {
+        self.evaluated
+            .spans(&AttrPath::new(path.iter().copied()))
+            .iter()
+            .any(|s| self.base_files.contains(&s.file))
     }
 
     /// Returns where the last element of the list or set at `path` whose
