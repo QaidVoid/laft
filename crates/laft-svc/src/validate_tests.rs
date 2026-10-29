@@ -353,15 +353,16 @@ fn configuration_deserializes_with_defaults() {
         "services": {
             "dbus": {
                 "exec": ["/usr/bin/dbus-daemon"],
-                "ready": {"type": "notify", "fd": 3},
+                "ready": {"notify": {"fd": 3}},
                 "runtime_dirs": [{"path": "dbus", "owner": "messagebus"}],
                 "restart": "on-failure",
                 "stop_signal": "HUP"
             },
             "probe": {
                 "exec": ["/usr/bin/probe"],
-                "ready": {"type": "check", "cmd": ["/usr/bin/true"]}
-            }
+                "ready": {"check": {"cmd": ["/usr/bin/true"]}}
+            },
+            "web": {"exec": ["/usr/bin/web"], "ready": "immediate"}
         },
         "getty": {"ttys": ["tty1"]}
     }"#;
@@ -379,6 +380,7 @@ fn configuration_deserializes_with_defaults() {
             timeout: 60
         }
     );
+    assert_eq!(config.services["web"].ready, Ready::Immediate);
     assert_eq!(config.getty.ttys, ["tty1"]);
     let typo = r#"{"services": {"x": {"exce": []}}}"#;
     assert!(serde_json::from_str::<crate::ServiceConfig>(typo).is_err());

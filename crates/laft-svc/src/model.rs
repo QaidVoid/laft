@@ -69,8 +69,12 @@ impl ServiceKind {
 
 /// When a service counts as ready, so that services ordered after it may
 /// start.
+///
+/// It deserializes in the form an evaluated configuration takes: the name
+/// of a variant without fields, such as `"immediate"`, or a map from the
+/// variant name to its fields, such as `{"notify": {"fd": 3}}`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
 pub enum Ready {
     /// As soon as the service's command is executed.
     #[default]
