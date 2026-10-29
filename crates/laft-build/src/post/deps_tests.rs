@@ -46,6 +46,23 @@ fn needs_become_dependencies_unless_the_package_provides_them() {
 }
 
 #[test]
+fn a_library_without_a_soname_provides_its_file_name() {
+    let (dir, elves) = setup(&[
+        ("usr/lib/libunnamed.so", &elf_fixture("libunnamed.so")),
+        (
+            "usr/lib/plugins/libplugin.so",
+            &elf_fixture("libunnamed.so"),
+        ),
+    ]);
+    let detected = detect(dir.path(), &elves, Variant::Dynamic, &[], &mut Vec::new()).unwrap();
+    let (_, provides) = detected.relations(&set(&[
+        "usr/lib/libunnamed.so",
+        "usr/lib/plugins/libplugin.so",
+    ]));
+    assert_eq!(texts(&provides), ["so:libunnamed.so"]);
+}
+
+#[test]
 fn ignored_paths_and_static_builds_detect_nothing() {
     let (dir, elves) = setup(&[
         ("usr/lib/libversioned.so.1", &elf_fixture("libversioned.so")),

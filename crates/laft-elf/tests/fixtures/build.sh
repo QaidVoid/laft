@@ -27,6 +27,11 @@ cc $flags -static -o static static.c
 # shellcheck disable=SC2086
 cc $flags -fPIE -static-pie -o static-pie static.c
 
+# A library without a soname, which the loader finds by its file name.
+# shellcheck disable=SC2086
+cc $flags -shared -fPIC -o libunnamed.so libversioned.c \
+  -Wl,--version-script=libversioned.map
+
 # A library without a soname, linked by a relative path, is recorded in
 # DT_NEEDED and in the version requirements as that path.
 # shellcheck disable=SC2086

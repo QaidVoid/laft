@@ -136,7 +136,8 @@ pub(crate) fn link(root: &std::path::Path, path: &str, target: &str) {
 }
 
 /// The bytes of an ELF fixture of `laft-elf`: `libversioned.so` (soname
-/// `libversioned.so.1`, `DT_RPATH` `/opt/legacy/lib`), `program` (needs
+/// `libversioned.so.1`, `DT_RPATH` `/opt/legacy/lib`), `libunnamed.so`
+/// (the same library without a soname), `program` (needs
 /// `libversioned.so.1`, `RUNPATH` `$ORIGIN/../lib:/usr/lib`), `program32`
 /// or `static`.
 pub(crate) fn elf_fixture(name: &str) -> Vec<u8> {

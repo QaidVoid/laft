@@ -66,8 +66,9 @@ impl Detected {
 /// Every `DT_NEEDED` soname of an ELF file is a need, except one that a
 /// shared object of the payload outside `usr/lib/` provides, which the
 /// object reaches through its `RUNPATH`. In a `dynamic` build, every shared
-/// object directly in `usr/lib/` with a `DT_SONAME` provides `so:<soname>`
-/// and every `usr/lib/pkgconfig/*.pc` and `usr/share/pkgconfig/*.pc`
+/// object directly in `usr/lib/` provides `so:<soname>`, or `so:<file
+/// name>` when it has no `DT_SONAME`, because that is the name the loader
+/// finds it by. Every `usr/lib/pkgconfig/*.pc` and `usr/share/pkgconfig/*.pc`
 /// provides `pc:<module>`, with the version its `Version:` line gives.
 /// Files matching `ignore_deps` and debug files are skipped.
 ///
@@ -106,11 +107,14 @@ pub fn detect(
         if variant == Variant::Dynamic
             && elf.kind == Kind::SharedObject
             && fsx::parent(rel) == "usr/lib"
-            && let Some(soname) = &elf.soname
         {
-            detected
-                .provides
-                .insert(rel.clone(), Provide::So(soname.clone()));
+            let soname = match &elf.soname {
+                Some(soname) => Some(soname.clone()),
+                None => fsx::file_name(rel).parse().ok(),
+            };
+            if let Some(soname) = soname {
+                detected.provides.insert(rel.clone(), Provide::So(soname));
+            }
         }
     }
     let entries = fsx::walk(out)?;
