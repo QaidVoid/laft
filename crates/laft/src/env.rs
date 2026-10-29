@@ -141,7 +141,7 @@ impl Env {
             }
             Err(e) => return Err(e.into()),
         };
-        let recovered = laft_activate::recover(&lock, &self.esp_dir())?;
+        let recovered = laft_activate::recover(&lock, &self.esp(None))?;
         for recovery in recovered {
             self.ui.note(recovery.to_string());
         }
@@ -155,14 +155,16 @@ impl Env {
         fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
     }
 
-    /// The EFI system partition: `/boot` below the root.
-    pub(crate) fn esp_dir(&self) -> PathBuf {
-        self.path("/boot")
-    }
-
-    /// The EFI system partition the configuration names.
-    pub(crate) fn esp(&self, config: &SystemConfig) -> PathBuf {
-        self.path(&config.boot.boot.esp)
+    /// The EFI system partition below the root: `boot.esp` of `config`
+    /// when the command loaded the configuration, otherwise as the
+    /// configuration of the default generation recorded it, and `/boot`
+    /// when no generation records one.
+    pub(crate) fn esp(&self, config: Option<&SystemConfig>) -> PathBuf {
+        let esp = match config {
+            Some(config) => config.boot.boot.esp.clone(),
+            None => recorded_esp(&self.root).unwrap_or_else(|| "/boot".to_owned()),
+        };
+        self.path(&esp)
     }
 
     /// Loads the configuration, resolving package references with
@@ -372,6 +374,22 @@ impl Env {
             .context(e.to_string())
         })
     }
+}
+
+/// The `boot.esp` that the configuration of the default generation, or of
+/// the newest one when there is no default, records.
+fn recorded_esp(root: &Root) -> Option<String> {
+    let number = match root.default_generation().ok()? {
+        Some(number) => number,
+        None => *root.generations().ok()?.last()?,
+    };
+    let path = root
+        .path()
+        .join("laft/gens")
+        .join(number.to_string())
+        .join("config.json");
+    let config: serde_json::Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    config["boot"]["esp"].as_str().map(str::to_owned)
 }
 
 /// Whether some index lists the package `pkg` names, for the

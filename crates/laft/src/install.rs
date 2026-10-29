@@ -171,7 +171,12 @@ pub(crate) fn install(env: &Env, generate_config: bool) -> Result<u8, Failure> {
         return Ok(0);
     }
     check_empty(&root)?;
-    laft_activate::check_esp(&env.esp_dir())?;
+    // A configuration that does not load fails the install below with
+    // its diagnostics, so the precheck falls back to the default ESP.
+    let esp = env
+        .load(&|_| Ok(()))
+        .map_or_else(|_| env.esp(None), |loaded| env.esp(Some(&loaded.config)));
+    laft_activate::check_esp(&esp)?;
     create_layout(&root)?;
     let source = env.config_dir();
     let installed_config = fs::canonicalize(&config_dir).unwrap_or(config_dir.clone());

@@ -619,7 +619,7 @@ fn indexes(env: &Env) -> Check {
 }
 
 fn boot_files(env: &Env) -> Check {
-    let esp = env.esp_dir().join("laft");
+    let esp = env.esp(None).join("laft");
     let mut missing = Vec::new();
     let generations = gens::generations(env).unwrap_or_default();
     for generation in &generations {

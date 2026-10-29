@@ -38,7 +38,7 @@ fn status(state: &BootState, number: u64) -> &'static str {
 
 /// `laft boot list`.
 pub(crate) fn list(env: &Env) -> Result<u8, Failure> {
-    let esp = env.esp_dir();
+    let esp = env.esp(None);
     let entries: Value = fs::read(esp.join("laft/entries.json"))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
@@ -186,7 +186,7 @@ pub(crate) fn mark_good(env: &Env) -> Result<u8, Failure> {
 pub(crate) fn install(env: &Env) -> Result<u8, Failure> {
     env.ui.start("boot install");
     let _lock = env.lock("boot install")?;
-    let installed = crate::activate::install_boot(env, &env.esp_dir())?;
+    let installed = crate::activate::install_boot(env, &env.esp(None))?;
     env.ui
         .event(json!({"event": "result", "entries": installed.entries,
         "default": installed.default, "copied": installed.copied, "removed": installed.removed}));

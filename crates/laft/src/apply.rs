@@ -376,7 +376,7 @@ fn build_and_activate(
         json!({"event": "phase", "phase": "assemble", "status": "done", "generation": number}),
     );
 
-    let esp = env.esp(config);
+    let esp = env.esp(Some(config));
     activate::install_boot(env, &esp)?;
     tx.boot_installed()?;
     env.ui.phase("boot", format!("entry {number} installed"));

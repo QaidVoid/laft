@@ -155,3 +155,51 @@ fn hardware_completions_and_rescue_need_nothing_but_the_command_line() {
     }
     run(&["internal", "worker"]).expect(2);
 }
+
+#[test]
+fn every_command_uses_the_configured_efi_system_partition() {
+    let fx = fixture!(hello());
+    fs::create_dir_all(fx.root().join("efi")).expect("writable");
+    let body =
+        "  boot { esp = \"/efi\" }\n  fs \"/efi\" { device = \"UUID=AB-CD\", fstype = vfat }";
+    fx.configure(", hello", body);
+    fx.laft(&["apply", "-y"]).expect(0);
+    assert!(fx.read("efi/limine.conf").contains("Laft 1"));
+    fx.configure("", body);
+    fx.laft(&["apply", "-y"]).expect(0);
+
+    fs::remove_file(fx.root().join("efi/limine.conf")).expect("removable");
+    fx.laft(&["boot", "install"]).expect(0);
+    assert!(fx.read("efi/limine.conf").contains("Laft 2"));
+    let list = fx.laft(&["boot", "list"]).expect(0);
+    assert!(list.stdout.lines().count() > 2, "{}", list.stdout);
+    fx.laft(&["rollback", "-y"]).expect(0);
+    fx.laft(&["gens", "rm", "2", "-y"]).expect(0);
+    assert!(!fx.read("efi/limine.conf").contains("Laft 2"));
+    assert!(
+        !fx.root().join("boot/limine.conf").exists(),
+        "nothing is written to /boot"
+    );
+}
+
+#[test]
+fn gc_refuses_to_run_with_a_broken_configuration() {
+    let fx = fixture!(hello());
+    fx.configure(", hello", "");
+    fx.laft(&["apply", "-y"]).expect(0);
+    fx.configure("", "");
+    fx.laft(&["apply", "-y"]).expect(0);
+    fs::write(
+        fx.root().join("etc/laft/system.stav"),
+        "system { nonsense }\n",
+    )
+    .expect("writable");
+    let gc = fx.laft(&["gc", "--dry-run"]);
+    assert_ne!(gc.code, 0, "{}", gc.stdout);
+    let rm = fx.laft(&["gens", "rm", "1", "-y"]);
+    assert_ne!(rm.code, 0, "{}", rm.stdout);
+    assert!(
+        fx.root().join("laft/gens/1").exists(),
+        "nothing was deleted"
+    );
+}

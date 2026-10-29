@@ -131,7 +131,7 @@ pub(crate) fn switch_to(
     if !(mode == Mode::Switch && env.live()) {
         lock.set_default(number)?;
     }
-    install_boot(env, &env.esp_dir())?;
+    install_boot(env, &env.esp(None))?;
     Ok(activation)
 }
 

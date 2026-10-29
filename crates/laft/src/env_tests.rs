@@ -22,3 +22,23 @@ fn generation_links_are_read_by_their_last_component() {
     symlink("mounts/x", &bad).expect("can link");
     assert!(link_number(&bad).is_err());
 }
+
+#[test]
+fn the_esp_comes_from_the_default_generation_s_configuration() {
+    let dir = laft_test::tempdir();
+    let root = Root::new(dir.path());
+    assert_eq!(recorded_esp(&root), None);
+    for (number, esp) in [(1, "/efi"), (2, "/boot/efi")] {
+        let gen_dir = dir.path().join(format!("laft/gens/{number}"));
+        std::fs::create_dir_all(&gen_dir).expect("writable");
+        let config = format!("{{\"boot\": {{\"esp\": \"{esp}\"}}}}");
+        std::fs::write(gen_dir.join("config.json"), config).expect("writable");
+    }
+    assert_eq!(
+        recorded_esp(&root).as_deref(),
+        Some("/boot/efi"),
+        "the newest"
+    );
+    symlink("1", dir.path().join("laft/gens/default")).expect("can link");
+    assert_eq!(recorded_esp(&root).as_deref(), Some("/efi"), "the default");
+}

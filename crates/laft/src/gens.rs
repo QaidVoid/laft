@@ -194,10 +194,8 @@ pub(crate) fn gc(env: &Env, args: &GcArgs) -> Result<u8, Failure> {
     env.require_write("gc")?;
     env.ui.start("gc");
     let lock = env.lock("gc")?;
-    let configured = env
-        .load(&|_| Ok(()))
-        .map(|l| l.config.gc.policy)
-        .unwrap_or_default();
+    let config = env.load(&|_| Ok(()))?.config;
+    let configured = config.gc.policy;
     let policy = GcPolicy {
         keep_generations: args.keep_generations.unwrap_or(configured.keep_generations),
         keep_days: args.keep_days.unwrap_or(configured.keep_days),
@@ -218,7 +216,7 @@ pub(crate) fn gc(env: &Env, args: &GcArgs) -> Result<u8, Failure> {
     let mut boot_removed = 0;
     if !args.dry_run {
         plan.execute(&lock)?;
-        let installed = activate::install_boot(env, &env.esp_dir())?;
+        let installed = activate::install_boot(env, &env.esp(Some(&config)))?;
         boot_removed = installed.removed.len();
     }
     let decisions: Vec<Value> = plan
@@ -490,19 +488,21 @@ pub(crate) fn rm(env: &Env, numbers: &[u64], no_gc: bool) -> Result<u8, Failure>
             format!("generation {active} is active and cannot be deleted"),
         ));
     }
+    let config = if no_gc {
+        None
+    } else {
+        Some(env.load(&|_| Ok(()))?.config)
+    };
+    let esp = env.esp(config.as_ref());
     let list: Vec<String> = numbers.iter().map(ToString::to_string).collect();
     env.ui
         .confirm(&format!("delete generation {}?", list.join(", ")))?;
     laft_store::remove_generations(&lock, numbers)
         .map_err(|e| Failure::new(crate::failure::exit::USAGE, e))?;
-    if !no_gc {
-        let policy = env
-            .load(&|_| Ok(()))
-            .map(|l| l.config.gc.policy)
-            .unwrap_or_default();
-        activate::auto_gc(env, &lock, &policy, &env.esp_dir());
+    if let Some(config) = &config {
+        activate::auto_gc(env, &lock, &config.gc.policy, &esp);
     }
-    activate::install_boot(env, &env.esp_dir())?;
+    activate::install_boot(env, &esp)?;
     env.ui.event(json!({"event": "result", "deleted": numbers}));
     env.ui.note(format!(
         "done        deleted generation {}",
