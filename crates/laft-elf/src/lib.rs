@@ -8,6 +8,8 @@
 //! library still satisfies the objects linked against it. A `DT_NEEDED`
 //! entry that is a path rather than a soname is reported as a
 //! [`Library::Path`], and the builder decides whether to accept it.
+//! [`normalize_search_paths`] rewrites the search paths of a payload file
+//! in place so that they follow Laft's rules.
 //!
 //! Payload files must keep their section header table. The dynamic entries,
 //! the dynamic symbols and their versions are read from the `SHT_DYNAMIC`,
@@ -27,8 +29,10 @@
 
 mod error;
 mod inspect;
+mod rewrite;
 mod symbol;
 
 pub use error::Error;
 pub use inspect::{Class, EM_X86_64, Elf, Kind, Library, inspect};
+pub use rewrite::normalize_search_paths;
 pub use symbol::{Export, ExportKind, Import, SymbolVersion, VersionNeed};
