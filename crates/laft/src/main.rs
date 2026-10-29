@@ -42,6 +42,7 @@ mod env;
 mod etc;
 mod explain;
 mod failure;
+mod fsx;
 mod gens;
 mod install;
 mod lang;

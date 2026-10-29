@@ -197,3 +197,29 @@ fn the_configuration_tools_format_check_and_print_it() {
     fx.laft(&["check", part.to_str().expect("UTF-8")])
         .expect(11);
 }
+
+#[test]
+fn formatting_standard_input_with_check_prints_nothing_and_fails_on_a_change() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let check = |text: &str| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_laft"))
+            .args(["fmt", "--stdin", "--check"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("laft runs");
+        child
+            .stdin
+            .take()
+            .expect("piped")
+            .write_all(text.as_bytes())
+            .expect("writable");
+        child.wait_with_output().expect("finishes")
+    };
+    let ugly = check("system {\nhostname = \"a\"\n}\n");
+    assert_eq!(ugly.status.code(), Some(1));
+    assert!(ugly.stdout.is_empty());
+    let tidy = check("system {\n  hostname = \"a\"\n}\n");
+    assert_eq!(tidy.status.code(), Some(0));
+}

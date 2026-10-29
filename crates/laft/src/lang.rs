@@ -37,6 +37,7 @@ pub(crate) fn fmt(env: &Env, paths: &[PathBuf], check: bool, stdin: bool) -> Res
         let mut text = String::new();
         io::stdin().read_to_string(&mut text)?;
         return match stav::format(&text) {
+            Ok(formatted) if check => Ok(if formatted == text { 0 } else { exit::FAILURE }),
             Ok(formatted) => {
                 print_raw(&formatted);
                 Ok(0)
@@ -80,7 +81,8 @@ pub(crate) fn fmt(env: &Env, paths: &[PathBuf], check: bool, stdin: bool) -> Res
                     .out(crate::diff::unified(&name, &name, &text, &formatted));
             }
         } else {
-            write_replacing(file, &formatted)?;
+            crate::fsx::replace(file, formatted.as_bytes())
+                .map_err(|e| Failure::general(format!("{}: {e}", file.display())))?;
         }
     }
     if env.ui.json {
@@ -111,19 +113,6 @@ pub(crate) fn fmt(env: &Env, paths: &[PathBuf], check: bool, stdin: bool) -> Res
 fn print_raw(text: &str) {
     use std::io::Write;
     let _ = io::stdout().lock().write_all(text.as_bytes());
-}
-
-/// Replaces `path` with `text` through a temporary file and a rename.
-fn write_replacing(path: &Path, text: &str) -> Result<(), Failure> {
-    use std::io::Write;
-    let mode = fs::metadata(path)?.permissions();
-    let tmp = path.with_extension("stav.laft-tmp");
-    let mut file = fs::File::create(&tmp)?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()?;
-    fs::set_permissions(&tmp, mode)?;
-    fs::rename(&tmp, path)?;
-    Ok(())
 }
 
 /// The directory and entry file of `file`, absolute.

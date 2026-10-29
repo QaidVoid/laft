@@ -78,17 +78,13 @@ fn require_root_dir(env: &Env, command: &str) -> Result<(), Failure> {
 
 /// Writes `text` to the new file `path`, refusing to replace one.
 fn write_new(path: &Path, text: &str) -> Result<(), Failure> {
-    if path.exists() {
-        return Err(Failure::general(format!(
+    crate::fsx::create_new(path, text.as_bytes()).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => Failure::general(format!(
             "{} exists, and laft never overwrites it",
             path.display()
-        )));
-    }
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    fs::write(path, text)?;
-    Ok(())
+        )),
+        _ => Failure::general(format!("{}: {e}", path.display())),
+    })
 }
 
 /// Fails unless the target holds nothing but `boot/`, `lost+found/` and
