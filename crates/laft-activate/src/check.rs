@@ -14,6 +14,11 @@ use crate::{accounts, privileged, render};
 /// the same rules again, together with those that need the store, the
 /// recorded ids and the current account databases.
 ///
+/// # Panics
+///
+/// Panics if checking a declared file fails, which cannot happen because
+/// only reading a `source` file fails and a check reads none.
+///
 /// ```
 /// use laft_activate::{EtcConfig, File, Security, check_config};
 ///

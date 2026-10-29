@@ -253,7 +253,7 @@ fn check_services(cx: &Cx<'_>, services: &ServiceConfig, found: &mut Vec<FileDia
                         field: f,
                         ..
                     } => {
-                        let top = f.split('.').next().unwrap_or(f);
+                        let top = f.split_once('.').map_or(*f, |(top, _)| top);
                         cx.error("C1203", &["system", "services", s, top], message)
                     }
                     ServiceError::RelativeCommand {

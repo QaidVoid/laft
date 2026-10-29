@@ -586,6 +586,11 @@ fn check_label<'a>(label: &'a str, errors: &mut Vec<ConfigError>) -> Option<&'a 
 /// Checks the identity values, kernel settings, sysctls and declared files
 /// of `config` with the rules of [`render`], without reading packages or
 /// `source` files and without resolving owners.
+///
+/// # Panics
+///
+/// Panics if checking a declared file fails, which cannot happen because
+/// only reading a `source` file fails and a check reads none.
 pub(crate) fn check(config: &EtcConfig, errors: &mut Vec<ConfigError>) {
     let mut nodes = BTreeMap::new();
     for (path, node) in derived(config, errors) {
@@ -598,7 +603,9 @@ pub(crate) fn check(config: &EtcConfig, errors: &mut Vec<ConfigError>) {
         if !file.enable {
             continue;
         }
-        if let Ok(Some(node)) = file_node(label, file, None, errors) {
+        let node = file_node(label, file, None, errors)
+            .expect("only reading a source file fails, and a check reads none");
+        if let Some(node) = node {
             place(&mut nodes, path, node, errors);
         }
     }
