@@ -214,3 +214,29 @@ fn alternative_paths_must_be_in_their_package() {
         Some("R040")
     );
 }
+
+#[test]
+fn required_pkg_config_modules_become_dependencies() {
+    let (dir, elves) = setup(&[
+        (
+            "usr/lib/pkgconfig/libkmod.pc",
+            b"Name: libkmod\nVersion: 34\nRequires: zlib, libcrypto>=1.1\nRequires.private: libzstd >=  1.4.4, liblzma >= 4.99, ${extra}, libkmod-extra\n",
+        ),
+        ("usr/lib/pkgconfig/libkmod-extra.pc", b"Name: extra\nVersion: 1\n"),
+    ]);
+    crate::test_support::link(dir.path(), "usr/lib/pkgconfig/kmod.pc", "libkmod.pc");
+    let detected = detect(dir.path(), &elves, Variant::Dynamic, &[], &mut Vec::new()).unwrap();
+    let (depends, provides) = detected.relations(&set(&[
+        "usr/lib/pkgconfig/libkmod.pc",
+        "usr/lib/pkgconfig/libkmod-extra.pc",
+        "usr/lib/pkgconfig/kmod.pc",
+    ]));
+    assert_eq!(
+        texts(&depends),
+        ["pc:libcrypto", "pc:liblzma", "pc:libzstd", "pc:zlib"]
+    );
+    assert_eq!(
+        texts(&provides),
+        ["pc:kmod=34", "pc:libkmod-extra=1", "pc:libkmod=34"]
+    );
+}

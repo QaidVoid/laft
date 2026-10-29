@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
-use laft_core::{Dep, Name, Provide, Soname, TRIGGERS, Variant};
+use laft_core::{Dep, Name, PcName, Provide, Soname, TRIGGERS, Variant};
 use laft_elf::{Kind, Library};
 use laft_pkg::StaticDep;
 
@@ -35,25 +35,44 @@ pub struct Detected {
     pub needs: BTreeMap<String, BTreeSet<Soname>>,
     /// The capability each file offers, by payload path.
     pub provides: BTreeMap<String, Provide>,
+    /// The pkg-config modules each pkg-config file requires, publicly or
+    /// privately, by payload path.
+    pub pc_needs: BTreeMap<String, BTreeSet<PcName>>,
 }
 
 impl Detected {
     /// The detected dependencies and provides of a package that holds
     /// `paths`, each sorted by text: every needed soname that the package
-    /// does not provide itself becomes `so:<soname>`.
+    /// does not provide itself becomes `so:<soname>`, and every required
+    /// pkg-config module that it does not provide itself `pc:<module>`.
     pub fn relations(&self, paths: &BTreeSet<String>) -> (Vec<Dep>, Vec<Provide>) {
         let provides: BTreeMap<String, Provide> = paths
             .iter()
             .filter_map(|p| self.provides.get(p))
             .map(|p| (p.to_string(), p.clone()))
             .collect();
-        let depends: BTreeMap<String, Dep> = paths
+        let modules: BTreeSet<&PcName> = provides
+            .values()
+            .filter_map(|p| match p {
+                Provide::Pc(module, _) => Some(module),
+                _ => None,
+            })
+            .collect();
+        let mut depends: BTreeMap<String, Dep> = paths
             .iter()
             .filter_map(|p| self.needs.get(p))
             .flatten()
             .filter(|s| !provides.contains_key(&format!("so:{s}")))
             .map(|s| (format!("so:{s}"), Dep::So(s.clone())))
             .collect();
+        depends.extend(
+            paths
+                .iter()
+                .filter_map(|p| self.pc_needs.get(p))
+                .flatten()
+                .filter(|m| !modules.contains(m))
+                .map(|m| (format!("pc:{m}"), Dep::Pc(m.clone(), Vec::new()))),
+        );
         (
             depends.into_values().collect(),
             provides.into_values().collect(),
@@ -69,7 +88,11 @@ impl Detected {
 /// object directly in `usr/lib/` provides `so:<soname>`, or `so:<file
 /// name>` when it has no `DT_SONAME`, because that is the name the loader
 /// finds it by. Every `usr/lib/pkgconfig/*.pc` and `usr/share/pkgconfig/*.pc`
-/// provides `pc:<module>`, with the version its `Version:` line gives.
+/// provides `pc:<module>`, with the version its `Version:` line gives, also
+/// when it is a symbolic link to such a file of the payload. Every module
+/// that such a file names in `Requires:` or `Requires.private:` is a need,
+/// without its version constraints, which pkg-config checks itself, because
+/// pkg-config refuses a module whose required modules it cannot find.
 /// Files matching `ignore_deps` and debug files are skipped.
 ///
 /// Every `#!` interpreter that the payload does not ship and that is not
@@ -120,7 +143,7 @@ pub fn detect(
     let entries = fsx::walk(out)?;
     let shipped: BTreeSet<&str> = entries.iter().map(|(r, _)| r.as_str()).collect();
     for (rel, kind) in &entries {
-        if *kind != PathKind::File || any_matches(&ignored, rel) {
+        if !matches!(kind, PathKind::File | PathKind::Symlink) || any_matches(&ignored, rel) {
             continue;
         }
         let dir = fsx::parent(rel);
@@ -128,11 +151,19 @@ pub fn detect(
             && (dir == "usr/lib/pkgconfig" || dir == "usr/share/pkgconfig")
             && let Some(module) = fsx::file_name(rel).strip_suffix(".pc")
             && let Ok(module) = module.parse()
+            && let Some(target) = fsx::resolve(out, rel)
+            && out.join(&target).is_file()
         {
-            let version = pc_version(&out.join(rel))?;
+            let (version, requires) = pc_fields(&out.join(&target))?;
             detected
                 .provides
                 .insert(rel.clone(), Provide::Pc(module, version));
+            if *kind == PathKind::File && !requires.is_empty() {
+                detected.pc_needs.insert(rel.clone(), requires);
+            }
+        }
+        if *kind != PathKind::File {
+            continue;
         }
         if let Some(interpreter) = interpreter(&out.join(rel))? {
             let program = match interpreter.strip_prefix("/usr/bin/env ") {
@@ -155,16 +186,49 @@ pub fn detect(
     Ok(detected)
 }
 
-/// The version a pkg-config file declares, when it is a valid version.
-fn pc_version(path: &Path) -> Result<Option<laft_core::Version>, BuildError> {
+/// The version a pkg-config file declares, when it is a valid version, and
+/// the modules its `Requires:` and `Requires.private:` lines name.
+fn pc_fields(path: &Path) -> Result<(Option<laft_core::Version>, BTreeSet<PcName>), BuildError> {
     let file = fs::File::open(path).map_err(io(path))?;
+    let mut version = None;
+    let mut requires = BTreeSet::new();
     for line in BufReader::new(file).lines() {
         let line = line.map_err(io(path))?;
         if let Some(value) = line.strip_prefix("Version:") {
-            return Ok(value.trim().parse().ok());
+            version = version.or_else(|| value.trim().parse().ok());
+        } else if let Some(list) = line
+            .strip_prefix("Requires:")
+            .or_else(|| line.strip_prefix("Requires.private:"))
+        {
+            requires.extend(pc_modules(list));
         }
     }
-    Ok(None)
+    Ok((version, requires))
+}
+
+/// The modules of a pkg-config dependency list such as `libzstd >= 1.4,
+/// zlib`, without their version constraints. A word that holds a variable
+/// is left out, because only pkg-config knows its value.
+fn pc_modules(list: &str) -> Vec<PcName> {
+    let mut modules = Vec::new();
+    let mut words = list
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|w| !w.is_empty());
+    while let Some(word) = words.next() {
+        let name = word.split(['<', '>', '=', '!']).next().unwrap_or_default();
+        if name.is_empty() {
+            if matches!(word, "<" | ">" | "=" | "<=" | ">=" | "!=") {
+                words.next();
+            }
+            continue;
+        }
+        if !name.contains('$')
+            && let Ok(module) = name.parse()
+        {
+            modules.push(module);
+        }
+    }
+    modules
 }
 
 /// The interpreter of a script that starts with `#!`, with the command
