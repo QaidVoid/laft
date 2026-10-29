@@ -75,8 +75,11 @@ pub struct Plan {
     /// the new generation.
     pub start: Vec<Start>,
     /// The services to wait for after starting, in start order, each with
-    /// the milliseconds to wait for its ready marker.
+    /// the milliseconds to wait for its ready marker after its start.
     pub wait: Vec<(String, u64)>,
+    /// The dependencies of every service to start in the new generation,
+    /// by name.
+    pub after: BTreeMap<String, Vec<String>>,
     /// Services that changed in a way that only a reboot applies, by name.
     pub reboot: Vec<String>,
 }
@@ -172,6 +175,8 @@ pub fn plan(old: &BTreeMap<String, Unit>, new: &BTreeMap<String, Unit>) -> Plan 
         if let Some(step) = start.remove(name) {
             plan.wait
                 .push((name.to_owned(), new[name].spec.ready_timeout_ms()));
+            plan.after
+                .insert(name.to_owned(), new[name].spec.after.clone());
             plan.start.push(step);
         }
     }
@@ -195,26 +200,31 @@ pub struct Applied {
 /// directories leave the scan directory `run/runit/service`, the new ones
 /// are copied in from `services_dir/runit/sv`, and the services to start
 /// are brought up with `sv up` in dependency order. A changed early
-/// oneshot is rerun through the launcher. Then every started service gets
-/// until its timeout to create its ready marker in `run/runit/ready`.
-/// `sv` is `usr/bin/sv` below `root`.
+/// oneshot is rerun through the launcher. Every started service gets until
+/// its own timeout, counted from its own start, to create its ready marker
+/// in `run/runit/ready`, and a service starts only once each dependency
+/// started before it is ready or has run out of time. `sv` is
+/// `usr/bin/sv` below `root`.
 ///
 /// A step that fails is recorded and the others still run, so a failure
-/// never leaves the remaining services in the old state.
+/// never leaves the remaining services in the old state. A service whose
+/// stop failed keeps its service directory, so that it stays supervised.
 pub fn apply(plan: &Plan, root: &Path, services_dir: &Path) -> Applied {
     let scan = root.join("run/runit/service");
     let sv = root.join("usr/bin/sv");
     let mut applied = Applied::default();
     let mut fail = |name: &str, why: String| applied.failed.push((name.to_owned(), why));
+    let mut running = BTreeSet::new();
     for name in &plan.stop {
         let dir = scan.join(name);
         if dir.exists()
             && let Err(why) = run_sv(&sv, "stop", &dir)
         {
             fail(name, why);
+            running.insert(name);
         }
     }
-    for name in &plan.remove {
+    for name in plan.remove.iter().filter(|n| !running.contains(n)) {
         let dir = scan.join(name);
         match fs::remove_dir_all(&dir) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => {
@@ -223,19 +233,37 @@ pub fn apply(plan: &Plan, root: &Path, services_dir: &Path) -> Applied {
             _ => {}
         }
     }
-    for name in &plan.add {
+    for name in plan.add.iter().filter(|n| !running.contains(n)) {
         let from = services_dir.join("runit/sv").join(name);
-        if let Err(e) = copy_tree(&from, &scan.join(name)) {
+        let to = scan.join(name);
+        if let Err(e) = copy_tree(&from, &to) {
+            let _ = fs::remove_dir_all(&to);
             fail(name, format!("adding {}: {e}", from.display()));
         }
     }
     let launcher = Launcher::new(root);
-    let mut started = BTreeSet::new();
+    let ready = root.join("run/runit/ready");
+    let timeouts: BTreeMap<&str, u64> = plan.wait.iter().map(|(n, t)| (n.as_str(), *t)).collect();
+    // Started services not yet known to be ready, with their deadlines.
+    let mut pending: Vec<(String, Instant)> = Vec::new();
+    let mut not_ready = Vec::new();
+    let mut settle = |name: &str, pending: &mut Vec<(String, Instant)>| {
+        if let Some(i) = pending.iter().position(|(n, _)| n == name) {
+            let (name, deadline) = pending.remove(i);
+            if !wait_ready(&ready, &name, deadline) {
+                not_ready.push(name);
+            }
+        }
+    };
     for step in &plan.start {
+        for dep in plan.after.get(step.name()).into_iter().flatten() {
+            settle(dep, &mut pending);
+        }
+        let started = Instant::now();
         let result = match step {
             Start::Start(name) => {
                 let dir = scan.join(name);
-                let deadline = Instant::now() + SUPERVISOR_WAIT;
+                let deadline = started + SUPERVISOR_WAIT;
                 loop {
                     match run_sv(&sv, "up", &dir) {
                         Ok(()) => break Ok(()),
@@ -252,26 +280,37 @@ pub fn apply(plan: &Plan, root: &Path, services_dir: &Path) -> Applied {
         };
         match result {
             Ok(()) => {
-                started.insert(step.name().to_owned());
+                if let Some(timeout) = timeouts.get(step.name()) {
+                    let deadline = started + Duration::from_millis(*timeout);
+                    pending.push((step.name().to_owned(), deadline));
+                }
             }
             Err(why) => fail(step.name(), why),
         }
     }
-    let ready = root.join("run/runit/ready");
-    let since = Instant::now();
-    for (name, timeout) in &plan.wait {
-        if !started.contains(name) {
-            continue;
-        }
-        let marker = ready.join(name);
-        while !marker.exists() && since.elapsed() < Duration::from_millis(*timeout) {
-            std::thread::sleep(POLL);
-        }
-        if !marker.exists() {
-            applied.not_ready.push(name.clone());
-        }
+    while let Some((name, _)) = pending.first().cloned() {
+        settle(&name, &mut pending);
     }
+    applied.not_ready = not_ready;
     applied
+}
+
+/// Waits until the ready marker of service `name` exists in `ready_dir`
+/// or `deadline` passes, and tells whether the service became ready. A
+/// caller gives every service its own deadline, counted from its own
+/// start.
+pub fn wait_ready(ready_dir: &Path, name: &str, deadline: Instant) -> bool {
+    let marker = ready_dir.join(name);
+    loop {
+        if marker.exists() {
+            return true;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        std::thread::sleep(left.min(POLL));
+    }
 }
 
 /// Runs `sv <command> <dir>` and returns its complaint when it fails.
@@ -285,14 +324,19 @@ fn run_sv(sv: &Path, command: &str, dir: &Path) -> Result<(), String> {
     if output.status.success() {
         Ok(())
     } else {
-        let text = String::from_utf8_lossy(&output.stdout);
-        let text = text.trim();
+        let text = [&output.stderr, &output.stdout]
+            .iter()
+            .map(|bytes| String::from_utf8_lossy(bytes).trim().to_owned())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ");
         Err(format!("sv {command} failed: {text}"))
     }
 }
 
 /// Copies the directory tree `from` to `to`, keeping modes and symlinks.
 fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
+    let mode = fs::metadata(from)?.permissions().mode();
     fs::create_dir_all(to)?;
     for item in fs::read_dir(from)? {
         let item = item?;
@@ -312,7 +356,7 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
             )?;
         }
     }
-    Ok(())
+    fs::set_permissions(to, fs::Permissions::from_mode(mode))
 }
 
 /// The services in dependency order, ties broken by name. A cycle, which

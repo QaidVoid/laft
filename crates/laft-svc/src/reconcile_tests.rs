@@ -229,3 +229,109 @@ fn a_service_that_never_becomes_ready_is_reported() {
     let applied = super::apply(&plan, root, &root.join("gen/services"));
     assert_eq!(applied.not_ready, ["myapp"]);
 }
+
+/// Writes a fake `sv` below `root` that runs `body` with `$1` the command
+/// and `$name` the service.
+fn fake_sv(root: &std::path::Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let script = format!(
+        "#!/bin/sh\nname=${{2##*/}}\necho \"$1 $name\" >> {root}/sv.log\n{body}\n",
+        root = root.display()
+    );
+    std::fs::write(root.join("usr/bin/sv"), script).expect("writable");
+    std::fs::set_permissions(
+        root.join("usr/bin/sv"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .expect("chmod");
+}
+
+#[test]
+fn each_service_waits_from_its_own_start_and_dependents_wait_for_it() {
+    let new = config(&[("dbus", dbus()), ("myapp", myapp())]);
+    let Some(dir) = runit_root(&new) else {
+        println!("skipping: the host has no /bin/sh for the fake sv");
+        return;
+    };
+    let root = dir.path();
+    let ready = root.join("run/runit/ready");
+    std::fs::create_dir_all(&ready).expect("writable");
+    // `slow` becomes ready 300 ms after its start, `fast` at once. Each
+    // has a 500 ms budget, so a shared clock would fail `fast`.
+    fake_sv(
+        root,
+        &format!(
+            "[ \"$1\" = up ] || exit 0\nif [ \"$name\" = slow ]; then (sleep 0.3; touch {r}/slow) & else ls {r} >> {root}/seen.log; touch {r}/$name; fi",
+            r = ready.display(),
+            root = root.display()
+        ),
+    );
+    let plan = Plan {
+        start: vec![Start::Start("slow".into()), Start::Start("fast".into())],
+        wait: vec![("slow".into(), 500), ("fast".into(), 500)],
+        after: [("fast".to_owned(), vec!["slow".to_owned()])].into(),
+        ..Plan::default()
+    };
+    let applied = super::apply(&plan, root, &root.join("gen/services"));
+    assert_eq!(applied, super::Applied::default());
+    let seen = std::fs::read_to_string(root.join("seen.log")).expect("fast started");
+    assert!(seen.contains("slow"), "fast started before slow was ready");
+}
+
+#[test]
+fn a_service_whose_stop_failed_keeps_its_directory() {
+    let new = config(&[("dbus", dbus())]);
+    let Some(dir) = runit_root(&new) else {
+        println!("skipping: the host has no /bin/sh for the fake sv");
+        return;
+    };
+    let root = dir.path();
+    fake_sv(root, "echo 'fail: myapp: timeout' >&2\nexit 1");
+    let service = root.join("run/runit/service/myapp");
+    std::fs::create_dir_all(&service).expect("writable");
+    let plan = Plan {
+        stop: vec!["myapp".into()],
+        remove: vec!["myapp".into()],
+        ..Plan::default()
+    };
+    let applied = super::apply(&plan, root, &root.join("gen/services"));
+    assert!(service.exists(), "a running service stays supervised");
+    assert_eq!(applied.failed.len(), 1);
+    assert!(
+        applied.failed[0].1.contains("fail: myapp: timeout"),
+        "{:?}",
+        applied.failed
+    );
+}
+
+#[test]
+fn a_service_directory_that_cannot_be_copied_is_not_left_half_made() {
+    let new = config(&[("dbus", dbus())]);
+    let Some(dir) = runit_root(&new) else {
+        println!("skipping: the host has no /bin/sh for the fake sv");
+        return;
+    };
+    let root = dir.path();
+    let plan = Plan {
+        add: vec!["missing".into()],
+        ..Plan::default()
+    };
+    let applied = super::apply(&plan, root, &root.join("gen/services"));
+    assert_eq!(applied.failed.len(), 1);
+    assert!(!root.join("run/runit/service/missing").exists());
+}
+
+#[test]
+fn copied_service_directories_keep_their_own_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = laft_test::tempdir();
+    let from = dir.path().join("from");
+    std::fs::create_dir_all(&from).expect("writable");
+    std::fs::set_permissions(&from, std::fs::Permissions::from_mode(0o750)).expect("chmod");
+    super::copy_tree(&from, &dir.path().join("to")).expect("copies");
+    let mode = std::fs::metadata(dir.path().join("to"))
+        .expect("exists")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o750);
+}
