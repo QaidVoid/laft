@@ -220,7 +220,7 @@ fn required_pkg_config_modules_become_dependencies() {
     let (dir, elves) = setup(&[
         (
             "usr/lib/pkgconfig/libkmod.pc",
-            b"Name: libkmod\nVersion: 34\nRequires: zlib, libcrypto>=1.1\nRequires.private: libzstd >=  1.4.4, liblzma >= 4.99, ${extra}, libkmod-extra\n",
+            b"Name: libkmod\nVersion: 34\nRequires: zlib, libcrypto>=1.1 libssl>= 3.0 libbsd\nRequires.private: libzstd >=  1.4.4, liblzma >= 4.99, ${extra}, libkmod-extra\n",
         ),
         ("usr/lib/pkgconfig/libkmod-extra.pc", b"Name: extra\nVersion: 1\n"),
     ]);
@@ -233,7 +233,14 @@ fn required_pkg_config_modules_become_dependencies() {
     ]));
     assert_eq!(
         texts(&depends),
-        ["pc:libcrypto", "pc:liblzma", "pc:libzstd", "pc:zlib"]
+        [
+            "pc:libbsd",
+            "pc:libcrypto",
+            "pc:liblzma",
+            "pc:libssl",
+            "pc:libzstd",
+            "pc:zlib"
+        ]
     );
     assert_eq!(
         texts(&provides),

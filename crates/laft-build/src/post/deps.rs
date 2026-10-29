@@ -44,7 +44,8 @@ impl Detected {
     /// The detected dependencies and provides of a package that holds
     /// `paths`, each sorted by text: every needed soname that the package
     /// does not provide itself becomes `so:<soname>`, and every required
-    /// pkg-config module that it does not provide itself `pc:<module>`.
+    /// pkg-config module that it does not provide itself becomes
+    /// `pc:<module>`.
     pub fn relations(&self, paths: &BTreeSet<String>) -> (Vec<Dep>, Vec<Provide>) {
         let provides: BTreeMap<String, Provide> = paths
             .iter()
@@ -207,22 +208,23 @@ fn pc_fields(path: &Path) -> Result<(Option<laft_core::Version>, BTreeSet<PcName
 }
 
 /// The modules of a pkg-config dependency list such as `libzstd >= 1.4,
-/// zlib`, without their version constraints. A word that holds a variable
-/// is left out, because only pkg-config knows its value.
+/// zlib`, without their version constraints. Modules are separated by
+/// commas or white space, and an operator may stand apart from or touch
+/// the module before it and the version after it. A word that holds a
+/// variable is left out, because only pkg-config knows its value.
 fn pc_modules(list: &str) -> Vec<PcName> {
+    let operator = |c: char| matches!(c, '<' | '>' | '=' | '!');
     let mut modules = Vec::new();
     let mut words = list
         .split(|c: char| c == ',' || c.is_whitespace())
         .filter(|w| !w.is_empty());
     while let Some(word) = words.next() {
-        let name = word.split(['<', '>', '=', '!']).next().unwrap_or_default();
-        if name.is_empty() {
-            if matches!(word, "<" | ">" | "=" | "<=" | ">=" | "!=") {
-                words.next();
-            }
-            continue;
+        let (name, rest) = word.split_at(word.find(operator).unwrap_or(word.len()));
+        if !rest.is_empty() && rest.chars().all(operator) {
+            words.next();
         }
-        if !name.contains('$')
+        if !name.is_empty()
+            && !name.contains('$')
             && let Ok(module) = name.parse()
         {
             modules.push(module);
