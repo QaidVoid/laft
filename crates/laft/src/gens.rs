@@ -392,10 +392,11 @@ pub(crate) fn diff(env: &Env, a: u64, b: Option<u64>, etc_diffs: bool) -> Result
     );
 
     let units = |g: &Generation| {
-        laft_svc::runit::load_units(&gen_dir(env, g.generation).join("services"))
-            .unwrap_or_default()
+        laft_svc::runit::load_units(&gen_dir(env, g.generation).join("services")).map_err(|e| {
+            Failure::general(format!("the services of generation {}: {e}", g.generation))
+        })
     };
-    let classes = laft_svc::reconcile::plan(&units(&old), &units(&new)).classes;
+    let classes = laft_svc::reconcile::plan(&units(&old)?, &units(&new)?).classes;
     let mut services = serde_json::Map::new();
     let mut lines = String::new();
     for (name, class) in classes {
@@ -497,8 +498,10 @@ pub(crate) fn rm(env: &Env, numbers: &[u64], no_gc: bool) -> Result<u8, Failure>
     let list: Vec<String> = numbers.iter().map(ToString::to_string).collect();
     env.ui
         .confirm(&format!("delete generation {}?", list.join(", ")))?;
-    laft_store::remove_generations(&lock, numbers)
-        .map_err(|e| Failure::new(crate::failure::exit::USAGE, e))?;
+    laft_store::remove_generations(&lock, numbers).map_err(|e| match e {
+        laft_store::Error::Invalid(_) => Failure::new(crate::failure::exit::USAGE, e),
+        e => Failure::from(e),
+    })?;
     if let Some(config) = &config {
         activate::auto_gc(env, &lock, &config.gc.policy, &esp);
     }

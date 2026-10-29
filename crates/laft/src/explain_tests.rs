@@ -18,3 +18,10 @@ fn every_code_is_listed_once() {
     codes.dedup();
     assert_eq!(codes.len(), all);
 }
+
+#[test]
+fn every_account_code_of_activation_is_explained() {
+    for code in ["C0409", "C0410", "C0411", "C0412", "C0413"] {
+        assert!(explain(code).is_some(), "{code}");
+    }
+}

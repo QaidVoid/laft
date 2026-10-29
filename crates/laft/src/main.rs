@@ -215,6 +215,10 @@ fn run(env: &Env, global: &cli::Global, command: Command) -> Result<u8, Failure>
             install::rescue(&env, rescue.generation, &rescue.command)
         }
         Command::Hardware { write } => install::hardware(env, write),
+        Command::Enter { .. } if env.offline_root => Err(Failure::new(
+            exit::USAGE,
+            "laft enter works only on the running system, not below --root",
+        )),
         Command::Enter { view, command } => {
             use std::os::unix::process::CommandExt;
             let error = std::process::Command::new("/usr/bin/laft-enter")

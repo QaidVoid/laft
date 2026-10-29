@@ -211,6 +211,11 @@ fn next_generation(root: &Root) -> Option<u64> {
 ///
 /// Fails when the services cannot be rendered or the active generation's
 /// services cannot be read.
+///
+/// # Panics
+///
+/// Panics when a resolved package comes from none of `inputs.indexes`,
+/// which the resolution of those indexes rules out.
 pub(crate) fn plan<'a>(inputs: &Inputs<'_, 'a>) -> Result<Plan<'a>, Failure> {
     let store = inputs.root.store();
     let active = inputs.active;
@@ -285,11 +290,10 @@ pub(crate) fn plan<'a>(inputs: &Inputs<'_, 'a>) -> Result<Plan<'a>, Failure> {
             if store.path(&dir).exists() || !seen.insert(entry.id) {
                 continue;
             }
-            let repo = inputs
-                .indexes
-                .iter()
-                .position(|r| &r.name == repo)
-                .unwrap_or_default();
+            let repo =
+                inputs.indexes.iter().position(|r| &r.name == repo).expect(
+                    "a resolved package comes from one of the indexes it was resolved against",
+                );
             download_bytes += entry.size;
             store_bytes += meta.installed_size;
             fetch.push(Fetch { entry, repo });

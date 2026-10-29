@@ -4,7 +4,9 @@ use super::*;
 
 #[test]
 fn names_one_edit_apart_are_similar() {
-    assert!(similar("htop", "htpo") || similar("htop", "hto"));
+    assert!(similar("htop", "hto"));
+    assert!(similar("htop", "htoq"));
+    assert!(!similar("htop", "htpo"), "a transposition is two edits");
     assert!(similar("ripgrep", "ripgre"));
     assert!(similar("vim", "vin"));
     assert!(!similar("vim", "emacs"));

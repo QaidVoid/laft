@@ -23,6 +23,31 @@ const TEXTS: &[(&str, &str, &str)] = &[
         "Remove the id. Static accounts have the same ids on every Laft system.",
     ),
     (
+        "C0409",
+        "The account databases stayed locked, because another program is editing them.",
+        "Finish or stop the other program, such as vipw or passwd, and run the command again.",
+    ),
+    (
+        "C0410",
+        "A line of /etc/passwd, /etc/group, /etc/shadow or /etc/gshadow cannot be parsed. Nothing was written.",
+        "Fix or remove the line the message names, then run the command again.",
+    ),
+    (
+        "C0411",
+        "An account created outside Laft has the id of a declared account.",
+        "Remove or renumber the other account, or give the declared one another id.",
+    ),
+    (
+        "C0412",
+        "A secret file is missing, not owned by the user running Laft, or readable by its group or others.",
+        "Create the file, owned by that user, with mode 0600 or stricter.",
+    ),
+    (
+        "C0413",
+        "A password file does not hold a valid password hash.",
+        "Write a hash made by mkpasswd or openssl passwd into the file.",
+    ),
+    (
         "C0414",
         "Two declared accounts have the same id.",
         "Give one of them another id, or leave both out.",

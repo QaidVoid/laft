@@ -153,7 +153,9 @@ impl Ui {
             message_format: global.message_format,
             color_out: colored(stdout_tty) && !global.json,
             color_err: colored(stderr_tty),
-            interactive: stdout_tty && io::stdin().is_terminal(),
+            // The question goes to standard error and the answer comes
+            // from standard input, so standard output may be redirected.
+            interactive: stderr_tty && io::stdin().is_terminal(),
             stderr_tty,
             pager: stdout_tty && !global.no_pager && !global.json,
             events: std::cell::Cell::new(false),
@@ -299,7 +301,8 @@ impl Ui {
     /// # Errors
     ///
     /// Fails with status 2 when nobody can be asked and `-y` was not given,
-    /// and with status 10 when the answer is no.
+    /// and with status 10 when the answer is no or standard input ends
+    /// without one.
     pub(crate) fn confirm(&self, question: &str) -> Result<(), Failure> {
         if self.yes {
             return Ok(());
@@ -313,14 +316,13 @@ impl Ui {
         eprint!("{question} [Y/n] ");
         let _ = io::stderr().flush();
         let mut answer = String::new();
-        io::stdin()
+        let read = io::stdin()
             .lock()
             .read_line(&mut answer)
             .map_err(|e| Failure::new(exit::ABORTED, format!("no answer: {e}")))?;
-        match answer.trim().to_ascii_lowercase().as_str() {
-            "" | "y" | "yes" => Ok(()),
-            _ => Err(Failure::new(exit::ABORTED, "aborted")),
-        }
+        answer_is_yes(read, &answer)
+            .then_some(())
+            .ok_or_else(|| Failure::new(exit::ABORTED, "aborted"))
     }
 
     /// Whether standard error gets colors.
@@ -533,6 +535,16 @@ pub(crate) fn local_time(time: Timestamp) -> String {
     let shifted = time.as_secs().saturating_add_signed(offset);
     let text = Timestamp::from_secs(shifted).to_string();
     format!("{} {}", &text[..10], &text[11..16])
+}
+
+/// Whether the `read` bytes of `answer` accept a `[Y/n]` question. An
+/// empty line is yes, but the end of input is no.
+fn answer_is_yes(read: usize, answer: &str) -> bool {
+    read > 0
+        && matches!(
+            answer.trim().to_ascii_lowercase().as_str(),
+            "" | "y" | "yes"
+        )
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
@@ -76,10 +76,31 @@ fn active(env: &Env) -> Result<u64, Failure> {
         .ok_or_else(|| Failure::general("no generation is active"))
 }
 
-fn relative(path: &str) -> String {
-    path.trim_start_matches("/etc/")
-        .trim_start_matches('/')
-        .to_owned()
+/// The path below `/etc` that `path` names, given as an absolute path
+/// below `/etc` or relative to it. Empty, `.` and `..` components are
+/// refused, so that a path never leads out of `/etc`.
+fn relative(path: &str) -> Result<String, Failure> {
+    let rel = match path.strip_prefix('/') {
+        Some(absolute) => absolute.strip_prefix("etc/").unwrap_or(""),
+        None => path,
+    };
+    if rel.is_empty()
+        || rel
+            .split('/')
+            .any(|c| c.is_empty() || c == "." || c == "..")
+    {
+        return Err(Failure::new(
+            exit::USAGE,
+            format!("{path} is not a path below /etc"),
+        ));
+    }
+    Ok(rel.to_owned())
+}
+
+/// The text of the file `path` for a diff, or a note when it is not UTF-8.
+fn readable(path: &Path) -> Result<String, Failure> {
+    let bytes = fs::read(path).map_err(|e| Failure::general(format!("{}: {e}", path.display())))?;
+    Ok(String::from_utf8(bytes).unwrap_or_else(|_| "binary file\n".to_owned()))
 }
 
 /// `laft etc status`.
@@ -109,7 +130,21 @@ pub(crate) fn diff(env: &Env, paths: &[String]) -> Result<u8, Failure> {
     let selected: Vec<String> = if paths.is_empty() {
         drift(env, number)?.into_iter().map(|d| d.path).collect()
     } else {
-        paths.iter().map(|p| relative(p)).collect()
+        let record = env.generation(number)?.etc;
+        paths
+            .iter()
+            .map(|p| {
+                let rel = relative(p)?;
+                if record.managed.contains(&rel) || record.copy.contains(&rel) {
+                    Ok(rel)
+                } else {
+                    Err(Failure::new(
+                        exit::USAGE,
+                        format!("/etc/{rel} is not managed by generation {number}"),
+                    ))
+                }
+            })
+            .collect::<Result<_, _>>()?
     };
     let static_dir = static_dir(env, number);
     let mut out = String::new();
@@ -124,10 +159,11 @@ pub(crate) fn diff(env: &Env, paths: &[String]) -> Result<u8, Failure> {
                 }
                 format!("symlink to {}\n", target.display())
             }
-            Ok(_) => fs::read_to_string(&live).unwrap_or_default(),
-            Err(_) => String::new(),
+            Ok(_) => readable(&live)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(Failure::general(format!("{}: {e}", live.display()))),
         };
-        let intended = fs::read_to_string(static_dir.join(&path)).unwrap_or_default();
+        let intended = readable(&static_dir.join(&path))?;
         let text = diff::unified(
             &format!("/etc/{path}"),
             &format!("generation {number}"),
@@ -168,3 +204,7 @@ pub(crate) fn reset(env: &Env, paths: &[String]) -> Result<u8, Failure> {
         .note(format!("done        reset {}", paths.join(", ")));
     Ok(0)
 }
+
+#[cfg(test)]
+#[path = "etc_tests.rs"]
+mod tests;

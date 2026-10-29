@@ -144,6 +144,7 @@ fn the_installer_generates_a_configuration_and_checks_its_target() {
     let busy = run(&["--root", root, "install", "-y"]).expect(1);
     assert!(busy.stderr.contains("is not empty"), "{}", busy.stderr);
     run(&["install"]).expect(2);
+    run(&["--root", root, "enter", "dev", "--", "true"]).expect(2);
 }
 
 #[test]

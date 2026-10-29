@@ -46,3 +46,11 @@ fn tables_without_a_header_align_their_rows() {
     let rows = vec![vec!["a".into(), "b".into()], vec!["ccc".into(), "d".into()]];
     assert_eq!(table(&[], &rows), "a    b\nccc  d\n");
 }
+
+#[test]
+fn only_an_empty_line_or_yes_accepts_and_the_end_of_input_refuses() {
+    assert!(answer_is_yes(1, "\n"));
+    assert!(answer_is_yes(4, "Yes\n"));
+    assert!(!answer_is_yes(0, ""));
+    assert!(!answer_is_yes(2, "n\n"));
+}

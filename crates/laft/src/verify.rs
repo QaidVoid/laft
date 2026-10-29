@@ -93,12 +93,21 @@ pub(crate) fn verify(env: &Env, args: &VerifyArgs) -> Result<u8, Failure> {
 
     let mut problems = Vec::new();
     for (dir, label) in &entries {
-        for difference in store.verify(dir, args.full)? {
-            problems.push(Problem {
+        match store.verify(dir, args.full) {
+            Ok(differences) => {
+                for difference in differences {
+                    problems.push(Problem {
+                        subject: label.clone(),
+                        path: difference.path,
+                        problem: difference.problem,
+                    });
+                }
+            }
+            Err(e) => problems.push(Problem {
                 subject: label.clone(),
-                path: difference.path,
-                problem: difference.problem,
-            });
+                path: format!("/laft/store/{dir}"),
+                problem: format!("the store entry cannot be verified: {e}"),
+            }),
         }
     }
     for generation in &generations {
@@ -243,13 +252,20 @@ fn privileged(
             .iter()
             .find(|p| p.id == file.source)
             .map(|p| store.path(&p.dir).join(&rel));
-        let same = source
-            .as_ref()
-            .and_then(|s| fs::read(s).ok())
-            .zip(fs::read(&path).ok())
-            .is_some_and(|(a, b)| Blake3Hash::of(&a) == Blake3Hash::of(&b));
-        if !same {
-            report("content differs from the store file it was copied from".into());
+        let Some(source) = source else {
+            report("no package of the generation has its source store id".into());
+            continue;
+        };
+        match (fs::read(&source), fs::read(&path)) {
+            (Ok(a), Ok(b)) if Blake3Hash::of(&a) == Blake3Hash::of(&b) => {}
+            (Ok(_), Ok(_)) => {
+                report("content differs from the store file it was copied from".into());
+            }
+            (Err(e), _) => report(format!(
+                "the store file {} cannot be read: {e}",
+                source.display()
+            )),
+            (_, Err(e)) => report(format!("the copy cannot be read: {e}")),
         }
     }
     Ok(paths)
@@ -606,11 +622,11 @@ fn free_share(path: &Path) -> Option<f64> {
 
 fn space(env: &Env) -> Check {
     let mut low = Vec::new();
-    for path in ["/laft", "/boot"] {
-        if let Some(share) = free_share(&env.path(path))
+    for path in [env.path("/laft"), env.esp(None)] {
+        if let Some(share) = free_share(&path)
             && share < 0.10
         {
-            low.push(format!("{path} has {:.0}% free", share * 100.0));
+            low.push(format!("{} has {:.0}% free", path.display(), share * 100.0));
         }
     }
     check("space", low.is_empty(), low.join(", "))
@@ -645,8 +661,12 @@ fn boot_files(env: &Env) -> Check {
     let mut missing = Vec::new();
     let generations = gens::generations(env).unwrap_or_default();
     for generation in &generations {
-        let Ok(record) = BootRecord::read(&gens::gen_dir(env, generation.generation)) else {
-            continue;
+        let record = match BootRecord::read(&gens::gen_dir(env, generation.generation)) {
+            Ok(record) => record,
+            Err(e) => {
+                missing.push(format!("{}: boot record ({e})", generation.generation));
+                continue;
+            }
         };
         for file in [
             format!("{}.vmlinuz", record.kernel_id),
@@ -665,12 +685,25 @@ fn has_interpreter(bytes: &[u8]) -> Option<bool> {
     if bytes.get(..4)? != b"\x7fELF" || *bytes.get(4)? != 2 {
         return None;
     }
-    let u16_at = |at: usize| Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?));
-    let u32_at = |at: usize| Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    let u16_at = |at: usize| {
+        Some(u16::from_le_bytes(
+            bytes.get(at..at.checked_add(2)?)?.try_into().ok()?,
+        ))
+    };
+    let u32_at = |at: usize| {
+        Some(u32::from_le_bytes(
+            bytes.get(at..at.checked_add(4)?)?.try_into().ok()?,
+        ))
+    };
     let offset = usize::try_from(u64::from_le_bytes(bytes.get(32..40)?.try_into().ok()?)).ok()?;
     let size = usize::from(u16_at(54)?);
     let count = usize::from(u16_at(56)?);
-    Some((0..count).any(|i| u32_at(offset + i * size) == Some(3)))
+    let mut found = false;
+    for i in 0..count {
+        let at = i.checked_mul(size).and_then(|n| n.checked_add(offset))?;
+        found |= u32_at(at)? == 3;
+    }
+    Some(found)
 }
 
 fn static_binaries(env: &Env) -> Check {
@@ -684,11 +717,10 @@ fn static_binaries(env: &Env) -> Check {
         "usr/bin/laft-enter",
         "usr/lib/laft/laft-boot",
     ] {
-        let Ok(bytes) = fs::read(dir.join(rel)) else {
-            continue;
-        };
-        if has_interpreter(&bytes) != Some(false) {
-            dynamic.push(format!("/{rel}"));
+        match fs::read(dir.join(rel)) {
+            Ok(bytes) if has_interpreter(&bytes) == Some(false) => {}
+            Ok(_) => dynamic.push(format!("/{rel}")),
+            Err(e) => dynamic.push(format!("/{rel} ({e})")),
         }
     }
     check(

@@ -398,7 +398,7 @@ pub(crate) struct VerifyArgs {
     /// Packages to verify. The packages of the generation by default.
     pub(crate) pkgs: Vec<String>,
     /// Verify every store entry and every generation.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["pkgs", "generation"])]
     pub(crate) all: bool,
     /// Hash every file.
     #[arg(long)]

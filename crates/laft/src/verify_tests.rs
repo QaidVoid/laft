@@ -19,3 +19,16 @@ fn an_interpreter_header_marks_a_dynamic_executable() {
     assert_eq!(has_interpreter(&elf(1)), Some(false));
     assert_eq!(has_interpreter(b"#!/bin/sh\n"), None);
 }
+
+#[test]
+fn program_headers_beyond_the_address_space_are_not_an_interpreter() {
+    let mut elf = vec![0u8; 64];
+    elf[..4].copy_from_slice(b"\x7fELF");
+    elf[4] = 2;
+    elf[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
+    elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+    elf[56..58].copy_from_slice(&3u16.to_le_bytes());
+    assert_eq!(has_interpreter(&elf), None);
+    elf[32..40].copy_from_slice(&(usize::MAX as u64 - 60).to_le_bytes());
+    assert_eq!(has_interpreter(&elf), None);
+}

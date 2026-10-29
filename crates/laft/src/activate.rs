@@ -76,9 +76,15 @@ impl Activation {
             line.push(format!("{} {step}", env.ui.sym_err(Sym::Fail)));
         }
         env.ui.phase("activating", line.join(" "));
+        let status = if self.failed.is_empty() {
+            "done"
+        } else {
+            "failed"
+        };
         env.ui.event(
-            json!({"event": "phase", "phase": "activate", "status": "done",
-            "steps": self.done}),
+            json!({"event": "phase", "phase": "activate", "status": status,
+            "steps": self.done,
+            "failed": self.failed.iter().map(|(s, _)| *s).collect::<Vec<_>>()}),
         );
     }
 }

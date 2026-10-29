@@ -99,6 +99,11 @@ pub(crate) fn services(config: &SystemConfig) -> Result<ServiceSet, Failure> {
 
 /// The requests of the system view: the configured packages, the kernel
 /// and the packages of enabled services.
+///
+/// # Panics
+///
+/// Panics when `boot.kernel` is not a package reference, which a loaded
+/// configuration never holds.
 pub(crate) fn system_requests(config: &SystemConfig, services: &ServiceSet) -> Vec<Request> {
     let mut requests = config.packages.clone();
     let mut add = |pkg: PkgRef, origin: &str| {
@@ -109,9 +114,13 @@ pub(crate) fn system_requests(config: &SystemConfig, services: &ServiceSet) -> V
             });
         }
     };
-    if let Ok(kernel) = config.boot.boot.kernel.parse::<PkgRef>() {
-        add(kernel, "boot.kernel");
-    }
+    let kernel = config
+        .boot
+        .boot
+        .kernel
+        .parse::<PkgRef>()
+        .expect("boot.kernel has the type Pkg, which loading the configuration checks");
+    add(kernel, "boot.kernel");
     for name in services.packages() {
         add(
             PkgRef::new(name.clone(), None, Variant::default()),
