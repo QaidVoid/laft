@@ -496,9 +496,10 @@ impl Launcher {
                     ExecStatus::Executed if exiting(child.id()) => {
                         // The pipe also closes when the process exits
                         // without executing the service, and that happens
-                        // before the process can be waited for.
-                        child.wait().map_err(wait_error)?;
-                        exited = true;
+                        // before the process can be waited for. An exit
+                        // can stall, for example on a hung mount, so the
+                        // wait ends at the deadline.
+                        exited = reaped_by(&mut child, deadline).map_err(wait_error)?;
                         break;
                     }
                     ExecStatus::Executed => {
@@ -873,6 +874,21 @@ fn wait_until(mut child: std::process::Child, deadline: Instant) -> Option<ExitS
             let _ = child.kill();
             let _ = child.wait();
             return None;
+        }
+        std::thread::sleep(left.min(POLL));
+    }
+}
+
+/// Waits for `child` to exit until `deadline` without killing it, and
+/// tells whether it exited.
+fn reaped_by(child: &mut std::process::Child, deadline: Instant) -> io::Result<bool> {
+    loop {
+        if child.try_wait()?.is_some() {
+            return Ok(true);
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Ok(false);
         }
         std::thread::sleep(left.min(POLL));
     }

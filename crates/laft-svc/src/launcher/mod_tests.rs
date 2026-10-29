@@ -7,7 +7,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use laft_test::TempDir;
 
-use super::{ExecMode, Launcher, parse_exiting, parse_start_time, restarts, start_time};
+use super::{ExecMode, Launcher, parse_exiting, parse_start_time, reaped_by, restarts, start_time};
 use crate::launcher::accounts::Credentials;
 use crate::launcher::process::{drop_privileges, spawn_as};
 use crate::spec::{Spec, SpecDir};
@@ -607,6 +607,22 @@ fn exiting_processes_are_told_from_running_ones() {
     assert!(parse_exiting(&stat("Z", 0)));
     assert!(parse_exiting(&stat("X", 0)));
     assert!(parse_exiting("garbage"));
+}
+
+#[test]
+fn waiting_for_an_exiting_process_ends_at_the_deadline() {
+    use std::time::{Duration, Instant};
+    let mut stuck = Command::new("sleep").arg("5").spawn().unwrap();
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(200);
+    assert!(!reaped_by(&mut stuck, deadline).unwrap());
+    assert!(started.elapsed() < Duration::from_secs(2));
+    stuck.kill().unwrap();
+    stuck.wait().unwrap();
+
+    let mut quick = Command::new("true").spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    assert!(reaped_by(&mut quick, deadline).unwrap());
 }
 
 #[test]
