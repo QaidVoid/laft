@@ -69,6 +69,8 @@ These dependencies do not meet one of the checks above and were accepted on purp
 
 - `webpki-roots`: licensed CDLA-Permissive-2.0, a permissive data license. It bundles the CA root list, so a static binary can reach a repository during installation or rescue, before any CA bundle exists on the system.
 - `ring`: no release in the last 12 months. It is the mature, widely used cryptography provider for `rustls` with a stable scope, and the alternatives either need a C and cmake build that complicates static builds or are less proven.
+- `libbz2-rs-sys`: licensed `bzip2-1.0.6`, a permissive BSD-style license. It is the pure Rust backend of `bzip2`, which `.tar.bz2` sources need, and it builds without a C library.
+- `sha2`: versions 0.10 and 0.11 are both in the tree, because `minisign` still depends on 0.10. Drop the exception once `minisign` moves to 0.11.
 
 ## Code
 
