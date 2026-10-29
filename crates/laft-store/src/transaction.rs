@@ -2,13 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use laft_core::{Blake3Hash, Name, StoreId, Timestamp};
 
 use crate::error::{Error, Result, io};
 use crate::generation::{ConfigRecord, FORMAT as GEN_FORMAT};
-use crate::journal::{Counters, Journal};
+use crate::journal::{Counters, Journal, txid};
 use crate::root::to_json;
 use crate::store::Prepared;
 use crate::view::{self, SYSTEM};
@@ -129,11 +128,8 @@ impl<'l> Transaction<'l> {
         }
         counters.save(root)?;
         fault::point("begin.counters")?;
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis());
         let journal = Journal::new(
-            format!("{millis}-{}", std::process::id()),
+            txid(),
             plan.command.clone(),
             generation,
             plan.previous,
@@ -442,6 +438,13 @@ impl<'l> Transaction<'l> {
         Ok(number)
     }
 
+    /// Ends the transaction's own steps once the generation is assembled,
+    /// handing its lock and journal to the activation that continues it.
+    pub(crate) fn into_activation(mut self) -> Result<(&'l Lock, Journal)> {
+        self.finish_assembly()?;
+        Ok((self.lock, self.journal))
+    }
+
     fn set_state(&mut self, state: State, point: &'static str) -> Result<()> {
         self.journal.state = state;
         self.journal.save(self.lock.root())?;
@@ -533,7 +536,7 @@ fn publish_tree(staging: &Path, target: &Path) -> Result<()> {
     fsx::set_mode(target, fsx::SEALED_DIR)
 }
 
-fn set_default(root: &Root, number: u64, txid: &str) -> Result<()> {
+pub(crate) fn set_default(root: &Root, number: u64, txid: &str) -> Result<()> {
     fsx::replace_symlink(
         &root.gens_dir().join("default"),
         &number.to_string(),
@@ -712,7 +715,7 @@ fn recover(root: &Root, journal: Journal) -> Result<Recovery> {
 /// Whether the machine still runs the boot `recorded` names. An empty id is
 /// unknown, and an unknown boot counts as the same one, so that recovery
 /// keeps the journal instead of assuming a reboot it cannot prove.
-fn same_boot(recorded: &str, current: &str) -> bool {
+pub(crate) fn same_boot(recorded: &str, current: &str) -> bool {
     recorded.is_empty() || current.is_empty() || recorded == current
 }
 

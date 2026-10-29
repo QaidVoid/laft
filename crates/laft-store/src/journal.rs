@@ -5,6 +5,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use laft_core::Name;
 use serde::{Deserialize, Serialize};
@@ -73,7 +74,12 @@ pub(crate) struct Journal {
     pub(crate) previous: Option<u64>,
     pub(crate) views: BTreeMap<Name, u64>,
     pub(crate) state: State,
+    /// The names of the live activation steps, in the order they run.
     pub(crate) activation: Vec<String>,
+    /// How many of the activation steps have finished. Journals written
+    /// before steps were counted have none.
+    #[serde(default)]
+    pub(crate) finished: usize,
     pub(crate) added: Vec<String>,
 }
 
@@ -95,6 +101,7 @@ impl Journal {
             views,
             state: State::Planned,
             activation: Vec::new(),
+            finished: 0,
             added: Vec::new(),
         }
     }
@@ -150,10 +157,24 @@ impl Journal {
                     format!("{dir:?} is not a store entry name"),
                 ));
             }
+            if journal.finished > journal.activation.len() {
+                return Err(crate::error::corrupt(
+                    &path,
+                    "more activation steps finished than were planned",
+                ));
+            }
             journals.push(journal);
         }
         Ok(journals)
     }
+}
+
+/// A new transaction id: the time in milliseconds and the process id.
+pub(crate) fn txid() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    format!("{millis}-{}", std::process::id())
 }
 
 /// The id of the current boot, which tells recovery whether the machine

@@ -26,6 +26,16 @@ pub(crate) const POINTS: &[&str] = &[
     "complete",
 ];
 
+/// The points that only a live activation passes, in order.
+#[cfg(test)]
+pub(crate) const ACTIVATION_POINTS: &[&str] = &[
+    "activate.started",
+    "activate.step",
+    "activated",
+    "default.linked",
+    "complete",
+];
+
 #[cfg(test)]
 thread_local! {
     static FAIL_AT: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
@@ -36,7 +46,10 @@ thread_local! {
 /// `name`.
 #[cfg(test)]
 pub(crate) fn point(name: &'static str) -> Result<()> {
-    assert!(POINTS.contains(&name), "fault point {name} is not listed");
+    assert!(
+        POINTS.contains(&name) || ACTIVATION_POINTS.contains(&name),
+        "fault point {name} is not listed"
+    );
     if FAIL_AT.get() == Some(name) {
         return Err(crate::Error::Injected(name));
     }

@@ -15,7 +15,8 @@
 //! Every change happens inside a [`Transaction`] under the root's exclusive
 //! [`Lock`], and is recorded in a journal first, so that [`Lock::recover`]
 //! can finish or roll back a transaction interrupted at any point, including
-//! by a power loss. [`plan_gc`] decides what nothing references any more,
+//! by a power loss. A live switch continues the transaction as an
+//! [`Activation`], whose journal records each step it finishes. [`plan_gc`] decides what nothing references any more,
 //! explains why, and deletes it.
 //!
 //! ```no_run
@@ -34,6 +35,7 @@
 
 #![forbid(unsafe_code)]
 
+mod activation;
 mod error;
 mod fault;
 mod fsx;
@@ -49,6 +51,7 @@ mod view;
 #[cfg(test)]
 mod test_support;
 
+pub use activation::Activation;
 pub use error::{Conflict, Error, Result};
 pub use gc::{Decision, GcPlan, GcPolicy, Subject, plan_gc, remove_generations};
 pub use generation::{
