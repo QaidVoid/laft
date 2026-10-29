@@ -32,10 +32,11 @@ impl Tree {
             ("/usr/lib/libc.so.6", "lib/libc.so.6"),
         ];
         for (host, inside) in files {
-            if fs::copy(host, usr.join(inside)).is_err() {
+            let Ok(bytes) = fs::read(host) else {
                 println!("skipping: the host has no {host} to build a minimal tree from");
                 return None;
-            }
+            };
+            laft_test::write_program(&usr.join(inside), &bytes);
         }
         // The host's loader may look in `/usr/lib64` rather than `/usr/lib`.
         std::os::unix::fs::symlink("lib", usr.join("lib64")).unwrap();

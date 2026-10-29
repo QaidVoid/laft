@@ -164,7 +164,6 @@ fn a_removed_early_oneshot_waits_for_a_reboot() {
 /// A root with a fake `sv` that logs its calls and marks services it
 /// brings up as ready, and the rendered services of `config`.
 fn runit_root(config: &ServiceConfig) -> Option<laft_test::TempDir> {
-    use std::os::unix::fs::PermissionsExt;
     if !std::path::Path::new("/bin/sh").exists() {
         return None;
     }
@@ -177,12 +176,7 @@ fn runit_root(config: &ServiceConfig) -> Option<laft_test::TempDir> {
          if [ \"$1\" = up ]; then mkdir -p {root}/run/runit/ready && touch {root}/run/runit/ready/${{2##*/}}; fi\n",
         root = root.display()
     );
-    std::fs::write(root.join("usr/bin/sv"), script).expect("writable");
-    std::fs::set_permissions(
-        root.join("usr/bin/sv"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .expect("chmod");
+    laft_test::write_program(&root.join("usr/bin/sv"), script.as_bytes());
     render(&valid(config), 2)
         .expect("renders")
         .write(&root.join("gen"))
@@ -222,7 +216,7 @@ fn a_service_that_never_becomes_ready_is_reported() {
         return;
     };
     let root = dir.path();
-    std::fs::write(root.join("usr/bin/sv"), "#!/bin/sh\nexit 0\n").expect("writable");
+    laft_test::write_program(&root.join("usr/bin/sv"), b"#!/bin/sh\nexit 0\n");
     let mut plan = reconcile(&example(), &new);
     plan.start = vec![Start::Start("myapp".into())];
     plan.wait = vec![("myapp".into(), 200)];
@@ -233,17 +227,11 @@ fn a_service_that_never_becomes_ready_is_reported() {
 /// Writes a fake `sv` below `root` that runs `body` with `$1` the command
 /// and `$name` the service.
 fn fake_sv(root: &std::path::Path, body: &str) {
-    use std::os::unix::fs::PermissionsExt;
     let script = format!(
         "#!/bin/sh\nname=${{2##*/}}\necho \"$1 $name\" >> {root}/sv.log\n{body}\n",
         root = root.display()
     );
-    std::fs::write(root.join("usr/bin/sv"), script).expect("writable");
-    std::fs::set_permissions(
-        root.join("usr/bin/sv"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .expect("chmod");
+    laft_test::write_program(&root.join("usr/bin/sv"), script.as_bytes());
 }
 
 #[test]

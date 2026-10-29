@@ -477,9 +477,7 @@ pub(crate) fn sandbox_unavailable() -> Option<String> {
             for (path, content) in &shell.files {
                 let full = dir.path().join("tree").join(path);
                 fs::create_dir_all(full.parent().expect("has a parent")).expect("can create dirs");
-                fs::write(&full, content).expect("can write");
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&full, fs::Permissions::from_mode(0o755)).expect("can chmod");
+                laft_test::write_program(&full, content);
             }
             fs::create_dir_all(dir.path().join("tree/etc")).expect("can create etc");
             let sandbox = laft_sandbox::FixedSandbox::new(

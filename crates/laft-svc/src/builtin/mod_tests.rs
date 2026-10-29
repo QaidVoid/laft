@@ -35,9 +35,9 @@ impl Root {
             log = self.path().join("calls").display(),
             dir = self.path().display(),
         );
-        self.write(&format!("usr/bin/{name}"), &script);
         let path = self.path().join("usr/bin").join(name);
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        laft_test::write_program(&path, script.as_bytes());
     }
 
     fn write(&self, relative: &str, text: &str) {
