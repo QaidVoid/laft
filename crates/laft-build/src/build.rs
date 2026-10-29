@@ -486,10 +486,10 @@ impl<'a> Builder<'a> {
     /// recorded in `dest`, where [`installed`] finds it.
     ///
     /// Each package is unpacked into a staging directory inside `dest` and
-    /// moved into place from there. A directory that `dest` lacks is made,
-    /// an existing one is kept, and every file and symbolic link replaces
-    /// what is at its path with a rename. Symbolic links in `dest` are never
-    /// followed.
+    /// moved into place from there. A directory that `dest` lacks is made
+    /// with the mode, owner and group the package declares, an existing one
+    /// is kept, and every file and symbolic link replaces what is at its
+    /// path with a rename. Symbolic links in `dest` are never followed.
     ///
     /// # Errors
     ///

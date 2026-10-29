@@ -3,13 +3,13 @@
 //! them.
 
 use std::fs;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, chown};
 use std::path::Path;
 
-use laft_pkg::Reader;
+use laft_pkg::{Entry, Reader};
 
 use crate::error::{BuildError, io};
-use crate::fsx::{self, Kind};
+use crate::fsx;
 
 /// Where [`unpack_into`] unpacks a package before it moves the files into
 /// place, relative to the destination, so that every move is a rename
@@ -21,11 +21,12 @@ const STAGING: &str = "var/lib/laft-build/unpack";
 ///
 /// The payload is unpacked with the checks of [`Reader::unpack`] into a
 /// staging directory inside `dest` first. Then every directory that `dest`
-/// lacks is made with the package's mode, every existing one is kept as it
-/// is, and every file and symbolic link replaces what is at its path with a
-/// rename, so a program that runs from `dest` never sees a partial file.
-/// Symbolic links in `dest` are never followed, so nothing is written
-/// outside it.
+/// lacks is made with the mode, owner and group the package declares,
+/// every existing one is kept as it is, and every file and symbolic link
+/// replaces what is at its path with a rename, so a program that runs from
+/// `dest` never sees a partial file. Symbolic links in `dest` are never
+/// followed, so nothing is written outside it. The staging directory is
+/// removed whether or not this succeeds.
 ///
 /// # Errors
 ///
@@ -38,38 +39,52 @@ pub(crate) fn unpack_into(file: &Path, dest: &Path) -> Result<(), BuildError> {
     let staging = dest.join(STAGING);
     fsx::remove_tree(&staging)?;
     fs::create_dir_all(&staging).map_err(io(&staging))?;
+    let placed = place(file, &staging, dest);
+    let removed = fsx::remove_tree(&staging);
+    placed.and(removed)
+}
+
+/// Unpacks `file` into `staging` and moves its payload into `dest`.
+fn place(file: &Path, staging: &Path, dest: &Path) -> Result<(), BuildError> {
     let reader = fs::File::open(file)
         .map_err(io(file))
         .and_then(|f| Reader::new(f).map_err(BuildError::from))?;
-    reader.unpack(&staging)?;
-    for (rel, kind) in fsx::walk(&staging)? {
-        let from = staging.join(&rel);
-        let to = dest.join(&rel);
+    let entries = reader.manifest().entries().to_vec();
+    reader.unpack(staging)?;
+    let mut made = Vec::new();
+    for entry in &entries {
+        let rel = entry.path();
+        let from = staging.join(rel);
+        let to = dest.join(rel);
         let found = match fs::symlink_metadata(&to) {
             Ok(meta) => Some(meta.file_type()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(io(&to)(e)),
         };
-        match (kind, found) {
-            (Kind::Dir, Some(found)) if found.is_dir() => {}
-            (Kind::Dir, None) => {
-                let mode = fs::symlink_metadata(&from)
-                    .map_err(io(&from))?
-                    .permissions()
-                    .mode();
-                fs::DirBuilder::new()
-                    .mode(mode & 0o7777)
-                    .create(&to)
-                    .map_err(io(&to))?;
+        match (entry, found) {
+            (Entry::Dir { .. }, Some(found)) if found.is_dir() => {}
+            (Entry::Dir { mode, .. }, None) => {
+                fs::create_dir(&to).map_err(io(&to))?;
+                made.push((from, to, *mode));
             }
-            (Kind::Dir, Some(_)) => return Err(conflict(file, &rel, true)),
+            (Entry::Dir { .. }, Some(_)) => return Err(conflict(file, rel, true)),
             (_, Some(found)) if found.is_dir() => {
-                return Err(conflict(file, &rel, false));
+                return Err(conflict(file, rel, false));
             }
             _ => fs::rename(&from, &to).map_err(io(&to))?,
         }
     }
-    fsx::remove_tree(&staging)
+    // The modes come last, because a declared mode may keep the owner from
+    // moving the directory's contents in.
+    for (from, to, mode) in made {
+        let staged = fs::symlink_metadata(&from).map_err(io(&from))?;
+        let ours = fs::symlink_metadata(&to).map_err(io(&to))?;
+        if (staged.uid(), staged.gid()) != (ours.uid(), ours.gid()) {
+            chown(&to, Some(staged.uid()), Some(staged.gid())).map_err(io(&to))?;
+        }
+        fs::set_permissions(&to, fs::Permissions::from_mode(mode)).map_err(io(&to))?;
+    }
+    Ok(())
 }
 
 fn conflict(file: &Path, rel: &str, directory: bool) -> BuildError {

@@ -148,4 +148,49 @@ fn a_directory_against_anything_else_is_refused() {
     fs::create_dir_all(filled.join("usr/bin/tool")).unwrap();
     let error = unpack_into(&file, &filled).expect_err("a directory in the way is refused");
     assert_eq!(error.code(), Some("B043"), "{error}");
+    assert!(
+        !filled.join(STAGING).exists(),
+        "a failed unpack removes the staging directory"
+    );
+}
+
+#[test]
+fn a_new_directory_gets_the_mode_its_package_declares() {
+    let dir = laft_test::tempdir();
+    let payload = dir.path().join("payload");
+    write_tree(
+        &payload,
+        &[
+            ("usr/share/secret/key", b"key"),
+            ("usr/share/shared/note", b"note"),
+            ("usr/share/sealed/file", b"file"),
+        ],
+    );
+    for file in [
+        "usr/share/secret/key",
+        "usr/share/shared/note",
+        "usr/share/sealed/file",
+    ] {
+        fs::set_permissions(payload.join(file), fs::Permissions::from_mode(0o444)).unwrap();
+    }
+    let modes = [
+        ("usr/share/secret", 0o750),
+        ("usr/share/shared", 0o1777),
+        ("usr/share/sealed", 0o555),
+    ];
+    for (path, bits) in modes {
+        fs::set_permissions(payload.join(path), fs::Permissions::from_mode(bits)).unwrap();
+    }
+    let file = package(dir.path(), "modes", &payload);
+    let dest = dir.path().join("dest");
+    fs::create_dir_all(&dest).unwrap();
+
+    unpack_into(&file, &dest).unwrap();
+    for (path, bits) in modes {
+        assert_eq!(mode(&dest.join(path)), bits, "{path}");
+    }
+    assert_eq!(
+        fs::read(dest.join("usr/share/sealed/file")).unwrap(),
+        b"file"
+    );
 }
