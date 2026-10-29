@@ -127,7 +127,7 @@ pub fn render(
             disabled.push(path);
             continue;
         }
-        let Some(node) = file_node(label, file, declared, &mut errors)? else {
+        let Some(node) = file_node(label, file, Some(declared), &mut errors)? else {
             continue;
         };
         if file.copy {
@@ -580,12 +580,36 @@ fn check_label<'a>(label: &'a str, errors: &mut Vec<ConfigError>) -> Option<&'a 
     Some(path)
 }
 
+/// Checks the identity values, kernel settings, sysctls and declared files
+/// of `config` with the rules of [`render`], without reading packages or
+/// `source` files and without resolving owners.
+pub(crate) fn check(config: &EtcConfig, errors: &mut Vec<ConfigError>) {
+    let mut nodes = BTreeMap::new();
+    for (path, node) in derived(config, errors) {
+        place(&mut nodes, &path, node, errors);
+    }
+    for (label, file) in &config.files {
+        let Some(path) = check_label(label, errors) else {
+            continue;
+        };
+        if !file.enable {
+            continue;
+        }
+        if let Ok(Some(node)) = file_node(label, file, None, errors) {
+            place(&mut nodes, path, node, errors);
+        }
+    }
+}
+
 /// The node of an enabled declared file, or `None` after recording why it
 /// is invalid.
+///
+/// Without `declared`, the file is only checked: a `source` file is not
+/// read and stands for an empty file, and the owners are not resolved.
 fn file_node(
     label: &str,
     file: &File,
-    declared: &Declared,
+    declared: Option<&Declared>,
     errors: &mut Vec<ConfigError>,
 ) -> Result<Option<Node>> {
     let contents = [
@@ -630,7 +654,10 @@ fn file_node(
     let rendered = if let Some(text) = &file.text {
         Ok(text.clone().into_bytes())
     } else if let Some(source) = &file.source {
-        Ok(fs::read(source).map_err(io(source))?)
+        match declared {
+            Some(_) => Ok(fs::read(source).map_err(io(source))?),
+            None => Ok(Vec::new()),
+        }
     } else if let Some(value) = &file.json {
         format::json(value)
             .map(String::into_bytes)
@@ -654,6 +681,17 @@ fn file_node(
             })
     } else {
         Err(ConfigError::Content(label.to_owned()))
+    };
+    let Some(declared) = declared else {
+        return Ok(rendered
+            .map_err(|e| errors.push(e))
+            .ok()
+            .map(|bytes| Node::File {
+                bytes,
+                mode: file.mode,
+                uid: 0,
+                gid: 0,
+            }));
     };
     let uid = declared
         .users

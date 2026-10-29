@@ -285,6 +285,9 @@ pub enum ConfigError {
     /// A privileged path is not an absolute, normalized path below
     /// `/usr/bin/` or `/usr/lib/`.
     PrivilegedPath(String),
+    /// A privileged file has neither the setuid or setgid bit nor
+    /// capabilities, so the entry grants nothing.
+    Unprivileged(String),
     /// The capabilities of a privileged file do not parse.
     InvalidCaps {
         /// The privileged path.
@@ -318,6 +321,7 @@ impl ConfigError {
             | Self::UnknownAccount { .. }
             | Self::InvalidValue { .. }
             | Self::PrivilegedPath(_)
+            | Self::Unprivileged(_)
             | Self::InvalidCaps { .. } => {
                 return None;
             }
@@ -394,6 +398,10 @@ impl fmt::Display for ConfigError {
             Self::PrivilegedPath(path) => write!(
                 f,
                 "privileged {path:?}: privileged files must live under /usr/bin or /usr/lib"
+            ),
+            Self::Unprivileged(path) => write!(
+                f,
+                "privileged {path:?}: neither setuid, setgid nor caps is set, so the entry grants nothing"
             ),
             Self::InvalidCaps { path, caps } => {
                 write!(f, "privileged {path:?}: invalid capability text {caps:?}")

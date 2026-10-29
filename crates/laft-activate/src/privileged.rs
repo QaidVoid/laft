@@ -173,6 +173,44 @@ fn plan(
     declared: &Declared,
     errors: &mut Vec<ConfigError>,
 ) -> Option<Planned> {
+    let caps = check_entry(path, entry, errors)?;
+    let uid = declared
+        .users
+        .get(&entry.owner)
+        .map(|u| u.uid)
+        .or_else(|| system_uid(&entry.owner));
+    let gid = declared
+        .groups
+        .get(&entry.group)
+        .map(|g| g.gid)
+        .or_else(|| system_gid(&entry.group));
+    let unknown = |kind, name: &str| ConfigError::UnknownAccount {
+        kind,
+        name: name.to_owned(),
+        context: format!("privileged {path:?}"),
+    };
+    match (uid, gid) {
+        (Some(uid), Some(gid)) => Some((path.to_owned(), uid, gid, entry.mode, caps)),
+        (uid, gid) => {
+            if uid.is_none() {
+                errors.push(unknown("user", &entry.owner));
+            }
+            if gid.is_none() {
+                errors.push(unknown("group", &entry.group));
+            }
+            None
+        }
+    }
+}
+
+/// Checks the path, mode and capabilities of one enabled entry, and returns
+/// its capabilities with their text, or `None` after recording why the
+/// entry is invalid.
+pub(crate) fn check_entry(
+    path: &str,
+    entry: &Privileged,
+    errors: &mut Vec<ConfigError>,
+) -> Option<Option<(String, FileCapabilities)>> {
     let rel = Path::new(path).strip_prefix("/").ok();
     let normalized = rel.is_some_and(|rel| {
         (rel.starts_with("usr/bin") || rel.starts_with("usr/lib"))
@@ -204,33 +242,11 @@ fn plan(
             }
         },
     };
-    let uid = declared
-        .users
-        .get(&entry.owner)
-        .map(|u| u.uid)
-        .or_else(|| system_uid(&entry.owner));
-    let gid = declared
-        .groups
-        .get(&entry.group)
-        .map(|g| g.gid)
-        .or_else(|| system_gid(&entry.group));
-    let unknown = |kind, name: &str| ConfigError::UnknownAccount {
-        kind,
-        name: name.to_owned(),
-        context: format!("privileged {path:?}"),
-    };
-    match (uid, gid) {
-        (Some(uid), Some(gid)) => Some((path.to_owned(), uid, gid, entry.mode, caps)),
-        (uid, gid) => {
-            if uid.is_none() {
-                errors.push(unknown("user", &entry.owner));
-            }
-            if gid.is_none() {
-                errors.push(unknown("group", &entry.group));
-            }
-            None
-        }
+    if entry.mode & 0o6000 == 0 && caps.is_none() {
+        errors.push(ConfigError::Unprivileged(path.to_owned()));
+        return None;
     }
+    Some(caps)
 }
 
 /// Copies the file `rel` of `tree` to a new inode and renames the copy

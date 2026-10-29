@@ -25,6 +25,18 @@ pub use declare::declare;
 #[cfg(test)]
 pub(crate) use declare::resolve;
 
+/// Checks `users` with the rules of [`declare`], as if no id had ever been
+/// allocated and the account databases were empty.
+pub(crate) fn check(users: &crate::Users) -> Vec<crate::ConfigError> {
+    declare::resolve(
+        users,
+        &mut Allocations::default(),
+        &db::Databases::default(),
+    )
+    .err()
+    .unwrap_or_default()
+}
+
 /// The name of the declared accounts file in a generation directory.
 pub(crate) const DECLARED_FILE: &str = "accounts.json";
 

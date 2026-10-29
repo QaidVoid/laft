@@ -35,6 +35,7 @@
 mod accounts;
 mod assemble;
 mod boot;
+mod check;
 mod config;
 mod error;
 mod esp;
@@ -59,6 +60,7 @@ pub use accounts::{
 };
 pub use assemble::{Assembled, Assembly, assemble, recover};
 pub use boot::{BootActivation, activate_boot};
+pub use check::check_config;
 pub use config::{
     Boot, BootConfig, EtcConfig, File, Fs, Group, Initrd, Kernel, Loader, Luks, Microcode,
     Privileged, Security, User, Users,
