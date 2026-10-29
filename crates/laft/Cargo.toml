@@ -1,0 +1,32 @@
+[package]
+name = "laft"
+description = "The laft command: apply, switch and inspect a Laft system"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clap.workspace = true
+codespan-reporting.workspace = true
+laft-activate.workspace = true
+laft-config.workspace = true
+laft-core.workspace = true
+laft-fetch.workspace = true
+laft-index.workspace = true
+laft-pkg.workspace = true
+laft-resolve.workspace = true
+laft-store.workspace = true
+laft-svc.workspace = true
+mimalloc.workspace = true
+rustix = { workspace = true, features = ["process", "termios"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+stav.workspace = true
+
+[dev-dependencies]
+laft-test.workspace = true

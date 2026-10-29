@@ -2,6 +2,7 @@
 resolver = "3"
 exclude = ["fuzz"]
 members = [
+  "crates/laft",
   "crates/laft-activate",
   "crates/laft-boot",
   "crates/laft-build",
@@ -31,10 +32,12 @@ version = "0.1.0"
 blake3 = { version = "1.8.7", default-features = false, features = ["std"] }
 bzip2 = "0.6.1"
 clap = { version = "4.6.7", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
+codespan-reporting = { version = "0.13.1", default-features = false, features = ["termcolor"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 insta = { version = "1.49.0", default-features = false }
 laft-activate = { version = "0.1.0", path = "crates/laft-activate" }
 laft-boot = { version = "0.1.0", path = "crates/laft-boot" }
+laft-config = { version = "0.1.0", path = "crates/laft-config" }
 laft-core = { version = "0.1.0", path = "crates/laft-core" }
 laft-elf = { version = "0.1.0", path = "crates/laft-elf" }
 laft-fetch = { version = "0.1.0", path = "crates/laft-fetch" }
