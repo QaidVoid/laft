@@ -767,6 +767,39 @@ fn a_root_build_that_records_no_key_fails() {
 }
 
 #[test]
+fn a_root_step_of_a_stage_of_packages_unpacks_inside_the_root() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "build", place = root, packages = [greet] },"#;
+    let stage = Stage {
+        install: Install::Packages,
+        ..root_stage(dir.path(), steps)
+    };
+    let fake = dir.path().join("fake-laft-build");
+    write_program(
+        &fake,
+        b"#!/bin/sh\necho \"$@\" > /run/laft-build-root/arguments\n",
+    );
+    let options = StageOptions {
+        laft_build: fake,
+        ..options(dir.path())
+    };
+    let result = states(dir.path(), &stage, &options, false);
+    if refused(&result) {
+        return;
+    }
+    let error = result.unwrap_err();
+    assert_eq!(error.code(), Some("B040"), "{error}");
+    let arguments = fs::read_to_string(dir.path().join("build/arguments")).unwrap();
+    assert!(
+        arguments.contains("bootstrap --root / --unpack / "),
+        "{arguments}"
+    );
+}
+
+#[test]
 fn a_root_script_that_runs_too_long_is_killed() {
     if no_shell() {
         return;
