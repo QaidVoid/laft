@@ -310,11 +310,11 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// directory with the stage's search path, inside the root in `/` with
 /// `PATH=/usr/bin`.
 ///
-/// Every step has a key that covers where it runs, its script and
-/// environment or the build keys of its packages and whether they are
-/// made into packages, and the key of the step before it, so it covers
-/// every earlier step too. Once a step succeeded,
-/// its key is recorded in the root. A step whose recorded key matches is
+/// Every step has a key that covers where it runs, on the host together
+/// with the stage's search directories, its script and environment or the
+/// build keys of its packages and whether they are made into packages, and
+/// the key of the step before it, so it covers every earlier step too.
+/// Once a step succeeded, its key is recorded in the root. A step whose recorded key matches is
 /// skipped unless [`StageOptions::rebuild`] is set, so a changed step runs
 /// again together with every step after it, and a failed run continues
 /// with the step that failed, from its first package.
@@ -400,21 +400,23 @@ fn run_steps(
 }
 
 /// The key of `step`, whose own work is `work`, after the step whose key is
-/// `previous`.
+/// `previous`. A step on the host also covers `path`, the stage's search
+/// directories, which decide the programs it finds.
 fn step_key(
     step: &Step,
     previous: Option<Blake3Hash>,
+    path: &[PathBuf],
     work: serde_json::Value,
 ) -> Result<Blake3Hash, BuildError> {
-    let place = match step.place {
-        Place::Host => "host",
-        Place::Root => "root",
-    };
-    let value = serde_json::json!({
+    let mut value = serde_json::json!({
         "previous": previous.map(|k| k.to_string()),
-        "place": place,
+        "place": "root",
         "work": work,
     });
+    if step.place == Place::Host {
+        value["place"] = "host".into();
+        value["path"] = path.iter().map(|p| p.to_string_lossy()).collect();
+    }
     let bytes = laft_core::to_canonical_json(&value)
         .map_err(|e| BuildError::problem("B023", format!("step {}: {e}", step.name)))?;
     Ok(Blake3Hash::of(&bytes))
@@ -555,7 +557,7 @@ impl StageRun<'_> {
             Install::Direct => serde_json::json!({ "packages": keys }),
             Install::Packages => serde_json::json!({ "packages": keys, "install": "packages" }),
         };
-        let key = step_key(step, previous, work)?;
+        let key = step_key(step, previous, &self.stage.path, work)?;
         if let Some(state) = self.skipped(step, key)? {
             for recipe in recipes {
                 let what = Item::of(recipe).to_string();
@@ -720,6 +722,7 @@ impl StageRun<'_> {
         let key = step_key(
             step,
             previous,
+            &self.stage.path,
             serde_json::json!({ "script": script, "env": env }),
         )?;
         if let Some(state) = self.skipped(step, key)? {

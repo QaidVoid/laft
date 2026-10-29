@@ -439,6 +439,46 @@ fn a_script_runs_again_when_its_environment_changes() {
 }
 
 #[test]
+fn a_host_step_runs_again_when_the_search_path_changes() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "note", script = "echo run >> \"$ROOT/notes\"" },
+    { name = "inside", place = root, script = "true" },"#;
+    let file = write_stage(dir.path(), steps);
+    let stage = Stage::load(&file).unwrap();
+    let host_only = Stage {
+        steps: stage.steps[..1].to_vec(),
+        ..stage.clone()
+    };
+    run(dir.path(), &host_only, false).unwrap();
+    let moved = Stage {
+        path: vec![PathBuf::from("cross/bin")],
+        ..host_only
+    };
+    let states = run(dir.path(), &moved, false).unwrap();
+    assert_eq!(states, [("note".to_owned(), StageState::Done)]);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("root/notes")).unwrap(),
+        "run\nrun\n"
+    );
+    let root_step = |path: &str| {
+        let stage = Stage {
+            path: vec![PathBuf::from(path)],
+            ..stage.clone()
+        };
+        let step = &stage.steps[1];
+        step_key(step, None, &stage.path, serde_json::json!({})).unwrap()
+    };
+    assert_eq!(
+        root_step("tools/bin"),
+        root_step("cross/bin"),
+        "a step inside the root does not search the path"
+    );
+}
+
+#[test]
 fn a_stage_name_must_be_a_plain_name() {
     let dir = laft_test::tempdir();
     let file = write_stage(dir.path(), STEPS);
