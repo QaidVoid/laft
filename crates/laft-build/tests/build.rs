@@ -447,6 +447,43 @@ fn an_unpacking_bootstrap_build_makes_packages_and_fills_the_destination() {
 }
 
 #[test]
+fn an_unpacking_build_unpacks_an_explicit_dbg_subpackage() {
+    let dir = laft_test::tempdir();
+    for tool in ["bash", "gcc", "make", "objcopy", "strip", "install", "ln"] {
+        if !Path::new("/usr/bin").join(tool).exists() {
+            println!("skipping: /usr/bin/{tool} is missing");
+            return;
+        }
+    }
+    let repos = repos_with(
+        dir.path(),
+        "  check = false\n  build make {}\n  subpackage dbg {\n    files = [\"usr/include/**\"]\n  }",
+    );
+    let recipe: Recipe = support::evaluate(&repos, "hello").remove(0);
+    let (root, cache) = offline_cache(dir.path());
+    let builder = Builder::new(&repos, &cache, &root, Mode::Bootstrap("/".into()));
+    let inputs = builder.key_inputs(&recipe).unwrap();
+    let dest = dir.path().join("system");
+    let outcome = match builder.build_into(&recipe, &inputs, &dest) {
+        Ok(outcome) => outcome,
+        Err(e) => panic!("the unpacking build fails: {e}"),
+    };
+    assert!(
+        outcome
+            .buildinfo
+            .outputs
+            .iter()
+            .any(|o| o.name.as_str() == "hello-dbg"),
+        "{:?}",
+        outcome.buildinfo.outputs
+    );
+    assert!(
+        dest.join("usr/include/greet.h").is_file(),
+        "a dbg subpackage the recipe declares is unpacked"
+    );
+}
+
+#[test]
 fn an_installing_build_sees_the_destination_and_no_toolchain() {
     let dir = laft_test::tempdir();
     let repos = repos_with(

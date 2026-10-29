@@ -20,7 +20,7 @@ use crate::post::{self, Package};
 use crate::view::{self, BuildView, StoreEntry};
 use crate::{
     BuildGraph, BuildRecord, Buildinfo, BuildinfoHost, Built, Cutoff, Fetch, Item, KeyInputs,
-    Output, Problem, Recipe, Repos, Schedule, Source, SourceCache, Trigger, env, unpack,
+    Output, Problem, Recipe, Repos, Schedule, Source, SourceCache, Split, Trigger, env, unpack,
 };
 
 /// The directory a builder keeps everything in, `$LAFT_BUILD_ROOT`:
@@ -481,8 +481,9 @@ impl<'a> Builder<'a> {
     /// Builds `recipe`, whose build key covers `inputs`, in bootstrap mode
     /// like [`Builder::build`], then unpacks the packages it made over
     /// `dest`, a system under construction, so that later builds there use
-    /// them. The debug info package, `<name>-dbg`, stays out, because no
-    /// build needs it. Once every package is in place, the build key is
+    /// them. The automatic debug info package, `<name>-dbg`, stays out,
+    /// because no build needs it. A `dbg` subpackage that the recipe
+    /// declares itself is unpacked like any other. Once every package is in place, the build key is
     /// recorded in `dest`, where [`installed`] finds it.
     ///
     /// Each package is unpacked into a staging directory inside `dest` and
@@ -512,9 +513,12 @@ impl<'a> Builder<'a> {
             ));
         }
         let outcome = self.build(recipe, inputs)?;
-        let debug = format!("{}-dbg", recipe.name);
+        let outputs = &recipe.outputs;
+        let debug = (outputs.split.contains(&Split::Dbg)
+            && !outputs.subpackages.contains_key("dbg"))
+        .then(|| format!("{}-dbg", recipe.name));
         for (output, file) in outcome.buildinfo.outputs.iter().zip(&outcome.packages) {
-            if output.name.as_str() != debug {
+            if debug.as_deref() != Some(output.name.as_str()) {
                 crate::deploy::unpack_into(file, dest)?;
             }
         }
