@@ -1,15 +1,15 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, BufReader};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use laft_core::{Blake3Hash, StoreId, system_gid, system_uid};
+use laft_core::{Blake3Hash, Name, StoreId, system_gid, system_uid};
 use laft_pkg::{Entry, Manifest, Meta, Reader};
 
 use crate::error::{Error, Result, corrupt, io};
-use crate::fsx;
+use crate::{PackageInput, PackageRecord, fsx, view};
 
 /// The directory inside an entry that holds its documents.
 const DOCS_DIR: &str = ".laft";
@@ -76,6 +76,72 @@ pub(crate) enum Prepared {
 impl Store {
     pub(crate) fn new(dir: PathBuf) -> Self {
         Self { dir }
+    }
+
+    /// The store in the directory `dir`, for a store that lives outside a
+    /// [`crate::Root`], such as the store a package builder keeps its build
+    /// dependencies in. The directory is created when the first entry is
+    /// added.
+    pub fn at(dir: impl Into<PathBuf>) -> Self {
+        Self::new(dir.into())
+    }
+
+    /// Adds the package file `lpkg`, whose store id must be `expected`,
+    /// without a transaction, and returns its entry's directory name.
+    ///
+    /// The package is unpacked and verified in a new directory below the
+    /// staging directory `tmp`, which must be on the same filesystem as the
+    /// store, and published with one rename, exactly as
+    /// [`crate::Transaction::add`] does. Nothing is journaled, so this is
+    /// only for a store that no generation uses: an interrupted call leaves
+    /// at most a staging directory in `tmp`, never a partial entry. Adding a
+    /// package whose entry exists does nothing.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the package is invalid or does not match its manifest,
+    /// when its id is not `expected`, or when the store cannot be written.
+    pub fn insert(&self, lpkg: &Path, expected: &StoreId, tmp: &Path) -> Result<String> {
+        for dir in [self.dir.as_path(), tmp] {
+            fs::create_dir_all(dir).map_err(io(dir))?;
+        }
+        let tag = format!("insert-{}", std::process::id());
+        match self.stage(lpkg, expected, tmp, &tag)? {
+            Prepared::Exists(dir) => Ok(dir),
+            Prepared::Staged(staged) => {
+                let dir = staged.dir_name.clone();
+                self.publish(staged)?;
+                Ok(dir)
+            }
+        }
+    }
+
+    /// Assembles the `usr` tree of the entries `packages` as `tree/usr`, for
+    /// a view that no generation records, such as the build view of one
+    /// package build, and returns the records of the packages.
+    ///
+    /// The tree is laid out as [`crate::Transaction::assemble_view`] lays
+    /// out a declared view: a hard link to every store file, a copy of every
+    /// symlink and a directory for every directory under `usr`, with
+    /// `alternatives` choosing the member of every alternatives group
+    /// present. Its directories stay writable, so the caller can remove the
+    /// tree. `tree` must exist and be on the same filesystem as the store.
+    ///
+    /// # Errors
+    ///
+    /// Fails when an entry is missing, when two packages own a path or have
+    /// the same name, when `alternatives` does not choose a member present
+    /// for every group, when a store file is near the hard link limit, or
+    /// when writing fails.
+    pub fn assemble(
+        &self,
+        packages: &[PackageInput],
+        alternatives: &BTreeMap<Name, Name>,
+        tree: &Path,
+    ) -> Result<Vec<PackageRecord>> {
+        let layout = view::layout(self, "build", packages, alternatives, &[])?;
+        layout.create(tree)?;
+        Ok(layout.packages)
     }
 
     /// The path of the entry `dir_name`.

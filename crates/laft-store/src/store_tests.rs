@@ -205,3 +205,59 @@ fn entry_names_cannot_leave_the_store() {
         );
     }
 }
+
+#[test]
+fn a_store_outside_a_root_adds_and_assembles_without_a_transaction() {
+    let env = Env::new();
+    let package = sample(&env);
+    let other = Pkg::new("zlib", "1.3.1")
+        .file("usr/lib/libz.so.1", b"zlib")
+        .build(&env);
+    let base = env.root.path().join("builder");
+    let store = crate::Store::at(base.join("store"));
+    let tmp = base.join("tmp");
+    let dir = store
+        .insert(&package.path, &package.id, &tmp)
+        .expect("the package is added");
+    assert_eq!(dir, package.dir);
+    assert_eq!(
+        store.insert(&package.path, &package.id, &tmp).ok(),
+        Some(dir.clone())
+    );
+    let zlib = store.insert(&other.path, &other.id, &tmp).expect("added");
+    assert_eq!(store.verify(&dir, true).expect("verifiable"), vec![]);
+    assert!(!env.root.laft().join("state/journal").exists());
+
+    let tree = base.join("view");
+    fs::create_dir_all(&tree).expect("mkdir");
+    let inputs = crate::test_support::inputs(&[&package, &other]);
+    let records = store
+        .assemble(&inputs, &Default::default(), &tree)
+        .expect("the tree is assembled");
+    let names: Vec<&str> = records.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["ripgrep", "zlib"]);
+    let linked = fs::metadata(tree.join("usr/lib/libz.so.1")).expect("linked");
+    let stored = fs::metadata(store.path(&zlib).join("usr/lib/libz.so.1")).expect("stored");
+    assert_eq!(linked.ino(), stored.ino());
+    assert_eq!(
+        fs::read_link(tree.join("usr/bin/ripgrep")).expect("a symlink"),
+        Path::new("rg")
+    );
+    assert!(!tree.join("etc").exists());
+}
+
+#[test]
+fn a_package_with_the_wrong_id_is_not_inserted() {
+    let env = Env::new();
+    let package = sample(&env);
+    let other = Pkg::new("zlib", "1.3.1")
+        .file("usr/lib/x", b"x")
+        .build(&env);
+    let store = crate::Store::at(env.root.path().join("builder/store"));
+    let tmp = env.root.path().join("builder/tmp");
+    let error = store
+        .insert(&package.path, &other.id, &tmp)
+        .expect_err("the id differs");
+    assert!(matches!(error, Error::IdMismatch { .. }), "{error}");
+    assert_eq!(store.list().expect("lists"), Vec::<String>::new());
+}
