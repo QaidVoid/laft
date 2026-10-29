@@ -204,7 +204,16 @@ fn flags(input: &EnvInput<'_>) -> Flags {
         let pie = input.static_pie && !off(Hardening::Pie);
         ldflags.push(if pie { "-static-pie" } else { "-static" }.into());
     }
-    ldflags.extend(["-Wl,-O1", "-Wl,--sort-common", "-Wl,--as-needed"].map(String::from));
+    // Debug info is split off only from files with a build id.
+    ldflags.extend(
+        [
+            "-Wl,-O1",
+            "-Wl,--sort-common",
+            "-Wl,--as-needed",
+            "-Wl,--build-id=sha1",
+        ]
+        .map(String::from),
+    );
     if !off(Hardening::Relro) {
         ldflags.push("-Wl,-z,relro".into());
     }
@@ -316,6 +325,7 @@ pub(crate) fn environment(input: &EnvInput<'_>) -> BTreeMap<String, String> {
         format!("--remap-path-prefix=/build=/usr/src/debug/{name}"),
     ]
     .into();
+    rustflags.push("-C link-arg=-Wl,--build-id=sha1".into());
     if !input.hardening_disable.contains(&Hardening::Relro) {
         rustflags.push("-C link-arg=-Wl,-z,relro".into());
     }

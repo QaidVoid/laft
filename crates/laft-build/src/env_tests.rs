@@ -154,3 +154,20 @@ fn an_install_environment_names_no_toolchain() {
         assert_eq!(env["SOURCE_DATE_EPOCH"], SOURCE_DATE_EPOCH.to_string());
     }
 }
+
+#[test]
+fn every_link_asks_for_a_build_id_that_debug_info_is_split_by() {
+    for variant in [Variant::Dynamic, Variant::Static] {
+        let env = environment(&input(variant, &[]));
+        assert!(
+            env["LDFLAGS"].contains("-Wl,--build-id=sha1"),
+            "{variant}: {}",
+            env["LDFLAGS"]
+        );
+        assert!(
+            env["RUSTFLAGS"].contains("-C link-arg=-Wl,--build-id=sha1"),
+            "{variant}: {}",
+            env["RUSTFLAGS"]
+        );
+    }
+}
