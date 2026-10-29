@@ -321,12 +321,11 @@ impl Executor {
 
 /// Waits for `child`, which runs `what`, until `timeout` has passed, then
 /// kills it. A direct phase leads its own process group, which is killed
-/// with it, so that nothing it started keeps writing to the tree. A
-/// sandboxed phase is the first process of its PID namespace, whose other
-/// processes the kernel kills when it dies. The supervisor of a root
-/// sandbox leads no group of its own. The first process of the sandbox's
-/// PID namespace gets a death signal when the supervisor dies, and the
-/// kernel then kills the rest of the namespace.
+/// with it, so that nothing it started keeps writing to the tree. For a
+/// sandboxed phase, `child` is the supervisor that waits outside the
+/// sandbox's PID namespace. Killing it makes the kernel kill the first
+/// process of the namespace through its death signal, and the end of that
+/// process takes every other process of the namespace with it.
 ///
 /// # Errors
 ///

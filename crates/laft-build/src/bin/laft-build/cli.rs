@@ -110,7 +110,8 @@ pub(crate) enum Command {
         /// Make packages as usual, then unpack all but the debug info into
         /// this directory, a system under construction, so that later
         /// builds there use them. A package is up to date when its build
-        /// key matches the one unpacked there.
+        /// key matches the one unpacked there. Any other package is built
+        /// again, even when an earlier run made it but failed to unpack it.
         #[arg(long, value_name = "DIR")]
         unpack: Option<PathBuf>,
         /// A directory to search for programs before the root's
@@ -129,11 +130,12 @@ pub(crate) enum Command {
         #[arg(required = true)]
         packages: Vec<String>,
     },
-    /// Run a bootstrap stage: build the packages of a stage file straight
-    /// into a root, on the host or inside the root entered as a chroot, and
-    /// run its scripts, in order. Finished steps are skipped, so a failed
-    /// run continues with the step that failed. A step that changed runs
-    /// again, and so does every step after it.
+    /// Run a bootstrap stage: build the packages of a stage file into a
+    /// root, on the host or inside the root entered as a chroot, and run
+    /// its scripts, in order. Finished steps and the finished packages of a
+    /// step are skipped, so a failed run continues with the package or
+    /// script that failed. A step that changed runs again, and so does
+    /// every step after it.
     Stage {
         /// The stage file.
         file: PathBuf,
