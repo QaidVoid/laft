@@ -79,7 +79,22 @@ fn upgrade_rollback_and_gc_move_between_generations() {
     );
     fx.laft(&["plan", "--upgrade", "--refresh", "--exit-code"])
         .expect(12);
-    let upgraded = fx.laft(&["upgrade", "-y"]).expect(0);
+    let dry = fx.laft(&["upgrade", "hello", "--dry-run"]).expect(0);
+    assert!(
+        dry.stdout.contains("1.0-r1 \u{2192} 2.0-r1"),
+        "a dry run keeps the upgrade selection: {}",
+        dry.stdout
+    );
+    fx.laft(&["view", "build", "nonexistent", "--dry-run"])
+        .expect(2);
+    let upgraded = fx.laft(&["upgrade", "-y", "--diff"]).expect(0);
+    assert!(
+        upgraded
+            .stdout
+            .contains("--- /etc/hello.conf\n+++ /etc/hello.conf\n@@ -1,1 +1,1 @@\n-greeting = hello\n+greeting = hello 2\n"),
+        "{}",
+        upgraded.stdout
+    );
     assert!(upgraded.stdout.contains("hello"), "{}", upgraded.stdout);
     assert!(
         upgraded.stdout.contains("1.0-r1 \u{2192} 2.0-r1"),

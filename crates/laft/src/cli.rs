@@ -274,12 +274,6 @@ pub(crate) struct PlanArgs {
     /// Sync indexes even if they are fresh.
     #[arg(long)]
     pub(crate) refresh: bool,
-    /// Include unified diffs of changed /etc files.
-    #[arg(long)]
-    pub(crate) diff: bool,
-    /// Move this unmanaged /etc file aside instead of failing.
-    #[arg(long, value_name = "PATH")]
-    pub(crate) adopt: Vec<String>,
     /// Exit with status 12 when the plan contains changes.
     #[arg(long)]
     pub(crate) exit_code: bool,
@@ -303,7 +297,8 @@ pub(crate) struct ApplyArgs {
     /// Sync indexes even if they are fresh.
     #[arg(long)]
     pub(crate) refresh: bool,
-    /// Include unified diffs of changed /etc files.
+    /// Print unified diffs of the /etc files the new generation changes,
+    /// once it is built and before it is activated.
     #[arg(long)]
     pub(crate) diff: bool,
     /// Store a message with the generation.

@@ -28,3 +28,48 @@ fn distant_changes_get_separate_hunks_and_additions_count_from_zero() {
         "--- a\n+++ b\n@@ -0,0 +1,1 @@\n+new\n"
     );
 }
+
+#[test]
+fn a_difference_in_the_final_newline_is_shown() {
+    let diff = unified("a", "b", "x\n", "x");
+    assert_eq!(diff, "--- a\n+++ b\n\\ No newline at end of file\n");
+}
+
+#[test]
+fn etc_trees_show_added_removed_and_changed_files() {
+    let dir = laft_test::tempdir();
+    let (old, new) = (dir.path().join("old"), dir.path().join("new"));
+    for (root, files) in [
+        (
+            &old,
+            &[("motd", "hello\n"), ("gone", "x\n"), ("same", "s\n")][..],
+        ),
+        (
+            &new,
+            &[
+                ("motd", "hi\n"),
+                ("ssh/sshd_config", "Port 22\n"),
+                ("same", "s\n"),
+            ][..],
+        ),
+    ] {
+        for (path, text) in files {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    }
+    std::os::unix::fs::symlink("/usr/share/zoneinfo/UTC", new.join("localtime")).unwrap();
+    let diff = etc_trees(Some(&old), &new).unwrap();
+    assert!(
+        diff.contains("--- /etc/motd\n+++ /etc/motd\n@@ -1,1 +1,1 @@\n-hello\n+hi\n"),
+        "{diff}"
+    );
+    assert!(diff.contains("--- /etc/gone\n+++ /dev/null\n"), "{diff}");
+    assert!(
+        diff.contains("+++ /etc/ssh/sshd_config\n@@ -0,0 +1,1 @@\n+Port 22\n"),
+        "{diff}"
+    );
+    assert!(diff.contains("+-> /usr/share/zoneinfo/UTC"), "{diff}");
+    assert!(!diff.contains("same"), "{diff}");
+}

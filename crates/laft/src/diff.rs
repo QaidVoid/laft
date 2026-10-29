@@ -1,6 +1,10 @@
 //! Unified diffs of text, for `/etc` files.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::fs;
+use std::io;
+use std::path::Path;
 
 /// The number of unchanged lines shown around a change.
 const CONTEXT: usize = 3;
@@ -53,6 +57,9 @@ pub(crate) fn unified(old_name: &str, new_name: &str, old: &str, new: &str) -> S
     }
     let a: Vec<&str> = old.lines().collect();
     let b: Vec<&str> = new.lines().collect();
+    if a == b {
+        return format!("--- {old_name}\n+++ {new_name}\n\\ No newline at end of file\n");
+    }
     let ops = ops(&a, &b);
     let changed: Vec<usize> = ops
         .iter()
@@ -108,6 +115,89 @@ pub(crate) fn unified(old_name: &str, new_name: &str, old: &str, new: &str) -> S
         k += 1;
     }
     out
+}
+
+/// What a path of a static `/etc` tree holds, for comparing two trees.
+#[derive(Debug, PartialEq, Eq)]
+enum Content {
+    Text(String),
+    Link(String),
+    Binary(Vec<u8>),
+}
+
+/// Every file and symlink below `dir`, by path relative to it.
+fn contents(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Content>) -> io::Result<()> {
+    for item in fs::read_dir(dir)? {
+        let item = item?;
+        let name = item.file_name().to_string_lossy().into_owned();
+        let rel = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let kind = item.file_type()?;
+        if kind.is_symlink() {
+            let target = fs::read_link(item.path())?;
+            out.insert(rel, Content::Link(target.to_string_lossy().into_owned()));
+        } else if kind.is_dir() {
+            contents(&item.path(), &rel, out)?;
+        } else {
+            let bytes = fs::read(item.path())?;
+            let content = match String::from_utf8(bytes) {
+                Ok(text) => Content::Text(text),
+                Err(e) => Content::Binary(e.into_bytes()),
+            };
+            out.insert(rel, content);
+        }
+    }
+    Ok(())
+}
+
+/// The unified diffs between the static `/etc` trees `old`, or none, and
+/// `new`, in path order. A symlink shows as `-> <target>`, and a file that
+/// is not UTF-8 is only named.
+///
+/// # Errors
+///
+/// Fails when a tree cannot be read.
+pub(crate) fn etc_trees(old: Option<&Path>, new: &Path) -> io::Result<String> {
+    let mut before = BTreeMap::new();
+    if let Some(old) = old {
+        contents(old, "", &mut before)?;
+    }
+    let mut after = BTreeMap::new();
+    contents(new, "", &mut after)?;
+    let paths: std::collections::BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    let mut out = String::new();
+    for path in paths {
+        let (a, b) = (before.get(path), after.get(path));
+        if a == b {
+            continue;
+        }
+        let text = |c: Option<&Content>| match c {
+            None => String::new(),
+            Some(Content::Text(text)) => text.clone(),
+            Some(Content::Link(target)) => format!("-> {target}\n"),
+            Some(Content::Binary(_)) => String::new(),
+        };
+        let name = format!("/etc/{path}");
+        let old_name = if a.is_some() {
+            name.as_str()
+        } else {
+            "/dev/null"
+        };
+        let new_name = if b.is_some() {
+            name.as_str()
+        } else {
+            "/dev/null"
+        };
+        if matches!(a, Some(Content::Binary(_))) || matches!(b, Some(Content::Binary(_))) {
+            let _ = writeln!(out, "Binary files {old_name} and {new_name} differ");
+            continue;
+        }
+        out.push_str(&unified(old_name, new_name, &text(a), &text(b)));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

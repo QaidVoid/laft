@@ -70,7 +70,17 @@ fn compute<'i>(
     installed: &'i InstalledMetas,
     active: Option<laft_store::Generation>,
     upgrade: &Upgrade,
+    rebuild: &BTreeSet<Name>,
 ) -> Result<Planned<'i>, Failure> {
+    if let Some(unknown) = rebuild
+        .iter()
+        .find(|n| !loaded.config.views.contains_key(*n))
+    {
+        return Err(Failure::new(
+            exit::USAGE,
+            format!("view {unknown} is not declared in the configuration"),
+        ));
+    }
     let services = resolve::services(&loaded.config)?;
     let universe = resolve::universe(indexes);
     let host = host(env, &loaded.config);
@@ -97,7 +107,7 @@ fn compute<'i>(
             .map_or(text.as_str(), |(_, rest)| rest);
         env.ui.warn_code(warning.code(), text);
     }
-    let plan = plan::plan(&plan::Inputs {
+    let mut plan = plan::plan(&plan::Inputs {
         root: &env.root,
         active: active.as_ref(),
         resolved: &resolved,
@@ -106,6 +116,12 @@ fn compute<'i>(
         services: &services,
         view_access: view_access(&loaded),
     })?;
+    for view in plan.views.iter_mut() {
+        if rebuild.iter().any(|n| n.as_str() == view.name) {
+            view.keep = None;
+            plan.nothing_to_do = false;
+        }
+    }
     Ok(Planned {
         loaded,
         services,
@@ -117,6 +133,17 @@ fn compute<'i>(
 /// `laft plan`: prints what `laft apply` would do and writes nothing but
 /// synced indexes.
 pub(crate) fn plan_command(env: &Env, args: &PlanArgs) -> Result<u8, Failure> {
+    plan_selected(env, args, &upgrade_mode(args.upgrade), &BTreeSet::new())
+}
+
+/// Prints the plan of an apply that moves the packages `upgrade` selects
+/// and assembles the views `rebuild` again.
+fn plan_selected(
+    env: &Env,
+    args: &PlanArgs,
+    upgrade: &Upgrade,
+    rebuild: &BTreeSet<Name>,
+) -> Result<u8, Failure> {
     let mode = match (env.can_write(), args.refresh) {
         (false, _) => SyncMode::Cached,
         (true, true) => SyncMode::Always,
@@ -146,14 +173,7 @@ pub(crate) fn plan_command(env: &Env, args: &PlanArgs) -> Result<u8, Failure> {
     }
     let active = env.active()?.map(|n| env.generation(n)).transpose()?;
     let installed = InstalledMetas::of(&env.root, active.as_ref());
-    let planned = compute(
-        env,
-        loaded,
-        &indexes,
-        &installed,
-        active,
-        &upgrade_mode(args.upgrade),
-    )?;
+    let planned = compute(env, loaded, &indexes, &installed, active, upgrade, rebuild)?;
     if env.ui.json {
         env.ui.doc(planned.plan.to_json());
     } else {
@@ -170,15 +190,15 @@ pub(crate) fn plan_command(env: &Env, args: &PlanArgs) -> Result<u8, Failure> {
 pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
     let args = &request.args;
     if args.dry_run {
-        return plan_command(
+        return plan_selected(
             env,
             &PlanArgs {
                 upgrade: args.upgrade,
                 refresh: args.refresh,
-                diff: args.diff,
-                adopt: args.adopt.clone(),
                 exit_code: false,
             },
+            &request.upgrade,
+            &request.rebuild,
         );
     }
     env.require_write(request.command)?;
@@ -192,7 +212,15 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
     let (loaded, indexes) = env.load_with_indexes(mode, Some(&lock))?;
     let active = env.active()?.map(|n| env.generation(n)).transpose()?;
     let installed = InstalledMetas::of(&env.root, active.as_ref());
-    let planned = compute(env, loaded, &indexes, &installed, active, &request.upgrade)?;
+    let planned = compute(
+        env,
+        loaded,
+        &indexes,
+        &installed,
+        active,
+        &request.upgrade,
+        &request.rebuild,
+    )?;
     let plan = &planned.plan;
     let forced = args.force || !request.rebuild.is_empty();
     if plan.nothing_to_do && !forced {
@@ -375,6 +403,18 @@ fn build_and_activate(
     env.ui.event(
         json!({"event": "phase", "phase": "assemble", "status": "done", "generation": number}),
     );
+
+    if args.diff && !env.ui.json {
+        let old = plan
+            .previous
+            .map(|n| crate::gens::gen_dir(env, n).join("etc"));
+        let new = crate::gens::gen_dir(env, number).join("etc");
+        let diff = crate::diff::etc_trees(old.as_deref(), &new)
+            .map_err(|e| Failure::general(format!("comparing /etc: {e}")))?;
+        if !diff.is_empty() {
+            env.ui.out(diff.trim_end());
+        }
+    }
 
     let esp = env.esp(Some(config));
     activate::install_boot(env, &esp)?;
