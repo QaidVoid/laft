@@ -189,7 +189,7 @@ impl RootTree {
         let proc = fresh_mount(c"proc", None, nosuid | MountAttrFlags::MOUNT_ATTR_NOEXEC)
             .map_err(fail(Step::MountProc))?;
         attach(&proc, &root, c"proc")?;
-        mount_dev(&root)?;
+        mount_dev(&root, true)?;
 
         switch_root(&root)?;
         drop_capabilities()?;

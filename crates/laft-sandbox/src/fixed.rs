@@ -191,7 +191,7 @@ impl FixedRoot {
         let proc = fresh_mount(c"proc", None, nosuid | MountAttrFlags::MOUNT_ATTR_NOEXEC)
             .map_err(fail(Step::MountProc))?;
         attach(&proc, &root, c"proc")?;
-        mount_dev(&root)?;
+        mount_dev(&root, false)?;
         let tmp = fresh_mount(c"tmpfs", Some(c"1777"), nosuid).map_err(fail(Step::MountTmp))?;
         attach(&tmp, &root, c"tmp")?;
         for (dir, mode) in [(c"var", c"0755"), (c"home", c"0755"), (c"root", c"0700")] {

@@ -169,7 +169,7 @@ fn host_paths_are_invisible() {
     assert_eq!(
         stdout(&output),
         "/bin /build /dev /lib /lib64 /out /proc /sbin /tmp /usr\n\
-         /dev/fd /dev/full /dev/null /dev/random /dev/stderr /dev/stdin /dev/stdout /dev/tty /dev/urandom /dev/zero\n\
+         /dev/fd /dev/full /dev/null /dev/ptmx /dev/pts /dev/random /dev/stderr /dev/stdin /dev/stdout /dev/tty /dev/urandom /dev/zero\n\
          /build\n"
     );
 }
@@ -488,4 +488,13 @@ fn setup_failure_names_the_step() {
         error.to_string().starts_with("attaching a mount: "),
         "{error}"
     );
+}
+
+#[test]
+fn a_command_opens_pseudo_terminals_of_its_own() {
+    let fixture = Fixture::new();
+    let Some(output) = fixture.run("exec 3<>/dev/ptmx && test -c /dev/pts/0 && echo opened") else {
+        return;
+    };
+    assert_eq!(stdout(&output), "opened\n", "{output:?}");
 }
