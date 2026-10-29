@@ -12,7 +12,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use laft_core::{Blake3Hash, LuksOption, StoreId};
+use laft_core::{Blake3Hash, LuksOption, PkgRef, StoreId, Variant};
 use laft_store::{Generation, Store};
 use serde::{Deserialize, Serialize};
 
@@ -81,6 +81,81 @@ impl BootRecord {
         }
         Ok(record)
     }
+}
+
+/// A package the initramfs needs from outside the system view, and the
+/// setting that needs it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InitrdPackage {
+    /// The package reference, such as `busybox:static`.
+    pub pkg: PkgRef,
+    /// The setting that needs it, such as `boot.initrd.shell`.
+    pub origin: String,
+}
+
+/// The packages the initramfs of `config` takes programs and microcode
+/// from, on the machine `host`. They are resolved as a closure of the
+/// generation that belongs to no view.
+///
+/// | Package | When |
+/// |---|---|
+/// | `busybox:static` | `boot.initrd.shell` is set |
+/// | `cryptsetup:static` | a LUKS device is declared |
+/// | `e2fsprogs:static` | `/` or `/laft` is ext2, ext3 or ext4 and is checked |
+/// | `f2fs-tools:static` | `/` or `/laft` is f2fs and is checked |
+/// | `intel-ucode` | Intel microcode is selected by `boot.microcode` |
+/// | `linux-firmware` | AMD microcode is selected by `boot.microcode` |
+///
+/// A filesystem is checked when its `fsck` is set, and by default for
+/// ext2, ext3, ext4, f2fs and vfat.
+///
+/// ```
+/// use laft_activate::{BootConfig, Host, initrd_packages};
+///
+/// let packages = initrd_packages(&BootConfig::default(), &Host::default());
+/// assert!(packages.iter().any(|p| p.pkg.to_string() == "busybox:static"));
+/// ```
+pub fn initrd_packages(config: &BootConfig, host: &Host) -> Vec<InitrdPackage> {
+    let mut out = Vec::new();
+    let mut add = |name: &str, variant: Variant, origin: String| {
+        let pkg = PkgRef::new(
+            name.parse().expect("the initrd package names are valid"),
+            None,
+            variant,
+        );
+        if !out.iter().any(|p: &InitrdPackage| p.pkg == pkg) {
+            out.push(InitrdPackage { pkg, origin });
+        }
+    };
+    if config.boot.initrd.shell {
+        add("busybox", Variant::Static, "boot.initrd.shell".into());
+    }
+    if !config.luks.is_empty() {
+        add("cryptsetup", Variant::Static, "luks".into());
+    }
+    for mountpoint in ["/", "/laft"] {
+        let Some(fs) = config.fs.get(mountpoint) else {
+            continue;
+        };
+        match fsck_program(fs).as_deref() {
+            Some("/usr/bin/e2fsck") => {
+                add("e2fsprogs", Variant::Static, format!("fs {mountpoint:?}"));
+            }
+            Some("/usr/bin/fsck.f2fs") => {
+                add("f2fs-tools", Variant::Static, format!("fs {mountpoint:?}"));
+            }
+            _ => {}
+        }
+    }
+    for vendor in microcode_vendors(config, host) {
+        let name = if vendor == INTEL {
+            "intel-ucode"
+        } else {
+            "linux-firmware"
+        };
+        add(name, Variant::Dynamic, "boot.microcode".into());
+    }
+    out
 }
 
 /// What assembly needs to know about the machine it runs on.
@@ -572,22 +647,31 @@ impl Programs<'_, '_> {
 
 /// The uncompressed archive of CPU microcode that the kernel reads before
 /// the main archive.
-fn microcode(inputs: &Inputs<'_>, programs: &Programs<'_, '_>) -> Result<Archive> {
-    const INTEL: &str = "GenuineIntel";
-    const AMD: &str = "AuthenticAMD";
-    let boot = &inputs.config.boot;
-    let vendors: Vec<&str> = match boot.microcode {
+/// The CPU vendor id of Intel processors.
+const INTEL: &str = "GenuineIntel";
+/// The CPU vendor id of AMD processors.
+const AMD: &str = "AuthenticAMD";
+
+/// The CPU vendors whose microcode the initramfs of `config` carries on
+/// `host`.
+fn microcode_vendors(config: &BootConfig, host: &Host) -> Vec<&'static str> {
+    let boot = &config.boot;
+    match boot.microcode {
         Microcode::Off => vec![],
         Microcode::Intel => vec![INTEL],
         Microcode::Amd => vec![AMD],
         Microcode::Both => vec![AMD, INTEL],
-        Microcode::Auto => match inputs.host.cpu_vendor.as_deref() {
-            Some(vendor @ (INTEL | AMD)) if boot.initrd.hostonly => vec![vendor],
+        Microcode::Auto => match host.cpu_vendor.as_deref() {
+            Some(INTEL) if boot.initrd.hostonly => vec![INTEL],
+            Some(AMD) if boot.initrd.hostonly => vec![AMD],
             _ => vec![AMD, INTEL],
         },
-    };
+    }
+}
+
+fn microcode(inputs: &Inputs<'_>, programs: &Programs<'_, '_>) -> Result<Archive> {
     let mut archive = Archive::default();
-    for vendor in vendors {
+    for vendor in microcode_vendors(inputs.config, inputs.host) {
         if let Some(bytes) = programs.find(&format!("usr/share/laft/microcode/{vendor}.bin"))? {
             archive.add(
                 &format!("kernel/x86/microcode/{vendor}.bin"),
@@ -656,21 +740,25 @@ fn filesystem(config: &BootConfig, mountpoint: &str) -> Result<FsJson> {
             "no filesystem for {mountpoint}: declare fs {mountpoint:?}"
         ))
     })?;
+    Ok(FsJson {
+        device: device(mountpoint, fs)?,
+        fsck: fsck_program(fs),
+        options: fs.options.join(","),
+        fstype: fs.fstype.clone(),
+    })
+}
+
+/// The program that checks `fs` in the initramfs, if it is checked.
+fn fsck_program(fs: &Fs) -> Option<String> {
     let checked = fs.fsck.unwrap_or(matches!(
         fs.fstype.as_str(),
         "ext2" | "ext3" | "ext4" | "f2fs" | "vfat"
     ));
-    let fsck = match fs.fstype.as_str() {
+    match fs.fstype.as_str() {
         "ext2" | "ext3" | "ext4" if checked => Some("/usr/bin/e2fsck".to_owned()),
         "f2fs" if checked => Some("/usr/bin/fsck.f2fs".to_owned()),
         _ => None,
-    };
-    Ok(FsJson {
-        device: device(mountpoint, fs)?,
-        fsck,
-        options: fs.options.join(","),
-        fstype: fs.fstype.clone(),
-    })
+    }
 }
 
 fn device(mountpoint: &str, fs: &Fs) -> Result<String> {

@@ -115,3 +115,60 @@ fn a_host_only_initramfs_without_host_modules_takes_the_generic_drivers() {
     );
     assert!(warnings.is_empty());
 }
+
+fn initrd_names(config: &BootConfig, host: &Host) -> Vec<String> {
+    initrd_packages(config, host)
+        .iter()
+        .map(|p| p.pkg.to_string())
+        .collect()
+}
+
+fn fs(fstype: &str, fsck: Option<bool>) -> Fs {
+    Fs {
+        device: Some("UUID=1".into()),
+        fstype: fstype.into(),
+        fsck,
+        ..Fs::default()
+    }
+}
+
+#[test]
+fn the_initrd_takes_the_shell_fsck_and_microcode_the_configuration_needs() {
+    let mut config = BootConfig::default();
+    config.fs.insert("/".into(), fs("ext4", None));
+    config.fs.insert("/boot".into(), fs("vfat", None));
+    let intel = Host {
+        cpu_vendor: Some("GenuineIntel".into()),
+        ..Host::default()
+    };
+    assert_eq!(
+        initrd_names(&config, &intel),
+        ["busybox:static", "e2fsprogs:static", "intel-ucode"]
+    );
+    assert_eq!(
+        initrd_names(&config, &Host::default()),
+        [
+            "busybox:static",
+            "e2fsprogs:static",
+            "linux-firmware",
+            "intel-ucode"
+        ]
+    );
+}
+
+#[test]
+fn an_unchecked_root_without_shell_or_microcode_needs_no_initrd_package() {
+    let mut config = BootConfig::default();
+    config.fs.insert("/".into(), fs("ext4", Some(false)));
+    config.boot.initrd.shell = false;
+    config.boot.microcode = Microcode::Off;
+    assert!(initrd_names(&config, &Host::default()).is_empty());
+    config.fs.insert("/laft".into(), fs("f2fs", None));
+    config
+        .luks
+        .insert("cryptroot".into(), crate::Luks::default());
+    let packages = initrd_packages(&config, &Host::default());
+    let names: Vec<String> = packages.iter().map(|p| p.pkg.to_string()).collect();
+    assert_eq!(names, ["cryptsetup:static", "f2fs-tools:static"]);
+    assert_eq!(packages[1].origin, "fs \"/laft\"");
+}
