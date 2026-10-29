@@ -469,8 +469,7 @@ impl<'a> Builder<'a> {
             .shell(recipe.shell);
         session.env = env::install(recipe.environment(self.jobs));
         self.phases(&session, recipe, None)?;
-        let record = dest.join(INSTALLED).join(item_dir(&Item::of(recipe)));
-        fsx::write_atomic(&record, format!("{key}\n").as_bytes(), 0o644)?;
+        write_key(&installed_record(dest, &Item::of(recipe)), &key)?;
         if !self.keep_work {
             fsx::remove_tree(&session.dir)?;
         }
@@ -792,33 +791,83 @@ impl<'a> Builder<'a> {
 }
 
 /// Where [`Builder::install`] records what it installed, relative to the
-/// destination: one file per item, named `<name>+<variant>`, that holds the
-/// build key.
+/// destination: one record per item, named `<name>+<variant>`, as
+/// [`write_key`] writes it.
 const INSTALLED: &str = "var/lib/laft-build/installed";
+
+/// The format of the records that [`write_key`] writes.
+const KEY_RECORD_FORMAT: u64 = 1;
+
+/// A record of a build key, written as one line of JSON.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct KeyRecord {
+    format: u64,
+    key: String,
+}
+
+/// Records `key` at `path`: `{"format":1,"key":"b3:..."}` and a newline,
+/// replaced atomically.
+pub(crate) fn write_key(path: &Path, key: &Blake3Hash) -> Result<(), BuildError> {
+    let record = KeyRecord {
+        format: KEY_RECORD_FORMAT,
+        key: key.to_string(),
+    };
+    let mut bytes = laft_core::to_canonical_json(&record)
+        .map_err(|e| BuildError::problem("B023", format!("{}: {e}", path.display())))?;
+    bytes.push(b'\n');
+    fsx::write_atomic(path, &bytes, 0o644)
+}
+
+/// The build key that [`write_key`] recorded at `path`, or `None` when
+/// there is no record.
+///
+/// # Errors
+///
+/// Fails with `B023` when the record cannot be read, is not a build key
+/// record, has a format other than the one this version writes or holds
+/// no build key.
+pub(crate) fn read_key(path: &Path) -> Result<Option<Blake3Hash>, BuildError> {
+    let bad = |why: String| BuildError::problem("B023", format!("{}: {why}", path.display()));
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(bad(e.to_string())),
+    };
+    #[derive(serde::Deserialize)]
+    struct Format {
+        format: u64,
+    }
+    let format: Format =
+        serde_json::from_str(&text).map_err(|e| bad(format!("is not a build key record: {e}")))?;
+    if format.format != KEY_RECORD_FORMAT {
+        return Err(bad(format!(
+            "has record format {}, which this laft-build does not read",
+            format.format
+        )));
+    }
+    let record: KeyRecord =
+        serde_json::from_str(&text).map_err(|e| bad(format!("is not a build key record: {e}")))?;
+    record
+        .key
+        .parse()
+        .map(Some)
+        .map_err(|e| bad(format!("{e}")))
+}
 
 /// The build key of the latest [`Builder::install`] of `item` into `dest`,
 /// or `None` when nothing was installed for it there.
 ///
 /// # Errors
 ///
-/// Fails with `B023` when the record exists but cannot be read or holds no
-/// build key.
+/// Fails with `B023` when the record exists but cannot be read, has a
+/// format this version does not read or holds no build key.
 pub fn installed(dest: &Path, item: &Item) -> Result<Option<Blake3Hash>, BuildError> {
-    let path = dest.join(INSTALLED).join(item_dir(item));
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => {
-            return Err(BuildError::problem(
-                "B023",
-                format!("{}: {e}", path.display()),
-            ));
-        }
-    };
-    text.trim_end()
-        .parse()
-        .map(Some)
-        .map_err(|e| BuildError::problem("B023", format!("{}: {e}", path.display())))
+    read_key(&installed_record(dest, item))
+}
+
+/// The record of the latest [`Builder::install`] of `item` into `dest`.
+pub(crate) fn installed_record(dest: &Path, item: &Item) -> PathBuf {
+    dest.join(INSTALLED).join(item_dir(item))
 }
 
 /// `<name>+<variant>`, the directory of an item's logs.

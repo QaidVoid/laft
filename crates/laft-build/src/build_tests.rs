@@ -109,3 +109,33 @@ fn license_files_replace_links_the_install_phase_left() {
     );
     assert!(!dir.path().join("zlib").exists());
 }
+
+#[test]
+fn an_install_record_holds_a_versioned_build_key() {
+    let dir = laft_test::tempdir();
+    let item = Item::new("zlib".parse().unwrap(), Variant::Dynamic);
+    let key = Blake3Hash::of(b"inputs");
+    let record = dir.path().join(INSTALLED).join("zlib+dynamic");
+    write_key(&record, &key).unwrap();
+    let text = fs::read_to_string(&record).unwrap();
+    assert_eq!(text, format!("{{\"format\":1,\"key\":\"{key}\"}}\n"));
+    assert_eq!(installed(dir.path(), &item).unwrap(), Some(key));
+}
+
+#[test]
+fn an_install_record_of_another_format_is_refused() {
+    let dir = laft_test::tempdir();
+    let item = Item::new("zlib".parse().unwrap(), Variant::Dynamic);
+    let record = dir.path().join(INSTALLED).join("zlib+dynamic");
+    let key = Blake3Hash::of(b"inputs");
+    for (text, says) in [
+        (format!("{{\"format\":2,\"key\":\"{key}\"}}\n"), "format 2"),
+        (format!("{key}\n"), "not a build key record"),
+        ("{\"format\":1,\"key\":\"none\"}\n".to_owned(), "none"),
+    ] {
+        fsx::write_atomic(&record, text.as_bytes(), 0o644).unwrap();
+        let error = installed(dir.path(), &item).unwrap_err();
+        assert_eq!(error.code(), Some("B023"), "{text}");
+        assert!(error.to_string().contains(says), "{text}: {error}");
+    }
+}

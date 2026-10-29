@@ -15,6 +15,7 @@ use laft_sandbox::RootSandbox;
 use serde::Deserialize;
 use stav::{AttrPath, ImportRoot, Limits, RootSpec};
 
+use crate::build::{read_key, write_key};
 use crate::error::{BuildError, io};
 use crate::exec::{Executor, tail};
 use crate::loader::Scope;
@@ -248,8 +249,8 @@ const INSIDE_BUILD_ROOT: &str = "laft-build-root";
 const INSIDE_RECIPES: &str = "laft-recipes";
 const INSIDE_LAFT_BUILD: &str = "laft-build";
 
-/// Where script steps record that they ran, relative to the root: one file
-/// per step, `<stage>/<step>`, that holds the hash of the step.
+/// Where script steps record that they ran, relative to the root: one
+/// record per step, `<stage>/<step>`, that holds the hash of the step.
 const SCRIPTS_RUN: &str = "var/lib/laft-build/stages";
 
 /// The top-level links of Laft's merged `/usr`.
@@ -589,9 +590,8 @@ impl StageRun<'_> {
         let hash = Blake3Hash::of(
             &laft_core::to_canonical_json(&value)
                 .map_err(|e| BuildError::problem("B023", format!("step {}: {e}", step.name)))?,
-        )
-        .to_string();
-        if fs::read_to_string(&record).is_ok_and(|text| text.trim_end() == hash) {
+        );
+        if read_key(&record)? == Some(hash) {
             progress(finished(
                 &step.name,
                 "script",
@@ -660,7 +660,7 @@ impl StageRun<'_> {
                 self.run_logged(command, &self.logs.join(format!("{tag}.log")), &step.name)?;
             }
         }
-        fsx::write_atomic(&record, format!("{hash}\n").as_bytes(), 0o644)?;
+        write_key(&record, &hash)?;
         progress(finished(
             &step.name,
             "script",
