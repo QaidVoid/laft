@@ -325,12 +325,13 @@ fn check_services(cx: &Cx<'_>, services: &ServiceConfig, found: &mut Vec<FileDia
 
 /// Directories that Laft manages, which cannot be mountpoints or contain
 /// one.
-const MANAGED: [&str; 9] = [
-    "/usr", "/bin", "/sbin", "/lib", "/lib64", "/proc", "/sys", "/dev", "/run",
+const MANAGED: [&str; 10] = [
+    "/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/proc", "/sys", "/dev", "/run",
 ];
 
-/// Filesystem types the initramfs can mount the root filesystem from.
-const ROOT_TYPES: [&str; 4] = ["ext4", "xfs", "btrfs", "f2fs"];
+/// Filesystem types the initramfs can mount the root filesystem from and
+/// that hold the hardlinks, owners and modes a system needs.
+const ROOT_TYPES: [&str; 6] = ["ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs"];
 
 /// Checks the filesystems and boot settings (`C1101` to `C1109`).
 fn check_boot(cx: &Cx<'_>, boot: &BootConfig, found: &mut Vec<FileDiagnostic>) {
@@ -372,8 +373,9 @@ fn check_boot(cx: &Cx<'_>, boot: &BootConfig, found: &mut Vec<FileDiagnostic>) {
                 "C1104",
                 &field("fstype"),
                 format!(
-                    "fs \"/\": root filesystem type {:?} is not supported by laft-boot, expected ext4, xfs, btrfs or f2fs",
-                    entry.fstype
+                    "fs \"/\": root filesystem type {:?} is not supported, expected one of {}",
+                    entry.fstype,
+                    ROOT_TYPES.join(", ")
                 ),
             ));
         }

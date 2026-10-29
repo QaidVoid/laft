@@ -219,10 +219,36 @@ fn directories_laft_manages_cannot_be_mountpoints() {
 }
 
 #[test]
+fn etc_cannot_hold_a_mountpoint() {
+    for mountpoint in ["/etc", "/etc/ssl"] {
+        let body = format!(r#"fs "{mountpoint}" {{ device = "UUID=1", fstype = ext4 }}"#);
+        assert_rejected(rejected(&body), "C1103", &body);
+    }
+}
+
+#[test]
 fn the_root_filesystem_type_must_be_mountable_by_the_initramfs() {
     let body = r#"fs "/" { device = "UUID=1", fstype = other(name = "zfs") }
       fs "/boot" { device = "UUID=2", fstype = vfat }"#;
     assert_rejected(rejected_disks(body), "C1104", r#"other(name = "zfs")"#);
+    let vfat = r#"fs "/" { device = "UUID=1", fstype = vfat }
+      fs "/boot" { device = "UUID=2", fstype = vfat }"#;
+    assert_eq!(rejected_disks(vfat).0, ["C1104"]);
+}
+
+#[test]
+fn ext2_and_ext3_roots_are_accepted() {
+    for fstype in ["ext2", "ext3"] {
+        let body = format!(
+            r#"system {{
+  fs "/" {{ device = "UUID=1", fstype = {fstype} }}
+  fs "/boot" {{ device = "UUID=2", fstype = vfat }}
+}}
+"#
+        );
+        let dir = config_dir(&[("system.stav", &body)]);
+        assert!(load(dir.path()).is_ok(), "{fstype}");
+    }
 }
 
 #[test]
