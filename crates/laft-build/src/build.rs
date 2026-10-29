@@ -844,13 +844,14 @@ impl<'a> Builder<'a> {
 /// [`write_key`] writes it.
 const INSTALLED: &str = "var/lib/laft-build/installed";
 
-/// The format of the records that [`write_key`] writes.
-const KEY_RECORD_FORMAT: u64 = 1;
+/// The format of the records that [`write_key`] writes. Format 0 is a
+/// bare build key line, which [`read_key`] still reads.
+const KEY_RECORD_FORMAT: u32 = 1;
 
 /// A record of a build key, written as one line of JSON.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct KeyRecord {
-    format: u64,
+    format: u32,
     key: String,
 }
 
@@ -868,13 +869,14 @@ pub(crate) fn write_key(path: &Path, key: &Blake3Hash) -> Result<(), BuildError>
 }
 
 /// The build key that [`write_key`] recorded at `path`, or `None` when
-/// there is no record.
+/// there is no record. A record of format 0, a bare build key line, is
+/// read too.
 ///
 /// # Errors
 ///
-/// Fails with `B023` when the record cannot be read, is not a build key
-/// record, has a format other than the one this version writes or holds
-/// no build key.
+/// Fails with `B023` when the record cannot be read, is neither a build
+/// key line nor a build key record, has a format other than the ones this
+/// version reads or holds no build key.
 pub(crate) fn read_key(path: &Path) -> Result<Option<Blake3Hash>, BuildError> {
     let bad = |why: String| BuildError::problem("B023", format!("{}: {why}", path.display()));
     let text = match fs::read_to_string(path) {
@@ -882,20 +884,17 @@ pub(crate) fn read_key(path: &Path) -> Result<Option<Blake3Hash>, BuildError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(bad(e.to_string())),
     };
-    #[derive(serde::Deserialize)]
-    struct Format {
-        format: u64,
-    }
-    let format: Format =
-        serde_json::from_str(&text).map_err(|e| bad(format!("is not a build key record: {e}")))?;
-    if format.format != KEY_RECORD_FORMAT {
-        return Err(bad(format!(
-            "has record format {}, which this laft-build does not read",
-            format.format
-        )));
+    if let Ok(key) = text.trim_end_matches('\n').parse() {
+        return Ok(Some(key));
     }
     let record: KeyRecord =
         serde_json::from_str(&text).map_err(|e| bad(format!("is not a build key record: {e}")))?;
+    if record.format != KEY_RECORD_FORMAT {
+        return Err(bad(format!(
+            "has record format {}, which this laft-build does not read",
+            record.format
+        )));
+    }
     record
         .key
         .parse()
