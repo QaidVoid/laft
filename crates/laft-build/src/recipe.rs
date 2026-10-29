@@ -12,9 +12,9 @@ use crate::env;
 /// complete environment computed. It is everything a build needs from the
 /// recipe and nothing that depends on where the recipes are checked out.
 ///
-/// Its canonical JSON, without the operational fields and without the
-/// hashes of sources, vendor tarballs and files, is the plan that
-/// [`Recipe::plan_hash`] hashes.
+/// Its canonical JSON, without the operational fields, the toolchain
+/// epoch and the hashes of sources, vendor tarballs and files, is the plan
+/// that [`Recipe::plan_hash`] hashes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recipe {
     /// The package name.
@@ -71,13 +71,14 @@ pub struct Recipe {
 
 impl Recipe {
     /// The plan hash: BLAKE3 of the canonical JSON of the recipe without
-    /// [`Recipe::operations`] and without the content hashes of sources,
-    /// vendor tarballs, patches and files.
+    /// [`Recipe::operations`], without [`Recipe::toolchain_epoch`] and
+    /// without the content hashes of sources, vendor tarballs, patches and
+    /// files.
     ///
-    /// The content hashes are left out because the build key covers them
-    /// separately. A changed hash is therefore a source change, never a
-    /// plan change, while an edit to anything else the recipe says is a
-    /// plan change.
+    /// The epoch and the content hashes are left out because the build
+    /// key covers them separately. A changed hash is therefore a source
+    /// change and a changed epoch a toolchain change, never a plan change,
+    /// while an edit to anything else the recipe says is a plan change.
     ///
     /// # Panics
     ///
@@ -86,16 +87,21 @@ impl Recipe {
         let mut value = serde_json::to_value(self).expect("a recipe serializes to JSON");
         if let Some(object) = value.as_object_mut() {
             object.remove("operations");
+            object.remove("toolchain_epoch");
             for (list, key) in [
-                ("sources", "sha256"),
                 ("vendors", "sha256"),
                 ("patches", "blake3"),
                 ("files", "blake3"),
             ] {
-                let entries = object.get_mut(list).and_then(|v| v.as_array_mut());
-                for entry in entries.into_iter().flatten() {
-                    if let Some(entry) = entry.as_object_mut() {
-                        entry.remove(key);
+                for entry in entries(object.get_mut(list)) {
+                    entry.remove(key);
+                }
+            }
+            for source in entries(object.get_mut("sources")) {
+                let fetch = source.get_mut("fetch").and_then(|f| f.as_object_mut());
+                for kind in fetch.into_iter().flat_map(|f| f.values_mut()) {
+                    if let Some(kind) = kind.as_object_mut() {
+                        kind.remove("sha256");
                     }
                 }
             }
@@ -135,6 +141,17 @@ impl Recipe {
         env.insert(env::MAKEFLAGS.to_owned(), format!("-j{jobs}"));
         env
     }
+}
+
+/// The objects in the JSON array `value`.
+fn entries(
+    value: Option<&mut serde_json::Value>,
+) -> impl Iterator<Item = &mut serde_json::Map<String, serde_json::Value>> {
+    value
+        .and_then(|v| v.as_array_mut())
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.as_object_mut())
 }
 
 /// Metadata of the main package.

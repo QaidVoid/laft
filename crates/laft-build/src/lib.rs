@@ -17,6 +17,12 @@
 //!    builds, checks it and converts it into a [`Recipe`], with the build
 //!    style rendered into phase scripts and the whole environment
 //!    computed.
+//! 3. [`BuildGraph::new`] resolves the dependencies between the recipes of
+//!    a run, and [`KeyInputs`] gives each item its build key and, against
+//!    the [`BuildRecord`] of its latest build, its rebuild [`Trigger`]s.
+//! 4. A [`Schedule`] orders the dirty items and, as each build finishes,
+//!    either stops at unchanged outputs or marks the dependents whose
+//!    imports or static libraries changed.
 //!
 //! # Recipe checks
 //!
@@ -43,22 +49,39 @@
 //! | `R030` | an `env` key that does not match `[A-Z_][A-Z0-9_]*` |
 //! | `R031` | an `env` key that the builder sets itself |
 //! | `R050` | an `update` block without exactly one of `github`, `gitlab`, `anitya` and `url`, or with `pattern` and `url` not set together |
+//!
+//! Between recipes, and while planning, these problems are found:
+//!
+//! | Code | Problem |
+//! |---|---|
+//! | `R020` | a reference to a package of the run in a variant it does not build |
+//! | `R021` | a reference that no recipe of the run and no published package satisfies |
+//! | `B010` | dirty items that depend on each other in a cycle |
 
 #![forbid(unsafe_code)]
 
 mod convert;
 mod env;
+mod graph;
 mod host;
 mod loader;
+mod plan;
 mod recipe;
 mod repo;
 mod schema;
 mod style;
 mod target;
 
+#[cfg(test)]
+mod test_support;
+
 use std::fmt;
 
 pub use env::SOURCE_DATE_EPOCH;
+pub use graph::{BuildGraph, Deps, Item};
+pub use plan::{
+    BuildRecord, Built, Cutoff, Dirtied, KeyInputs, LinkInput, Schedule, StaticInput, Trigger,
+};
 pub use recipe::{
     Alternative, BuildOptions, Ci, Fetch, FileRef, Metadata, Operations, Outputs, Phases, Recipe,
     Runner, Source, Split, Subpackage, Update, Vendor, VendorKind,
