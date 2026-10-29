@@ -23,6 +23,10 @@
 //! 4. A [`Schedule`] orders the dirty items and, as each build finishes,
 //!    either stops at unchanged outputs or marks the dependents whose
 //!    imports or static libraries changed.
+//! 5. A [`SourceCache`] fetches every source into a cache addressed by
+//!    SHA-256, verifying the hash before anything enters it, and
+//!    [`unpack`] places a fetched source in the source tree, extracting
+//!    archives with rules that keep every entry inside its destination.
 //!
 //! # Recipe checks
 //!
@@ -57,11 +61,22 @@
 //! | `R020` | a reference to a package of the run in a variant it does not build |
 //! | `R021` | a reference that no recipe of the run and no published package satisfies |
 //! | `B010` | dirty items that depend on each other in a cycle |
+//!
+//! Fetching and unpacking sources reports [`SourceError`]s:
+//!
+//! | Code | Problem |
+//! |---|---|
+//! | `B020` | a location served a file whose SHA-256 hash differs from the recipe's |
+//! | `B021` | an archive entry or link that leads outside its destination |
+//! | `B022` | no URL and no mirror has the file |
+//! | `B023` | a local file that cannot be read or written |
+//! | `B024` | an archive that cannot be read, or a git source, which this version cannot fetch |
 
 #![forbid(unsafe_code)]
 
 mod convert;
 mod env;
+mod extract;
 mod graph;
 mod host;
 mod loader;
@@ -69,6 +84,7 @@ mod plan;
 mod recipe;
 mod repo;
 mod schema;
+mod source;
 mod style;
 mod target;
 
@@ -78,6 +94,7 @@ mod test_support;
 use std::fmt;
 
 pub use env::SOURCE_DATE_EPOCH;
+pub use extract::unpack;
 pub use graph::{BuildGraph, Deps, Item};
 pub use plan::{
     BuildRecord, Built, Cutoff, Dirtied, KeyInputs, LinkInput, Schedule, StaticInput, Trigger,
@@ -87,6 +104,7 @@ pub use recipe::{
     Runner, Source, Split, Subpackage, Update, Vendor, VendorKind,
 };
 pub use repo::{Evaluation, RecipeRepo, Repos};
+pub use source::{SourceCache, SourceError};
 pub use target::{ARCH, CPU, GNU_TRIPLE, MUSL_TRIPLE, SYSROOT, Target};
 
 /// Diagnostics about Stav files, with the names and texts of the files

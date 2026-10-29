@@ -29,12 +29,12 @@ version = "0.1.0"
 
 [workspace.dependencies]
 blake3 = { version = "1.8.7", default-features = false, features = ["std"] }
+bzip2 = "0.6.1"
 clap = { version = "4.6.7", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 insta = { version = "1.49.0", default-features = false }
 laft-activate = { version = "0.1.0", path = "crates/laft-activate" }
 laft-boot = { version = "0.1.0", path = "crates/laft-boot" }
-laft-build = { version = "0.1.0", path = "crates/laft-build" }
-laft-config = { version = "0.1.0", path = "crates/laft-config" }
 laft-core = { version = "0.1.0", path = "crates/laft-core" }
 laft-fetch = { version = "0.1.0", path = "crates/laft-fetch" }
 laft-index = { version = "0.1.0", path = "crates/laft-index" }
@@ -47,6 +47,7 @@ laft-svc = { version = "0.1.0", path = "crates/laft-svc" }
 # drops it from the dev-dependencies of published crates.
 laft-test = { path = "crates/laft-test" }
 libc = { version = "0.2.191", default-features = false }
+lzma-rust2 = { version = "0.23.0", default-features = false, features = ["lzip", "std", "xz"] }
 mimalloc = { version = "0.1.52", default-features = false }
 minisign = { version = "0.10.0", default-features = false }
 minisign-verify = { version = "0.3.0", default-features = false }
@@ -55,9 +56,12 @@ proptest = "1.12.0"
 rustix = { version = "1.1.6", default-features = false, features = ["std"] }
 serde = { version = "1.0.229", default-features = false, features = ["std"] }
 serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
+sha2 = { version = "0.11.1", default-features = false }
 stav = { version = "0.1.0", default-features = false }
+tar = { version = "0.4.46", default-features = false }
 tempfile = "3.27.0"
 ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
+zip = { version = "9.1.2", default-features = false, features = ["deflate-flate2"] }
 zstd = { version = "0.14.3", default-features = false }
 
 [workspace.lints.rust]
