@@ -17,6 +17,7 @@ use rustix::thread::{CapabilitySet, UnshareFlags};
 
 use crate::error::{Error, Step};
 use crate::fixed::{FixedRoot, FixedSandbox, NOBODY};
+use crate::root::{RootSandbox, RootTree};
 use crate::sys::{self, Fork};
 
 /// The hostname and domain name inside every sandbox.
@@ -169,6 +170,8 @@ pub(crate) enum Layout {
     Build(Sandbox),
     /// A sandbox for a fixed program.
     Fixed(FixedSandbox),
+    /// A sandbox rooted in an existing tree.
+    Root(RootSandbox),
 }
 
 /// A command to run in a [`Sandbox`], configured like
@@ -324,6 +327,7 @@ struct Setup {
 enum RootSetup {
     Build(BuildRoot),
     Fixed(FixedRoot),
+    Root(RootTree),
 }
 
 /// The root of a build sandbox.
@@ -373,6 +377,10 @@ impl Setup {
                 let privileged = rustix::process::geteuid().is_root();
                 let root = RootSetup::Fixed(FixedRoot::new(sandbox, privileged)?);
                 (root, NOBODY, !privileged)
+            }
+            Layout::Root(sandbox) => {
+                namespaces |= UnshareFlags::NEWNET;
+                (RootSetup::Root(RootTree::new(sandbox)?), 0, true)
             }
         };
         let id_maps = user_namespace.then(|| {
@@ -436,6 +444,7 @@ impl Setup {
                 match &self.root {
                     RootSetup::Build(root) => root.build(),
                     RootSetup::Fixed(root) => root.build(),
+                    RootSetup::Root(root) => root.build(),
                 }
             }
         }
@@ -521,7 +530,12 @@ pub(crate) fn enter_root(root: &OwnedFd) -> Result<(), Failure> {
         MountAttrFlags::empty(),
     )
     .map_err(fail(Step::SetAttributes))?;
+    switch_root(root)
+}
 
+/// Switches to `root`, which is stacked on `/`, detaches the old root and
+/// sets the hostname.
+pub(crate) fn switch_root(root: &OwnedFd) -> Result<(), Failure> {
     // With both arguments ".", the old root ends up stacked on the new
     // one, and detaching "." removes it.
     rustix::process::fchdir(root).map_err(fail(Step::PivotRoot))?;

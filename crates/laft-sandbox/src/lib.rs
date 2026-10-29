@@ -1,6 +1,6 @@
 //! Namespaces and mounts for Laft.
 //!
-//! Three kinds of processes are isolated with this crate:
+//! Four kinds of processes are isolated with this crate:
 //!
 //! - The builder runs every build phase unprivileged in a [`Sandbox`]: new
 //!   user, mount, PID, IPC, UTS and network namespaces, a root that holds
@@ -21,6 +21,10 @@
 //!   [`close_inherited_on_exec`] and [`reset_signal_dispositions`], and
 //!   after dropping privileges it checks them with [`user_ids`] and
 //!   [`group_ids`].
+//! - A bootstrap enters a system under construction with a [`RootSandbox`]:
+//!   the same namespaces as a build sandbox, but with an existing tree as a
+//!   writable root, a fresh `/proc`, `/dev` and `/run`, and chosen host
+//!   directories bound below `/run`.
 //! - The store worker of a live transaction calls
 //!   [`private_mount_namespace`] before it makes `/laft` writable, so that
 //!   the writable mount never appears outside.
@@ -38,6 +42,7 @@ mod enter;
 mod error;
 mod fixed;
 mod process;
+mod root;
 mod sandbox;
 mod sys;
 
@@ -48,4 +53,5 @@ pub use enter::{enter_view, private_mount_namespace};
 pub use error::Error;
 pub use fixed::{FixedSandbox, NOBODY};
 pub use process::{close_inherited_on_exec, group_ids, reset_signal_dispositions, user_ids};
+pub use root::RootSandbox;
 pub use sandbox::{Command, HOSTNAME, MAX_OPEN_FILES, Network, Sandbox};

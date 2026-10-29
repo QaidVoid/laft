@@ -44,6 +44,7 @@ steps! {
     MountProc => "mounting /proc",
     MountDev => "mounting /dev",
     MountTmp => "mounting /tmp",
+    MountRun => "mounting /run",
     MountEtc => "binding the host's name resolution files into /etc",
     PivotRoot => "switching to the new root",
     Hostname => "setting the hostname",
@@ -63,6 +64,7 @@ steps! {
     MountScratch => "mounting a private tmpfs",
     SwitchIds => "switching to user nobody",
     ReadIds => "reading the process ids",
+    InvalidBindName => "expecting a plain file name below /run, got",
 }
 
 impl Step {
