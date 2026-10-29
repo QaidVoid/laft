@@ -472,6 +472,30 @@ fn a_stale_partial_file_that_does_not_match_is_downloaded_again() {
 }
 
 #[test]
+fn a_resumed_answer_at_the_wrong_offset_restarts_from_the_beginning() {
+    let server = Server::start();
+    let content = bytes(10_000, 14);
+    let entry = package(&content);
+    server.put(&entry.file, &content);
+    server.fault(&entry.file, Fault::ShiftRange);
+    let cache = laft_test::tempdir();
+    let dest = cache.path().join(format!("pkgs/{}.lpkg", entry.id));
+    std::fs::create_dir_all(dest.parent().expect("in a directory")).expect("writable");
+    std::fs::write(part_path(&dest), &content[..4_000]).expect("writable");
+    let fetcher = Fetcher::new(config(cache.path()));
+    let path = fetcher
+        .download_package(&mirrors(&[server.url()]), &entry, &mut quiet())
+        .expect("downloaded from the start");
+    assert_eq!(std::fs::read(path).expect("cached"), content);
+    let ranges: Vec<_> = server
+        .requests(&entry.file)
+        .into_iter()
+        .map(|l| l.range)
+        .collect();
+    assert_eq!(ranges, [Some("bytes=4000-".to_owned()), None]);
+}
+
+#[test]
 fn a_huge_length_on_a_resumed_answer_is_too_large() {
     let server = Server::start();
     let content = bytes(100_000, 11);

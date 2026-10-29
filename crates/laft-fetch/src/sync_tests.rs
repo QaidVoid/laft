@@ -410,6 +410,36 @@ fn a_cached_index_signed_by_a_key_revoked_since_is_refused_and_dropped() {
 }
 
 #[test]
+fn a_revoked_cached_index_that_cannot_be_removed_still_reports_the_revocation() {
+    let (root, old, new) = (
+        TestKey::generate(),
+        TestKey::generate(),
+        TestKey::generate(),
+    );
+    let server = Server::start();
+    server.put_all(&publish(&root, Some(&old), &index(T0)));
+    let client = Client::new(&root);
+    client.sync(&[server.url()]).expect("first sync");
+    let signature = client
+        .fetcher
+        .config()
+        .cache
+        .join("index/core")
+        .join(CHANNEL)
+        .join("index.json.zst.minisig");
+    std::fs::remove_file(&signature).expect("the first sync cached the signature");
+    std::fs::create_dir_all(signature.join("blocker")).expect("writable");
+    server.put_all(&keys_files(&root, 2, &new, &old, None));
+    let error = client
+        .sync(&[server.url()])
+        .expect_err("the cached index is signed by a revoked key");
+    assert!(
+        matches!(last_attempt(&error), ErrorKind::CachedIndexRevoked { signer } if *signer == old.public.id()),
+        "{error}"
+    );
+}
+
+#[test]
 fn a_cached_index_whose_pin_a_revocation_cleared_is_refused() {
     let (root, old, new) = (
         TestKey::generate(),

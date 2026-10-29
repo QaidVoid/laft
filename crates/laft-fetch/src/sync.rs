@@ -12,6 +12,8 @@ use crate::{BaseUrl, Error, ErrorKind, Fetcher, Mirrors, ObjectKind, Progress};
 
 const KEYS: &str = "keys.json";
 const KEYS_SIGNATURE: &str = "keys.json.minisig";
+const INDEX: &str = "index.json.zst";
+const INDEX_SIGNATURE: &str = "index.json.zst.minisig";
 
 /// What [`Fetcher::sync`] needs to know about one repository channel.
 #[derive(Debug, Clone, Copy)]
@@ -67,13 +69,13 @@ impl Fetcher {
     ///
     /// For each URL in order, `keys.json` and then its signature are
     /// downloaded and handed to [`IndexState::accept_keys`] until one is
-    /// accepted. Any failure, including a 404 or a rejection, moves on to
-    /// the next URL. When no URL serves a `keys.json` and at least one
-    /// answers 404 for it, [`KeysFetch::NotFound`] is passed on, which means
-    /// direct mode unless a `keys.json` was accepted before. The accepted
-    /// `keys.json` is not cached, because only its record is needed later.
-    /// Then, for each URL in order,
-    /// the index signature and the index of the channel are downloaded and
+    /// accepted. Any failure except an unusable state record, including a
+    /// 404 or a rejection, moves on to the next URL. When no URL serves a
+    /// `keys.json` and at least one answers 404 for it, [`KeysFetch::NotFound`]
+    /// is passed on, which means direct mode unless a `keys.json` was
+    /// accepted before. The accepted `keys.json` is not cached, because only
+    /// its record is needed later. Then, for each URL in order, the index
+    /// signature and the index of the channel are downloaded and
     /// handed to [`IndexState::accept_index`] until one is accepted. When
     /// the two do not match, because the repository was published between
     /// the two requests, the pair is downloaded once more, and then the
@@ -87,7 +89,7 @@ impl Fetcher {
     /// still pins its hash, and it has not expired, and [`Source::Cache`]
     /// says why the sync failed. When this sync accepted a `keys.json` that
     /// revokes the cached index's signer, the cached index is refused and
-    /// removed from the cache. Offline, network URLs are refused without a
+    /// removed from the cache where possible. Offline, network URLs are refused without a
     /// request, so only `file://` URLs are tried.
     ///
     /// # Errors
@@ -208,8 +210,8 @@ impl Fetcher {
     ) -> Result<AcceptedIndex, Error> {
         let repo = request.repo;
         let dir = channel_dir(repo);
-        let index_path = format!("{dir}/index.json.zst");
-        let signature_path = format!("{index_path}.minisig");
+        let index_path = format!("{dir}/{INDEX}");
+        let signature_path = format!("{dir}/{INDEX_SIGNATURE}");
         let accept = |path: &str, index: &[u8], signature: &[u8]| {
             let accepted = request
                 .state
@@ -223,8 +225,8 @@ impl Fetcher {
                 )
                 .map_err(|e| Error::new(base.join(path), ErrorKind::Trust(Box::new(e))))?;
             let cache = self.repo_cache(repo).join(&dir);
-            write_atomic(&cache.join("index.json.zst"), index)?;
-            write_atomic(&cache.join("index.json.zst.minisig"), signature)?;
+            write_atomic(&cache.join(INDEX), index)?;
+            write_atomic(&cache.join(INDEX_SIGNATURE), signature)?;
             Ok(accepted)
         };
         let mut retried = false;
@@ -258,10 +260,8 @@ impl Fetcher {
         trust: Option<&Trust>,
     ) -> Result<AcceptedIndex, Error> {
         let repo = request.repo;
-        let path = self
-            .repo_cache(repo)
-            .join(channel_dir(repo))
-            .join("index.json.zst");
+        let dir = self.repo_cache(repo).join(channel_dir(repo));
+        let path = dir.join(INDEX);
         let url = format!("file://{}", path.display());
         let trust_error = |e| Error::new(&url, ErrorKind::Trust(Box::new(e)));
         let record = request
@@ -279,8 +279,10 @@ impl Fetcher {
             .and_then(Trust::keys)
             .is_some_and(|keys| keys.is_revoked(record.signer))
         {
-            remove(&path)?;
-            remove(&path.with_extension("zst.minisig"))?;
+            // The revocation is the failure to report. A file left behind
+            // is refused again by this check on every later sync.
+            let _ = remove(&path);
+            let _ = remove(&dir.join(INDEX_SIGNATURE));
             let signer = record.signer;
             return Err(Error::new(&url, ErrorKind::CachedIndexRevoked { signer }));
         }

@@ -216,8 +216,9 @@ impl IndexState {
     /// so that honest indexes above the floor are accepted again. A floor
     /// never raises an accepted generation.
     ///
-    /// The record holds only the version and hash, which is all that later
-    /// checks need, so the caller need not keep the accepted bytes.
+    /// The record holds the version, the hash and the root key that verified
+    /// the file, which is all that later checks need, so the caller need not
+    /// keep the accepted bytes.
     ///
     /// # Errors
     ///

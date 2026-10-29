@@ -31,6 +31,8 @@ pub(crate) enum Fault {
     Stall(Duration),
     /// Answers with the whole file even when a range was asked for.
     IgnoreRange,
+    /// Answers a range request with a 206 that starts at byte 0.
+    ShiftRange,
     /// Announces this `Content-Length` but sends nothing of the body.
     Length(u64),
 }
@@ -158,11 +160,16 @@ fn handle(stream: TcpStream, state: &Mutex<State>) {
         (state.files.get(&path).cloned(), fault)
     };
     let mut stream = stream;
+    let mut shift = false;
     let (file, truncate, announced) = match fault {
         Some(Fault::Status(code)) => return respond(&mut stream, code, &[], 0, &[]),
         Some(Fault::Stall(time)) => return thread::sleep(time),
         Some(Fault::IgnoreRange) => {
             range = None;
+            (file, None, None)
+        }
+        Some(Fault::ShiftRange) => {
+            shift = true;
             (file, None, None)
         }
         Some(Fault::Truncate(n)) => (file, Some(n), None),
@@ -176,7 +183,8 @@ fn handle(stream: TcpStream, state: &Mutex<State>) {
         .as_deref()
         .and_then(|r| r.strip_prefix("bytes="))
         .and_then(|r| r.strip_suffix('-'))
-        .and_then(|n| n.parse::<usize>().ok());
+        .and_then(|n| n.parse::<usize>().ok())
+        .map(|n| if shift { 0 } else { n });
     let (code, body, headers) = match start {
         Some(start) if start >= file.len() => (416, &[][..], vec![]),
         Some(start) => {

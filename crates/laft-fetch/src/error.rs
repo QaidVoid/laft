@@ -94,7 +94,8 @@ pub enum ErrorKind {
     /// state records could not be read or written.
     Trust(Box<laft_index::Error>),
     /// The cached index is signed by a key that the `keys.json` accepted
-    /// since revokes. It is refused and removed from the cache.
+    /// since revokes. It is refused and removed from the cache where
+    /// possible.
     CachedIndexRevoked {
         /// The revoked key.
         signer: KeyId,
@@ -201,7 +202,7 @@ impl fmt::Display for ErrorKind {
             Self::Trust(e) => fmt::Display::fmt(e, f),
             Self::CachedIndexRevoked { signer } => write!(
                 f,
-                "the cached index is signed by key {signer}, which the accepted keys.json revokes, so it was removed from the cache"
+                "the cached index is signed by key {signer}, which the accepted keys.json revokes, so it is not used"
             ),
             Self::CachedIndexUnpinned { generation } => write!(
                 f,
