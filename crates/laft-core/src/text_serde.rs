@@ -2,7 +2,8 @@
 //! identifiers and option names, which serialize as that text.
 
 use crate::{
-    Blake3Hash, Dep, LuksOption, Name, Provide, Soname, StoreId, Timestamp, Variant, Version,
+    Blake3Hash, Dep, LuksOption, Name, PkgRef, Provide, Sha256Hash, Soname, StoreId, Timestamp,
+    Variant, Version,
 };
 
 /// Implements `serde::Serialize` and `serde::Deserialize` for each listed
@@ -64,7 +65,8 @@ macro_rules! impl_serde_as_text {
 }
 
 crate::impl_serde_as_text!(
-    Blake3Hash, Dep, LuksOption, Name, Provide, Soname, StoreId, Timestamp, Variant, Version
+    Blake3Hash, Dep, LuksOption, Name, PkgRef, Provide, Sha256Hash, Soname, StoreId, Timestamp,
+    Variant, Version
 );
 
 #[cfg(test)]
