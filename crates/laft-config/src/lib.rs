@@ -44,7 +44,7 @@
 //! | `C0803` | repository name that is not a package name |
 //! | `C0901` | package reference that does not resolve |
 //! | `C0902` | alternatives group that is not a name, or a member that is not a bare package name |
-//! | `C0903` | view name that is not a package name, or `system` |
+//! | `C0903` | view name that is not a package name, or `system` or `initrd` |
 //! | `C0904` | view user or group that is not declared |
 //! | `C1101` | no root filesystem |
 //! | `C1102` | mountpoint not an absolute, normalized path |

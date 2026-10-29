@@ -410,7 +410,8 @@ struct ViewFields {
 }
 
 /// Converts the views, after recording every view name that is not a
-/// package name or is `system` (`C0903`) and every invalid alternatives
+/// package name or is `system` or `initrd`, which name the system view and
+/// the packages of the initramfs (`C0903`), and every invalid alternatives
 /// choice.
 pub(crate) fn views(cx: &Cx<'_>, found: &mut Vec<FileDiagnostic>) -> BTreeMap<Name, View> {
     let mut out = BTreeMap::new();
@@ -419,13 +420,13 @@ pub(crate) fn views(cx: &Cx<'_>, found: &mut Vec<FileDiagnostic>) -> BTreeMap<Na
         let name = label
             .parse::<Name>()
             .ok()
-            .filter(|n| n.as_str() != "system");
+            .filter(|n| !matches!(n.as_str(), "system" | "initrd"));
         let Some(name) = name else {
             found.push(cx.error(
                 "C0903",
                 &path,
                 format!(
-                    "`{label}` cannot name a view: it must be a package name other than `system`"
+                    "`{label}` cannot name a view: it must be a package name other than `system` and `initrd`"
                 ),
             ));
             continue;

@@ -216,9 +216,11 @@ fn alternatives_choose_bare_package_names() {
 }
 
 #[test]
-fn a_view_cannot_be_named_system() {
-    let body = r#"view "system" { }"#;
-    assert_rejected(rejected(body), "C0903", body);
+fn a_view_cannot_be_named_system_or_initrd() {
+    for name in ["system", "initrd"] {
+        let body = format!("view \"{name}\" {{ }}");
+        assert_rejected(rejected(&body), "C0903", &body);
+    }
 }
 
 #[test]
