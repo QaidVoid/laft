@@ -161,7 +161,7 @@ fn host_paths_are_invisible() {
     let host = fixture.dir.path().display();
     let manifest = env!("CARGO_MANIFEST_DIR");
     let script = format!(
-        "echo /*; echo /dev/*; echo $PWD; for p in '{host}' '{manifest}' /home /etc/hosts /var; do test -e \"$p\" && echo \"visible $p\"; done; true"
+        "echo /*; echo /dev/*; echo $PWD; for p in '{host}' '{manifest}' /home /etc/resolv.conf /var; do test -e \"$p\" && echo \"visible $p\"; done; true"
     );
     let Some(output) = fixture.run(&script) else {
         return;
@@ -475,12 +475,15 @@ fn host_network_sees_only_the_host_name_resolution_files() {
         );
     }
 
-    let Some(output) = fixture
-        .run("for f in hosts nsswitch.conf resolv.conf; do test -e /etc/$f && echo $f; done; true")
+    let Some(output) = fixture.run("test -e /etc/resolv.conf && echo resolv.conf; cat /etc/hosts")
     else {
         return;
     };
-    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stdout(&output),
+        "127.0.0.1 localhost\n::1 localhost\n",
+        "an isolated sandbox has none of the host's files"
+    );
 }
 
 #[test]
@@ -517,4 +520,18 @@ fn the_user_and_group_of_a_command_have_names() {
         return;
     };
     assert_eq!(stdout(&output), "root\nroot\nread-only\n", "{output:?}");
+}
+
+#[test]
+fn localhost_names_the_loopback_interface() {
+    let fixture = Fixture::new();
+    let Some(output) = fixture.run("getent hosts localhost | head -n 1") else {
+        return;
+    };
+    let text = stdout(&output);
+    let words: Vec<&str> = text.split_whitespace().collect();
+    assert!(
+        matches!(words.as_slice(), ["127.0.0.1" | "::1", "localhost"]),
+        "{output:?}"
+    );
 }

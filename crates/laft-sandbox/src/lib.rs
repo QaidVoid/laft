@@ -9,8 +9,9 @@
 //!   sources keeps the host network with [`Network::Host`], which also binds
 //!   the host's `/etc/resolv.conf`, `/etc/hosts` and `/etc/nsswitch.conf`
 //!   read-only into `/etc`, so that names resolve. An isolated sandbox
-//!   reaches only its own loopback interface. Its `/etc` holds a user
-//!   database that names `root` and `nobody`, and nothing of the host.
+//!   reaches only its own loopback interface, which its `/etc` names
+//!   `localhost`, next to a user database that names `root` and `nobody`.
+//!   It holds nothing of the host.
 //! - Assembly runs every fixed program, such as a trigger that computes a
 //!   cache from the tree being assembled, in a [`FixedSandbox`]: the tree
 //!   as `/usr` with only named directories writable, a given configuration

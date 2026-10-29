@@ -65,6 +65,18 @@ const USER_FILES: [(&CStr, &[u8]); 2] = [
     (c"group", b"root:x:0:\nnogroup:x:65534:\n"),
 ];
 
+/// The name service files of `/etc` in an isolated sandbox, whose
+/// loopback interface is up, so that `localhost` names it. Without a
+/// `nsswitch.conf`, the C library would ask a name server first and give
+/// up when none answers.
+const LOOPBACK_FILES: [(&CStr, &[u8]); 2] = [
+    (c"hosts", b"127.0.0.1 localhost\n::1 localhost\n"),
+    (
+        c"nsswitch.conf",
+        b"passwd: files\ngroup: files\nhosts: files\n",
+    ),
+];
+
 pub(crate) const ROOT_LINKS: [(&CStr, &CStr); 4] = [
     (c"bin", c"usr/bin"),
     (c"sbin", c"usr/bin"),
@@ -77,7 +89,8 @@ pub(crate) const ROOT_LINKS: [(&CStr, &CStr); 4] = [
 pub enum Network {
     /// A new network namespace whose only interface is a loopback interface,
     /// which is up, so that a command reaches its own sockets and nothing
-    /// else. `/etc` holds only the user database.
+    /// else. `/etc` holds the user database and the `hosts` and
+    /// `nsswitch.conf` files that name the interface `localhost`.
     #[default]
     Isolated,
     /// The caller's network namespace, for the phase that fetches sources.
@@ -109,7 +122,7 @@ pub enum Network {
 /// | `/proc` | a new procfs that shows only the sandbox's processes |
 /// | `/dev` | a read-only tmpfs with `null`, `zero`, `full`, `random`, `urandom` and `tty` bound from the host, `fd`, `stdin`, `stdout`, `stderr` links, and a private pseudo-terminal filesystem at `pts` with `ptmx` linking to its multiplexer |
 /// | `/tmp` | a private tmpfs |
-/// | `/etc` | read-only, with `passwd` and `group` naming `root` and `nobody`, and with [`Network::Host`] the host's name resolution files |
+/// | `/etc` | read-only, with `passwd` and `group` naming `root` and `nobody`, and `hosts` and `nsswitch.conf` naming the loopback interface `localhost` or, with [`Network::Host`], the host's name resolution files |
 ///
 /// Before the command is executed, its capability bounding set is emptied,
 /// `no_new_privs` is set, the core size limit is 0 and the open file limit
@@ -506,10 +519,11 @@ impl BuildRoot {
         mount_dev(&root, true)?;
         let tmp = fresh_mount(c"tmpfs", Some(c"1777"), nosuid).map_err(fail(Step::MountTmp))?;
         attach(&tmp, &root, c"tmp")?;
-        write_user_files(&root)?;
+        write_etc(&root, &USER_FILES)?;
         if self.host_etc {
             mount_host_etc(&root)?;
         } else {
+            write_etc(&root, &LOOPBACK_FILES)?;
             sys::loopback_up().map_err(fail(Step::Loopback))?;
         }
         enter_root(&root)?;
@@ -621,9 +635,9 @@ pub(crate) fn mount_dev(root: &OwnedFd, ptys: bool) -> Result<(), Failure> {
     .map_err(fail(Step::MountDev))
 }
 
-/// Writes the files of [`USER_FILES`] into `/etc` of `root`, which
-/// becomes read-only with the root.
-fn write_user_files(root: &OwnedFd) -> Result<(), Failure> {
+/// Writes `files` into `/etc` of `root`, which becomes read-only with the
+/// root.
+fn write_etc(root: &OwnedFd, files: &[(&CStr, &[u8])]) -> Result<(), Failure> {
     let etc = rustix::fs::openat(
         root,
         c"etc",
@@ -631,7 +645,7 @@ fn write_user_files(root: &OwnedFd) -> Result<(), Failure> {
         Mode::empty(),
     )
     .map_err(fail(Step::Populate))?;
-    for (name, contents) in USER_FILES {
+    for &(name, contents) in files {
         let file = rustix::fs::openat(
             &etc,
             name,
