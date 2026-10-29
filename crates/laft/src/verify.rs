@@ -113,7 +113,27 @@ pub(crate) fn verify(env: &Env, args: &VerifyArgs) -> Result<u8, Failure> {
             &mut problems,
         )?;
         if args.links {
-            links(env, generation, &dir, &privileged, &subject, &mut problems)?;
+            links(
+                env,
+                &generation.packages,
+                &dir,
+                &privileged,
+                &subject,
+                &mut problems,
+            )?;
+            for (name, version) in &generation.views {
+                let view = env.root.view(name, *version)?;
+                let dir = env.path(&format!("/laft/views/{name}/{version}"));
+                let subject = format!("view {name} version {version}");
+                links(
+                    env,
+                    &view.packages,
+                    &dir,
+                    &BTreeSet::new(),
+                    &subject,
+                    &mut problems,
+                )?;
+            }
         }
     }
 
@@ -288,9 +308,11 @@ fn unexpected_privileges(
 
 /// Reports files of the generation's system view that are not the store
 /// file of a package that ships the path.
+/// Checks that every store file of `packages` in the tree `dir` is a hard
+/// link to its store file, except the `privileged` copies.
 fn links(
     env: &Env,
-    generation: &Generation,
+    packages: &[PackageRecord],
     dir: &Path,
     privileged: &BTreeSet<String>,
     subject: &str,
@@ -298,7 +320,7 @@ fn links(
 ) -> Result<(), Failure> {
     let store = env.root.store();
     let mut inodes: BTreeMap<String, BTreeSet<(u64, u64)>> = BTreeMap::new();
-    for package in &generation.packages {
+    for package in packages {
         for entry in store.manifest(&package.dir)?.entries() {
             if let Entry::File { path, .. } = entry
                 && path.starts_with("usr/")

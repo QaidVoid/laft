@@ -47,7 +47,14 @@ fn package_questions_are_answered_from_the_indexes_and_the_generation() {
         "{}",
         files.stdout
     );
+    let cached = |fx: &support::Fixture| {
+        std::fs::read_dir(fx.root().join("laft/cache/pkgs"))
+            .map(|d| d.count())
+            .unwrap_or(0)
+    };
+    let before = cached(&fx);
     let docs = fx.laft(&["files", "-l", "hello-docs"]).expect(0);
+    assert_eq!(cached(&fx), before, "laft files leaves the cache alone");
     assert!(
         docs.stdout
             .contains("file  0444  root:root  4  /usr/share/doc/hello"),
@@ -222,4 +229,28 @@ fn formatting_standard_input_with_check_prints_nothing_and_fails_on_a_change() {
     assert!(ugly.stdout.is_empty());
     let tidy = check("system {\n  hostname = \"a\"\n}\n");
     assert_eq!(tidy.status.code(), Some(0));
+}
+
+#[test]
+fn verify_links_checks_the_views_of_a_generation() {
+    let fx = fixture!(pkg("hello", "1.0").file("usr/bin/hello", b"#!/bin/sh\necho hello\n"));
+    fx.configure("", "  view dev { packages = [hello] }");
+    fx.laft(&["apply", "-y"]).expect(0);
+    fx.laft(&["verify", "--links"]).expect(0);
+    let copy = fx.root().join("laft/views/dev/1/usr/bin/hello");
+    let mode = std::fs::metadata(&copy).expect("in the view").permissions();
+    let parent = copy.parent().expect("a directory").to_path_buf();
+    let writable = |on: bool| {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if on { 0o755 } else { 0o555 };
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(mode)).expect("chmod");
+    };
+    writable(true);
+    std::fs::remove_file(&copy).expect("removable");
+    std::fs::write(&copy, "#!/bin/sh\necho hello\n").expect("writable");
+    std::fs::set_permissions(&copy, mode).expect("chmod");
+    writable(false);
+    let report = fx.laft(&["verify", "--links"]);
+    assert_ne!(report.code, 0, "{}", report.stdout);
+    assert!(report.stdout.contains("view dev"), "{}", report.stdout);
 }

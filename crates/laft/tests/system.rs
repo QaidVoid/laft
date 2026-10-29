@@ -129,6 +129,14 @@ fn the_installer_generates_a_configuration_and_checks_its_target() {
     assert!(target.join("etc/laft/hardware.stav").exists());
     run(&["--root", root, "install", "--generate-config"]).expect(1);
     run(&["--root", root, "hardware", "--write"]).expect(1);
+    fs::remove_file(target.join("etc/laft/hardware.stav")).expect("removable");
+    let written = run(&["--root", root, "--json", "hardware", "--write"]).expect(0);
+    assert!(
+        written.stdout.contains("hardware.stav"),
+        "{}",
+        written.stdout
+    );
+    assert!(target.join("etc/laft/hardware.stav").exists());
 
     let refused = run(&["--root", root, "install", "-y"]).expect(1);
     assert!(refused.stderr.contains("FAT"), "{}", refused.stderr);

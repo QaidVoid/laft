@@ -290,9 +290,19 @@ fn manifest_of(env: &Env, pkg: &PkgRef) -> Result<(String, Manifest), Failure> {
     if store.path(&dir).exists() {
         return Ok((label, store.manifest(&dir)?));
     }
-    let path = env
-        .fetcher()
-        .download_package(&index.mirrors, entry, &mut |_| {})?;
+    // The command only reads, so a package that is not cached is fetched
+    // into a private directory instead of the shared cache.
+    let cached = env
+        .path("/laft/cache/pkgs")
+        .join(format!("{}.lpkg", entry.id));
+    let private = tempfile::tempdir()?;
+    let path = if cached.is_file() {
+        cached
+    } else {
+        let mut config = laft_fetch::Config::new(private.path());
+        config.offline = env.offline;
+        laft_fetch::Fetcher::new(config).download_package(&index.mirrors, entry, &mut |_| {})?
+    };
     let file = fs::File::open(&path)?;
     let reader = Reader::new(file).map_err(|e| Failure::new(exit::NETWORK, e))?;
     Ok((label, reader.manifest().clone()))

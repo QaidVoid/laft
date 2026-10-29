@@ -29,6 +29,7 @@ rustix = { workspace = true, features = ["fs", "mount", "net", "process", "termi
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 stav.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 laft-test.workspace = true

@@ -298,7 +298,8 @@ pub(crate) fn probe(env: &Env) -> Probe {
             Ok(rel) => format!("/{}", rel.display()),
             Err(_) => continue,
         };
-        if inside.starts_with("/run") || inside.starts_with("/proc") || inside.starts_with("/sys") {
+        let below = |dir: &str| inside == dir || inside.starts_with(&format!("{dir}/"));
+        if below("/run") || below("/proc") || below("/sys") {
             continue;
         }
         let device = canonical(source);
@@ -386,6 +387,15 @@ pub(crate) fn hardware_stav(probe: &Probe) -> String {
 /// `laft hardware`.
 pub(crate) fn hardware(env: &Env, write: bool) -> Result<u8, Failure> {
     let probe = probe(env);
+    let text = hardware_stav(&probe);
+    let written = if write {
+        env.require_write("hardware --write")?;
+        let path = env.path("/etc/laft/hardware.stav");
+        write_new(&path, &text)?;
+        Some(path)
+    } else {
+        None
+    };
     if env.ui.json {
         let filesystems: Vec<_> = probe
             .filesystems
@@ -394,15 +404,10 @@ pub(crate) fn hardware(env: &Env, write: bool) -> Result<u8, Failure> {
             .collect();
         env.ui.doc(
             json!({"filesystems": filesystems, "swap": probe.swap, "luks": probe.luks,
-            "microcode": probe.microcode, "modules": probe.modules}),
+            "microcode": probe.microcode, "modules": probe.modules,
+            "written": written.as_ref().map(|p| p.display().to_string())}),
         );
-        return Ok(0);
-    }
-    let text = hardware_stav(&probe);
-    if write {
-        env.require_write("hardware --write")?;
-        let path = env.path("/etc/laft/hardware.stav");
-        write_new(&path, &text)?;
+    } else if let Some(path) = written {
         env.ui.note(format!("wrote {}", path.display()));
     } else {
         env.ui.out(text.trim_end());
