@@ -218,3 +218,29 @@ fn exit_statuses_name_what_went_wrong() {
     fx.laft(&["apply"]).expect(2);
     fx.laft(&["plan", "--exit-code"]).expect(12);
 }
+
+#[test]
+fn a_busy_lock_fails_with_no_wait() {
+    let fx = fixture!(hello());
+    fx.configure(", hello", "");
+    fx.laft(&["apply", "-y"]).expect(0);
+    let lock = fx.root().join("laft/state/lock");
+    let Ok(mut holder) = std::process::Command::new("flock")
+        .args(["--exclusive", "--close", support::s(&lock), "sleep", "30"])
+        .spawn()
+    else {
+        println!("skipping: the host has no flock command");
+        return;
+    };
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let busy = fx.laft(&["gc", "--no-wait"]);
+    let _ = holder.kill();
+    let _ = holder.wait();
+    let busy = busy.expect(7);
+    assert!(
+        busy.stderr.contains("the lock is held by"),
+        "{}",
+        busy.stderr
+    );
+    fx.laft(&["gc", "--no-wait"]).expect(0);
+}

@@ -642,6 +642,10 @@ pub(crate) enum Shell {
 /// Internal commands.
 #[derive(Debug, Subcommand)]
 pub(crate) enum InternalCommand {
-    /// The store worker of a live transaction.
-    Worker,
+    /// The store worker of a command that writes on a running system.
+    Worker {
+        /// The arguments of the command the worker runs.
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
 }

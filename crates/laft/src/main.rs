@@ -55,6 +55,7 @@ mod svc;
 mod tz;
 mod ui;
 mod verify;
+mod worker;
 
 use std::collections::BTreeSet;
 use std::process::ExitCode;
@@ -72,9 +73,23 @@ use crate::failure::{Failure, exit};
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    if let Command::Internal(cli::InternalCommand::Worker { args }) = cli.command {
+        match worker::enter(args) {
+            Ok(args) => cli = Cli::parse_from(args),
+            Err(failure) => {
+                Env::new(&cli.global).ui.failure(&failure);
+                return ExitCode::from(failure.exit);
+            }
+        }
+    }
     let env = Env::new(&cli.global);
-    match run(&env, &cli.global, cli.command) {
+    let result = if worker::needed(&env, &cli.command) {
+        worker::coordinate(&env)
+    } else {
+        run(&env, &cli.global, cli.command)
+    };
+    match result {
         Ok(code) => ExitCode::from(code),
         Err(failure) => {
             env.ui.failure(&failure);
@@ -220,7 +235,7 @@ fn run(env: &Env, global: &cli::Global, command: Command) -> Result<u8, Failure>
         }
         Command::Internal(_) => Err(Failure::new(
             exit::USAGE,
-            "laft internal worker runs only as the child of a laft process",
+            "laft internal worker cannot start a worker of its own",
         )),
     }
 }

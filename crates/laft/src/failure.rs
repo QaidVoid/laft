@@ -132,9 +132,8 @@ impl From<laft_store::Error> for Failure {
                 failure =
                     failure.context(format!("{}  {}", conflict.path, conflict.owners.join(", ")));
             }
-            failure = failure.hint(
-                "these packages do not declare a common alternatives group; remove one of them",
-            );
+            failure =
+                failure.hint("these packages share no alternatives group, so remove one of them");
         }
         if let Error::LinkLimit { .. } = &error {
             failure = failure.hint("run `laft gc` or lower gc.keep_generations");

@@ -99,3 +99,47 @@ each as an unprivileged user unless stated otherwise:
   exits 126.
 - Nested use works: laft-enter other inside a session of dev mounts other
   and binds the system's privileged files.
+
+laft
+
+The integration tests of crates/laft run the binary with --root against a
+temporary root, a file:// repository published with laft-repo and
+packages built with laft-pkg: plan, apply, upgrade, switch, rollback, gc,
+the generation, boot and package queries, /etc status and reset,
+activation at boot, the configuration tools, the installer's checks and
+the exit statuses. The worker protocol and the runit executor have unit
+tests. What remains needs root on a booted generation and will be tested
+here:
+
+- laft apply on a running system starts the store worker. Afterwards
+  /run/laft/system points at mounts/<N>, /proc/self/mountinfo shows
+  /run/laft/mounts/<N> as ro,nodev without nosuid, /laft is still
+  ro,nosuid,nodev in the initial namespace, and the previous generation
+  is unmounted unless it is the booted one. Managed /etc symlinks follow
+  and unmanaged files stay untouched.
+- A service whose configuration changed is restarted, a new service is
+  added to /run/runit/service and started, a removed one is stopped and
+  removed. A service whose readiness check never succeeds makes laft
+  apply exit 3, and the new generation is active and default.
+- laft rollback restores the previous generation's packages, /etc and
+  services, and the next boot uses it. laft switch <N> --boot only
+  changes the default.
+- An unmanaged /etc/resolv.conf that the new generation manages stops
+  laft apply with status 6 before anything changes, and --adopt moves it
+  aside.
+- laft boot mark-good, run by the boot-complete service, and laft
+  activate --boot, run by the laft-activate early service, write
+  /laft/state through the worker while /laft is read-only.
+- laft svc status shows up, pid and uptime for running services, laft
+  svc start, stop and restart change them until the next apply, and laft
+  svc log -f follows /var/log/<name>/current across a rotation.
+- laft enter <view> -- <command> runs the command in the view through
+  the setuid laft-enter.
+- laft install --root /mnt onto freshly made filesystems with a FAT ESP
+  at /mnt/boot boots, and laft rescue --root /mnt -- passwd root sets the
+  password first.
+- laft rescue and laft chroot from a rescue image enter an installed
+  disk, laft rollback inside works offline, and after a reboot the
+  previous generation is the default.
+- laft doctor on a running system passes the laft mount and generation
+  mount checks.

@@ -516,7 +516,7 @@ fn generation_mounts(env: &Env, live: bool) -> Check {
     check(
         "generation mounts",
         problems.is_empty(),
-        problems.join("; "),
+        problems.join(", "),
     )
 }
 
