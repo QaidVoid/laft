@@ -33,10 +33,7 @@ fn save(root: &Root, state: &BootState) -> Result<()> {
     let path = state::state_file(root, BOOT_STATE);
     let dir = fsx::parent(&path);
     fs::create_dir_all(dir).map_err(io(dir))?;
-    let bytes = state
-        .to_json()
-        .map_err(|e| corrupt(&path, format!("not canonical JSON: {e}")))?;
-    fsx::write_atomic(&path, &bytes, 0o644, (0, 0))
+    state::write_json(&path, state, 0o644)
 }
 
 /// Puts `generation`, the new boot default, on trial with `tries` boots,

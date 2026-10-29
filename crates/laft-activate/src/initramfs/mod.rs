@@ -192,6 +192,11 @@ pub(crate) struct Inputs<'a> {
 /// Builds the initramfs into `boot/initramfs` of the tree and writes
 /// `boot/boot.json`, and returns the boot record. What the user should know
 /// about the module selection goes to `warnings`.
+///
+/// # Panics
+///
+/// Panics if a BLAKE3 hash does not render as `b3:` and 64 hex digits,
+/// which [`Blake3Hash`] guarantees.
 pub(crate) fn build(inputs: &Inputs<'_>, warnings: &mut Vec<Warning>) -> Result<BootRecord> {
     let boot = &inputs.config.boot;
     for word in &boot.cmdline {
@@ -436,13 +441,13 @@ fn read_index(tree: &Path, release_dir: &str) -> Result<ModuleIndex> {
 /// kernel. Keyboard and host modules are wanted when the kernel has them.
 /// A host only initramfs for a host whose boot device drivers are unknown
 /// gets the generic drivers instead, with a warning.
-fn requested<'a>(
+fn requested(
     config: &BootConfig,
     host: &Host,
     index: &ModuleIndex,
     release: &str,
     warnings: &mut Vec<Warning>,
-) -> Result<(BTreeSet<String>, Vec<&'a str>)> {
+) -> Result<(BTreeSet<String>, Vec<&'static str>)> {
     let initrd = &config.boot.initrd;
     let mut required = Vec::new();
     let mut dirs = Vec::new();

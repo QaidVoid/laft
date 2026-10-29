@@ -293,6 +293,11 @@ fn failed_generations(root: &Root) -> Result<BTreeSet<u64>> {
 
 /// `limine.conf` for `entries`, newest first, booting entry
 /// `default_index` (1-based) by default.
+///
+/// # Panics
+///
+/// Panics if a creation time does not render as an RFC 3339 date and time,
+/// which [`Timestamp`] guarantees.
 fn render_limine(entries: &[MenuEntry], default_index: usize, settings: &MenuSettings) -> String {
     let mut out = String::from("# Rendered by laft. Changes are overwritten on the next apply.\n");
     match settings.timeout {

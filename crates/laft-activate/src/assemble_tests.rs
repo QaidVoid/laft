@@ -723,8 +723,10 @@ fn a_changed_etc_runs_the_triggers_again() {
     );
 }
 
+/// A trigger may be kept from writing a shipped file, or write it and fail
+/// the assembly. Either way, no assembly succeeds with a store file changed.
 #[test]
-fn a_trigger_that_rewrites_an_existing_file_in_place_fails_the_assembly() {
+fn a_trigger_never_rewrites_a_shipped_file_unnoticed() {
     let Some(fixture) = Fixture::new() else {
         return;
     };
