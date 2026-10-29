@@ -299,10 +299,16 @@ pub fn load(
 }
 
 /// The canonical JSON of the evaluated `system` value.
+///
+/// # Panics
+///
+/// Panics when the evaluation has no `system` value, which the schema's
+/// default for it rules out.
 fn system_json(evaluated: &stav::Evaluated) -> Vec<u8> {
     evaluated
         .value_at(&stav::AttrPath::new(["system"]))
-        .map_or_else(|_| b"{}".to_vec(), |v| v.to_canonical_json().into_bytes())
+        .map(|v| v.to_canonical_json().into_bytes())
+        .expect("a checked configuration has a system value, by its default")
 }
 
 /// Type checks and evaluates the file `entry` of the configuration

@@ -48,9 +48,10 @@ fn the_value_is_canonical_json_of_the_evaluated_system() {
 
 #[test]
 fn evaluation_skips_validation_and_package_resolution() {
-    let dir = config_dir(&[("part.stav", "system { packages = [missing-tool] }\n")]);
+    let body = format!("system {{\n  packages = [missing-tool]\n{DISKS}\n}}\n");
+    let dir = config_dir(&[("system.stav", &body)]);
     let evaluation =
-        laft_config::evaluate(dir.path(), &dir.path().join("part.stav")).expect("evaluates");
+        laft_config::evaluate(dir.path(), &dir.path().join("system.stav")).expect("evaluates");
     let rendered = evaluation
         .evaluated
         .render_at(
@@ -59,7 +60,15 @@ fn evaluation_skips_validation_and_package_resolution() {
         )
         .expect("renders");
     assert!(rendered.contains("missing-tool"), "{rendered}");
-    assert!(laft_config::load(dir.path(), &any_package).is_err());
+    let Err(report) = laft_config::load(dir.path(), &any_package) else {
+        panic!("loading resolves packages");
+    };
+    assert!(
+        report
+            .iter()
+            .any(|d| d.diagnostic.message.contains("no package `missing-tool`")),
+        "{report:?}"
+    );
 }
 
 #[test]
