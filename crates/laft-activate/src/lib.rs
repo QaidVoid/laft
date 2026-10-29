@@ -28,6 +28,10 @@
 //! [`reset_etc`] restores paths the user replaced, and [`activate_boot`]
 //! makes `/etc` and the accounts match the booted generation.
 //!
+//! [`activate_live`] switches a running system to a generation in the
+//! steps of [`LIVE_STEPS`], each recorded in the store's journal, and
+//! [`resume_live`] finishes or undoes one that was interrupted.
+//!
 //! Every function works below a [`laft_store::Root`], so an installer or a
 //! test can point it at any directory.
 
@@ -45,6 +49,7 @@ mod fault;
 mod format;
 mod fsx;
 mod initramfs;
+mod live;
 mod privileged;
 mod render;
 mod state;
@@ -70,6 +75,7 @@ pub use error::{ConfigError, Conflict, ConflictKind, Error, Result, Setting, War
 pub use esp::{BootInstall, check_esp, install_boot};
 pub use etc::{EtcReport, OnConflict, check_etc, reconcile_etc, reset_etc};
 pub use initramfs::{BootRecord, Host, InitrdPackage, initrd_packages};
+pub use live::{LIVE_STEPS, LiveActivation, Mounts, Services, activate_live, resume_live};
 pub use privileged::{PRIVILEGED_FILE, PrivilegedFile, PrivilegedRecord, ViewPrivileges};
 pub use render::{EtcTree, Node, render};
 pub use trial::{mark_booted_good, mark_good, record_event, start_trial};

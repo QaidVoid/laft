@@ -16,6 +16,13 @@ pub(crate) const POINTS: &[&str] = &[
     "esp.files",
     "esp.entries",
     "esp.config",
+    "live.mount",
+    "live.switch",
+    "live.views",
+    "live.etc",
+    "live.accounts",
+    "live.services",
+    "live.unmount",
 ];
 
 #[cfg(test)]

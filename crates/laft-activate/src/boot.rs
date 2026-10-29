@@ -27,7 +27,9 @@ pub struct BootActivation {
 ///
 /// They can disagree after a crash during activation or after booting an
 /// older generation from the boot menu. Interrupted transactions are
-/// finished or rolled back first. Then `/etc` is reconciled with the
+/// finished or rolled back first, and a live activation that recovery
+/// kept is abandoned, because the machine runs the generation it booted.
+/// Then `/etc` is reconciled with the
 /// generation that `run/laft/booted` names, leaving conflicting paths alone
 /// with a warning, because nobody can resolve them during boot. Finally
 /// the generation's accounts are written, which removes accounts that only
@@ -51,6 +53,9 @@ pub struct BootActivation {
 /// generation, and as [`reconcile_etc`] and [`apply_accounts`] do.
 pub fn activate_boot(lock: &Lock) -> Result<BootActivation> {
     let recoveries = lock.recover()?;
+    if let Some(activation) = lock.interrupted_activation()? {
+        activation.abandon()?;
+    }
     let generation = booted(lock.root())?;
     let etc = reconcile_etc(lock, generation, &BTreeSet::new(), OnConflict::Skip)?;
     let accounts = apply_accounts(lock, generation)?;

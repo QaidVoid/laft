@@ -101,6 +101,14 @@ pub enum Error {
     /// A file needed to boot is missing or malformed, such as the kernel,
     /// a module index or a program of the initramfs.
     Boot(String),
+    /// A step of a live activation failed before the running system used
+    /// the generation, and the activation was rolled back.
+    Live {
+        /// The step, such as `mount`.
+        step: &'static str,
+        /// Why it failed.
+        reason: String,
+    },
     /// A failure injected by a test at a named point.
     #[cfg(test)]
     Injected(&'static str),
@@ -505,6 +513,10 @@ impl fmt::Display for Error {
             }
             Self::Services(e) => e.fmt(f),
             Self::Boot(message) => f.write_str(message),
+            Self::Live { step, reason } => write!(
+                f,
+                "activation step {step} failed, so the running system keeps its generation: {reason}"
+            ),
             #[cfg(test)]
             Self::Injected(point) => write!(f, "injected failure at {point}"),
         }
