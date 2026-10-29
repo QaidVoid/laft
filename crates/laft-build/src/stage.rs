@@ -17,7 +17,7 @@ use stav::{AttrPath, ImportRoot, Limits, RootSpec};
 
 use crate::build::{installed_record, read_key, write_key};
 use crate::error::{BuildError, io};
-use crate::exec::{Executor, tail};
+use crate::exec::{Executor, tail, wait};
 use crate::loader::Scope;
 use crate::{
     BuildRoot, Builder, Error, Item, KeyInputs, Mode, Problem, Recipe, Repos, Runner, SourceCache,
@@ -189,7 +189,7 @@ pub struct StageOptions {
     pub root: PathBuf,
     /// The number of parallel jobs inside one build.
     pub jobs: u32,
-    /// The longest one phase may run.
+    /// The longest one phase or script may run.
     pub timeout: Duration,
     /// The available memory, in bytes, that a build waits for when its
     /// recipe's CI runner is `big`.
@@ -309,7 +309,8 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// # Errors
 ///
 /// Fails like [`Builder::install`], with `B040` for a script or a build
-/// inside the root that fails, and with `B042` when the root's top-level
+/// inside the root that fails, with `B030` for a script that runs longer
+/// than [`StageOptions::timeout`], and with `B042` when the root's top-level
 /// entries differ from Laft's layout or when `laft-build` is not static
 /// but a step builds inside the root.
 pub fn run_stage(
@@ -331,6 +332,19 @@ pub fn run_stage(
             check_static(&options.laft_build)?;
         }
     }
+    run_steps(stage, repos, cache, build_root, options, progress)
+}
+
+/// Runs the steps of `stage` like [`run_stage`], after its checks.
+fn run_steps(
+    stage: &Stage,
+    repos: &Repos,
+    cache: &SourceCache,
+    build_root: &BuildRoot,
+    options: &StageOptions,
+    progress: &mut dyn FnMut(StageEvent<'_>),
+) -> Result<(), BuildError> {
+    let root = &options.root;
     let mut builder = Builder::new(repos, cache, build_root, Mode::Bootstrap("/".into()));
     builder.check = false;
     builder.jobs = options.jobs;
@@ -615,7 +629,7 @@ impl StageRun<'_> {
             .command(run(INSIDE_LAFT_BUILD))
             .args(args)
             .env("HOME", "/root");
-        self.run_logged(command, log, package)
+        self.run_logged(command, log, package, None)
     }
 
     fn sandbox(&self) -> RootSandbox {
@@ -624,22 +638,27 @@ impl StageRun<'_> {
             .bind(&self.stage.recipes, INSIDE_RECIPES, false)
     }
 
-    /// Runs `command` with its output in `log` and fails with `B040` when
-    /// it fails.
+    /// Runs `command` with its output in `log`, killing it after `timeout`
+    /// if one is given, and fails with `B040` when it fails.
     fn run_logged(
         &self,
         command: laft_sandbox::Command,
         log: &Path,
         what: &str,
+        timeout: Option<Duration>,
     ) -> Result<(), BuildError> {
         fs::create_dir_all(self.logs).map_err(io(self.logs))?;
         let file = fs::File::create(log).map_err(io(log))?;
         let err = file.try_clone().map_err(io(log))?;
-        let status = command
+        let mut child = command
             .stdin(Stdio::null())
             .stdout(file)
             .stderr(err)
-            .status()?;
+            .spawn()?;
+        let status = match timeout {
+            Some(timeout) => wait(child, timeout, log)?,
+            None => child.wait().map_err(io(log))?,
+        };
         if status.success() {
             return Ok(());
         }
@@ -722,7 +741,8 @@ impl StageRun<'_> {
                         .args(["-c", script, &step.name]),
                     |c, (k, v)| c.env(k, v),
                 );
-                self.run_logged(command, &self.logs.join(format!("{tag}.log")), &step.name)?;
+                let log = self.logs.join(format!("{tag}.log"));
+                self.run_logged(command, &log, &step.name, Some(self.options.timeout))?;
             }
         }
         write_key(&self.record(step), &key)?;

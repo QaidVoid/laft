@@ -1,4 +1,5 @@
 use laft_fetch::{Config, Fetcher};
+use laft_test::write_program;
 
 use super::*;
 
@@ -60,6 +61,17 @@ fn run_with(
     stage: &Stage,
     options: &StageOptions,
 ) -> Result<Vec<(String, StageState)>, BuildError> {
+    states(dir, stage, options, true)
+}
+
+/// Runs `stage` like [`run_with`], with the checks of [`run_stage`] only
+/// when `checked`.
+fn states(
+    dir: &Path,
+    stage: &Stage,
+    options: &StageOptions,
+    checked: bool,
+) -> Result<Vec<(String, StageState)>, BuildError> {
     let repos = Repos::open(&[&stage.recipes]).unwrap();
     let build_root = BuildRoot::new(dir.join("build"));
     let config = Config {
@@ -68,11 +80,16 @@ fn run_with(
     };
     let cache = SourceCache::new(build_root.sources(), Fetcher::new(config));
     let mut states = Vec::new();
-    run_stage(stage, &repos, &cache, &build_root, options, &mut |event| {
+    let mut progress = |event: StageEvent<'_>| {
         if let StageEvent::Finished { step, state, .. } = event {
             states.push((step.to_owned(), state));
         }
-    })?;
+    };
+    if checked {
+        run_stage(stage, &repos, &cache, &build_root, options, &mut progress)?;
+    } else {
+        run_steps(stage, &repos, &cache, &build_root, options, &mut progress)?;
+    }
     Ok(states)
 }
 
@@ -335,4 +352,185 @@ fn a_laft_build_that_is_no_elf_file_is_named_as_such() {
     let error = check_static(&program).unwrap_err();
     assert_eq!(error.code(), Some("B042"));
     assert!(error.to_string().contains("not an ELF file"), "{error}");
+}
+
+/// Where the host keeps shared libraries.
+const LIBRARY_DIRS: [&str; 6] = [
+    "/lib64",
+    "/usr/lib64",
+    "/lib",
+    "/usr/lib",
+    "/lib/x86_64-linux-gnu",
+    "/usr/lib/x86_64-linux-gnu",
+];
+
+/// Copies the dynamic loader and every library that the host's `program`
+/// needs into `root`, at their host paths, so that it runs there.
+fn copy_libraries(root: &Path, program: &Path) {
+    let mut queue = vec![program.to_path_buf()];
+    let mut copied = BTreeSet::new();
+    while let Some(file) = queue.pop() {
+        let Some(elf) = laft_elf::inspect(&fs::read(&file).unwrap()).unwrap() else {
+            continue;
+        };
+        let found = elf.needed.iter().filter_map(|lib| {
+            LIBRARY_DIRS
+                .iter()
+                .map(|dir| Path::new(dir).join(lib.as_str()))
+                .find(|path| path.exists())
+        });
+        for dep in elf.interpreter.iter().map(PathBuf::from).chain(found) {
+            if copied.insert(dep.clone()) {
+                let dest = root.join(dep.strip_prefix("/").unwrap());
+                fs::create_dir_all(dest.parent().unwrap()).unwrap();
+                write_program(&dest, &fs::read(&dep).unwrap());
+                queue.push(dep);
+            }
+        }
+    }
+}
+
+/// The `laft-build` program that cargo built next to this test program.
+fn built_laft_build() -> Option<PathBuf> {
+    let exe = std::env::current_exe().unwrap();
+    let program = exe.parent()?.parent()?.join("laft-build");
+    if program.is_file() {
+        return Some(program);
+    }
+    println!("skipping: {} is not built", program.display());
+    None
+}
+
+/// A stage whose `greet` writes its greeting with shell builtins only, and
+/// the root `dir/root` with Laft's layout and a copy of the host's
+/// `/bin/sh` and its libraries.
+fn root_stage(dir: &Path, steps: &str) -> Stage {
+    let stage = Stage::load(&write_stage(dir, steps)).unwrap();
+    fs::write(
+        stage.recipes.join("recipes/greet/package.stav"),
+        RECIPE.replace(
+            "mkdir -p \"$DESTDIR/usr/share\"\n      echo hi > \"$DESTDIR/usr/share/greeting\"",
+            "echo hi > \"$DESTDIR/greeting\"",
+        ),
+    )
+    .unwrap();
+    let root = dir.join("root");
+    layout(&root).unwrap();
+    // Some hosts' dynamic loaders search only `/usr/lib64`.
+    std::os::unix::fs::symlink("lib", root.join("usr/lib64")).unwrap();
+    let sh = fs::canonicalize("/bin/sh").unwrap();
+    write_program(&root.join("usr/bin/sh"), &fs::read(&sh).unwrap());
+    copy_libraries(&root, &sh);
+    stage
+}
+
+/// Whether `result` failed because the sandbox cannot run here, which it
+/// prints.
+fn refused<T>(result: &Result<T, BuildError>) -> bool {
+    match result {
+        Err(error) if error.refuses_namespaces() => {
+            println!("skipping: {error}");
+            true
+        }
+        _ => false,
+    }
+}
+
+#[test]
+fn a_root_step_builds_inside_the_root_with_laft_build() {
+    if no_shell() {
+        return;
+    }
+    let Some(laft_build) = built_laft_build() else {
+        return;
+    };
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "build", place = root, packages = [greet] },
+    { name = "check", place = root, script = """
+        test -f /greeting
+        : > /run/laft-build-root/written
+        test ! -w /run/laft-recipes
+        test ! -e /run/laft-build
+        """ },"#;
+    let stage = root_stage(dir.path(), steps);
+    let root = dir.path().join("root");
+    copy_libraries(&root, &laft_build);
+    let options = StageOptions {
+        laft_build: laft_build.clone(),
+        ..options(dir.path())
+    };
+    let result = states(dir.path(), &stage, &options, false);
+    if refused(&result) {
+        return;
+    }
+    let logs = dir.path().join("build/logs/stage/demo");
+    let log = fs::read_to_string(logs.join("01-build-greet.log")).unwrap_or_default();
+    let states = result.unwrap_or_else(|e| panic!("{e}\n{log}"));
+    assert!(
+        states.iter().all(|(_, s)| *s == StageState::Done),
+        "{states:?}"
+    );
+    assert_eq!(fs::read_to_string(root.join("greeting")).unwrap(), "hi\n");
+    assert!(dir.path().join("build/written").is_file());
+    let repos = Repos::open(&[&stage.recipes]).unwrap();
+    let recipe = recipes(&repos, &"greet".parse().unwrap())
+        .unwrap()
+        .remove(0);
+    let item = Item::of(&recipe);
+    assert!(installed(&root, &item).unwrap().is_some());
+
+    fs::remove_file(root.join("greeting")).unwrap();
+    let rebuild = StageOptions {
+        rebuild: true,
+        ..options.clone()
+    };
+    self::states(dir.path(), &stage, &rebuild, false).unwrap();
+    assert!(root.join("greeting").is_file(), "the build ran again");
+}
+
+#[test]
+fn a_root_build_that_records_no_key_fails() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "build", place = root, packages = [greet] },"#;
+    let stage = root_stage(dir.path(), steps);
+    let fake = dir.path().join("fake-laft-build");
+    write_program(&fake, b"#!/bin/sh\nexit 0\n");
+    let options = StageOptions {
+        laft_build: fake,
+        ..options(dir.path())
+    };
+    let result = states(dir.path(), &stage, &options, false);
+    if refused(&result) {
+        return;
+    }
+    let error = result.unwrap_err();
+    assert_eq!(error.code(), Some("B040"), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("without recording its build key"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_root_script_that_runs_too_long_is_killed() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "spin", place = root, script = "while :; do :; done" },"#;
+    let stage = root_stage(dir.path(), steps);
+    let options = StageOptions {
+        timeout: Duration::from_secs(1),
+        ..options(dir.path())
+    };
+    let result = states(dir.path(), &stage, &options, false);
+    if refused(&result) {
+        return;
+    }
+    assert_eq!(result.unwrap_err().code(), Some("B030"));
 }

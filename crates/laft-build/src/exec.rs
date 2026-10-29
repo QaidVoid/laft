@@ -324,7 +324,11 @@ impl Executor {
 /// nothing it started keeps writing to the tree. A sandboxed phase is the
 /// first process of its PID namespace, whose other processes the kernel
 /// kills when it dies.
-fn wait(mut child: Child, timeout: Duration, log: &Path) -> Result<ExitStatus, BuildError> {
+pub(crate) fn wait(
+    mut child: Child,
+    timeout: Duration,
+    log: &Path,
+) -> Result<ExitStatus, BuildError> {
     let deadline = Instant::now() + timeout;
     loop {
         if let Some(status) = child.try_wait().map_err(io(log))? {
