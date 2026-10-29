@@ -7,7 +7,7 @@ expression: out
 exec /usr/bin/laft svc finish --backend runit loud "$1" "$2"
 === services/runit/sv/loud/run (555)
 #!/bin/sh
-exec /usr/bin/laft svc exec --backend runit loud
+exec /usr/bin/laft svc exec --backend runit loud 2>&1
 === services/runit/sv/quiet/finish (555)
 #!/bin/sh
 exec /usr/bin/laft svc finish --backend runit quiet "$1" "$2"

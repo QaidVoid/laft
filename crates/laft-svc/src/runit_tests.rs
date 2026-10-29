@@ -67,6 +67,25 @@ fn log_policy_shapes_the_service_directory() {
 }
 
 #[test]
+fn a_console_service_writes_standard_error_to_the_console() {
+    let loud = Service {
+        log: Log::Console,
+        ..Service::longrun(&["/usr/bin/loud"])
+    };
+    let rendered = render(&valid(&config(&[("loud", loud)])), 1).expect("renders");
+    let entries = rendered.entries();
+    let Some(Entry::File { bytes, .. }) = entries.get("services/runit/sv/loud/run") else {
+        panic!("the service has a run script");
+    };
+    let run = String::from_utf8_lossy(bytes);
+    assert!(
+        run.contains("exec /usr/bin/laft svc exec --backend runit loud 2>&1\n"),
+        "{run}"
+    );
+    assert!(!entries.contains_key("services/runit/sv/loud/log/run"));
+}
+
+#[test]
 fn a_stop_signal_other_than_term_gets_a_control_hook() {
     let reload = Service {
         stop_signal: Signal::Int,

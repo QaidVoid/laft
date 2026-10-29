@@ -348,10 +348,12 @@ fn unit_hash(files: &[UnitFile]) -> Blake3Hash {
 /// graph, sorted by path.
 fn service_dir(spec: &Spec) -> Vec<UnitFile> {
     let name = &spec.name;
+    // runsvdir sends the standard error of every service to its process
+    // title, so a console service sends it to standard output, which is
+    // the console.
     let redirect = match spec.log {
-        SpecLog::Logged { .. } => " 2>&1",
+        SpecLog::Logged { .. } | SpecLog::Console => " 2>&1",
         SpecLog::Discard => " >/dev/null 2>&1",
-        SpecLog::Console => "",
     };
     let script = |line: String| format!("#!/bin/sh\nexec {line}\n").into_bytes();
     let mut files = vec![
