@@ -186,12 +186,15 @@ pub struct Host {
 
 impl Host {
     /// Looks at the running machine: the kernel release, the CPU vendor,
-    /// and the drivers of the block devices that hold `/`, `/laft`, the
-    /// EFI system partition and every LUKS device of `config`.
+    /// and the drivers of the block devices that hold `/`, `/laft` and the
+    /// EFI system partition of the system at `root`, and every LUKS device
+    /// of `config`. For a system being installed from a rescue system,
+    /// `root` is its mountpoint, so that its disks count and the rescue
+    /// system's do not.
     ///
     /// Anything that cannot be read is left out, so the result may be
     /// empty, for example inside a container.
-    pub fn detect(config: &BootConfig) -> Self {
+    pub fn detect(config: &BootConfig, root: &Path) -> Self {
         let kernel = rustix::system::uname()
             .release()
             .to_str()
@@ -203,12 +206,8 @@ impl Host {
                 .map(|(_, vendor)| vendor.trim().to_owned())
         });
         let mut devices = Vec::new();
-        let mut mountpoints = vec!["/", config.boot.esp.as_str()];
-        if config.fs.contains_key("/laft") {
-            mountpoints.push("/laft");
-        }
-        for mountpoint in mountpoints {
-            if let Ok(stat) = rustix::fs::stat(mountpoint) {
+        for mountpoint in boot_mountpoints(config, root) {
+            if let Ok(stat) = rustix::fs::stat(&mountpoint) {
                 devices.push(split_dev(stat.st_dev));
             }
         }
@@ -227,6 +226,19 @@ impl Host {
             cpu_vendor,
         }
     }
+}
+
+/// Where `/`, the EFI system partition and `/laft`, if it is a separate
+/// filesystem, of the system at `root` are mounted.
+fn boot_mountpoints(config: &BootConfig, root: &Path) -> Vec<PathBuf> {
+    let mut mountpoints = vec!["/", config.boot.esp.as_str()];
+    if config.fs.contains_key("/laft") {
+        mountpoints.push("/laft");
+    }
+    mountpoints
+        .into_iter()
+        .map(|m| root.join(m.trim_start_matches('/')))
+        .collect()
 }
 
 fn split_dev(dev: u64) -> (u32, u32) {

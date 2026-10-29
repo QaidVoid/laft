@@ -150,7 +150,7 @@ pub(crate) fn check(env: &Env, file: Option<&Path>, refresh: bool) -> Result<u8,
     let installed = InstalledMetas::of(&env.root, active.as_ref());
     let services = resolve::services(&loaded.config)?;
     let universe = resolve::universe(&indexes);
-    let host = laft_activate::Host::detect(&loaded.config.boot);
+    let host = laft_activate::Host::detect(&loaded.config.boot, env.root.path());
     resolve::resolve(
         &universe,
         &loaded.config,

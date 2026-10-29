@@ -105,7 +105,7 @@ pub struct Assembled {
 ///     services: &ServiceSet::new(services).expect("valid services"),
 ///     boot: &boot,
 ///     security: &Security::default(),
-///     host: &Host::detect(&boot),
+///     host: &Host::detect(&boot, root.path()),
 /// })?;
 /// for warning in &assembled.warnings {
 ///     eprintln!("warning: {warning}");

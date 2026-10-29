@@ -4,6 +4,33 @@ use std::os::unix::fs::symlink;
 use super::*;
 
 #[test]
+fn boot_devices_are_looked_up_below_the_root() {
+    let mut config = BootConfig::default();
+    assert_eq!(
+        boot_mountpoints(&config, Path::new("/mnt")),
+        [PathBuf::from("/mnt"), PathBuf::from("/mnt/boot")]
+    );
+    config.boot.esp = "/efi".into();
+    config.fs.insert(
+        "/laft".into(),
+        Fs {
+            device: Some("UUID=3f1c".into()),
+            fstype: "ext4".into(),
+            options: vec![],
+            fsck: None,
+        },
+    );
+    assert_eq!(
+        boot_mountpoints(&config, Path::new("/")),
+        [
+            PathBuf::from("/"),
+            PathBuf::from("/efi"),
+            PathBuf::from("/laft")
+        ]
+    );
+}
+
+#[test]
 fn device_modules_come_from_every_driver_above_the_device() {
     let dir = laft_test::tempdir();
     let sys = dir.path();

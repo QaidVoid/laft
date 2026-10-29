@@ -338,7 +338,8 @@ pub(crate) fn probe(env: &Env) -> Probe {
                 probe.swap.push(tag(&canonical(device)));
             }
         }
-        probe.modules = laft_activate::Host::detect(&laft_activate::BootConfig::default()).modules;
+        probe.modules =
+            laft_activate::Host::detect(&laft_activate::BootConfig::default(), root).modules;
     }
     let cpuinfo = fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
     probe.microcode = if cpuinfo.contains("GenuineIntel") {

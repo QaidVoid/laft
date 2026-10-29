@@ -442,10 +442,11 @@ fn build_and_activate(
     activation.finish(env, number)
 }
 
-/// The machine the generation is assembled for. Below `--root`, the
-/// running kernel is not the target's, so none of its modules are carried.
+/// The machine the generation is assembled for, with the boot devices of
+/// the system at the root. Below `--root`, the running kernel is not the
+/// target's, so none of its modules are carried.
 fn host(env: &Env, config: &laft_config::SystemConfig) -> Host {
-    let mut host = Host::detect(&config.boot);
+    let mut host = Host::detect(&config.boot, env.root.path());
     if env.offline_root {
         host.kernel = None;
     }
