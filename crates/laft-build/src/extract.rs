@@ -409,7 +409,8 @@ impl Extractor {
                 }
                 self.symlink(&raw, &rel, &target)?;
             } else if mode & 0o170_000 == 0 || mode & 0o170_000 == 0o100_000 {
-                self.file(&raw, &rel, mode, None, &mut entry)?;
+                let mtime = entry.last_modified().and_then(zip_time);
+                self.file(&raw, &rel, mode, mtime, &mut entry)?;
             } else {
                 self.warnings.push(format!(
                     "skipped {raw}, which is not a file, directory or link"
@@ -714,6 +715,23 @@ fn remove_tree(path: &Path) -> Result<(), SourceError> {
         Err(e) if e.kind() != io::ErrorKind::NotFound => Err(io_error(path)(e)),
         _ => Ok(()),
     }
+}
+
+/// The seconds since the Unix epoch of the time of a zip entry, which the
+/// format records without a time zone, read as UTC.
+fn zip_time(time: zip::DateTime) -> Option<u64> {
+    let text = format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        time.year(),
+        time.month(),
+        time.day(),
+        time.hour(),
+        time.minute(),
+        time.second()
+    );
+    text.parse::<laft_core::Timestamp>()
+        .ok()
+        .map(laft_core::Timestamp::as_secs)
 }
 
 #[cfg(test)]

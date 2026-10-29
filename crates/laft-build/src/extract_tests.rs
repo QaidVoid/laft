@@ -543,3 +543,25 @@ fn files_keep_the_modification_times_of_the_archive() {
     assert_eq!(mtime("configure"), 2_000_000);
     assert_eq!(mtime("configure.ac"), 1_000_000);
 }
+
+#[test]
+fn zip_files_keep_their_modification_times() {
+    let mut w = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+    for (name, (hour, minute)) in [("configure", (12, 30)), ("configure.ac", (8, 0))] {
+        let time = zip::DateTime::from_date_and_time(2020, 2, 29, hour, minute, 10).unwrap();
+        let options = zip::write::SimpleFileOptions::default().last_modified_time(time);
+        w.start_file(name, options).expect("zip");
+        w.write_all(b"x").expect("zip");
+    }
+    let zip = w.finish().expect("zip").into_inner();
+    let tree = Tree::new();
+    tree.unpack(&source("x.zip", "", Some(0)), &zip)
+        .expect("a safe archive");
+    let mtime = |name: &str| {
+        fs::metadata(tree.dir.path().join("src").join(name))
+            .unwrap()
+            .mtime()
+    };
+    assert_eq!(mtime("configure"), 1_582_979_410);
+    assert_eq!(mtime("configure.ac"), 1_582_963_210);
+}
