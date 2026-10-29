@@ -32,7 +32,9 @@ const BOTH_EMPTY: MoveMountFlags =
 /// Fails when the namespace cannot be created, which needs
 /// `CAP_SYS_ADMIN`, or when the mounts cannot be made slaves of the
 /// original namespace. The process stays in the original namespace when
-/// the first step fails.
+/// the first step fails. When the second step fails, the process is in a
+/// new namespace whose mounts still propagate to the original one, so the
+/// caller must exit rather than continue.
 pub fn private_mount_namespace() -> Result<(), Error> {
     sys::unshare(UnshareFlags::NEWNS).map_err(|e| Error::new(Step::Unshare, e))?;
     rustix::mount::mount_change(
@@ -116,12 +118,7 @@ pub fn enter_view(generation: &Path, view: &Path, privileged: &[&Path]) -> Resul
         .map(|path| below_usr(path).ok_or_else(|| Error::malformed(Step::InvalidPath, path)))
         .collect::<Result<Vec<_>, _>>()?;
 
-    sys::unshare(UnshareFlags::NEWNS).map_err(|e| Error::new(Step::Unshare, e))?;
-    rustix::mount::mount_change(
-        c"/",
-        MountPropagationFlags::DOWNSTREAM | MountPropagationFlags::REC,
-    )
-    .map_err(|e| Error::new(Step::Propagation, e))?;
+    private_mount_namespace()?;
     let generation = open_root(generation)?;
     let generation = generation.as_fd();
     let view = open_root(view)?;
