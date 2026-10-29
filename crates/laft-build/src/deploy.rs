@@ -25,7 +25,10 @@ const STAGING: &str = "var/lib/laft-build/unpack";
 /// every existing one is kept as it is, and every file and symbolic link
 /// replaces what is at its path with a rename, so a program that runs from
 /// `dest` never sees a partial file. Symbolic links in `dest` are never
-/// followed, so nothing is written outside it. The staging directory is
+/// followed, so nothing is written outside it. An existing directory
+/// without owner write, such as one that an earlier package declared
+/// read-only, lets its owner write while the paths move in, and gets its
+/// mode back afterwards, also after a failure. The staging directory is
 /// removed whether or not this succeeds.
 ///
 /// Every file is on disk before it is renamed into place, and every rename
@@ -59,28 +62,46 @@ fn place(file: &Path, staging: &Path, dest: &Path) -> Result<(), BuildError> {
     reader.unpack(staging)?;
     fsx::sync_fs(staging)?;
     let mut made = Vec::new();
-    for entry in &entries {
-        let rel = entry.path();
-        let from = staging.join(rel);
-        let to = dest.join(rel);
-        let found = match fs::symlink_metadata(&to) {
-            Ok(meta) => Some(meta.file_type()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(io(&to)(e)),
-        };
-        match (entry, found) {
-            (Entry::Dir { .. }, Some(found)) if found.is_dir() => {}
-            (Entry::Dir { mode, .. }, None) => {
-                fs::create_dir(&to).map_err(io(&to))?;
-                made.push((from, to, *mode));
+    let mut opened = Vec::new();
+    let moved = (|| {
+        for entry in &entries {
+            let rel = entry.path();
+            let from = staging.join(rel);
+            let to = dest.join(rel);
+            let found = match fs::symlink_metadata(&to) {
+                Ok(meta) => Some(meta),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => return Err(io(&to)(e)),
+            };
+            match (entry, found) {
+                (Entry::Dir { .. }, Some(found)) if found.is_dir() => {
+                    let mode = found.permissions().mode() & 0o7777;
+                    if mode & 0o200 == 0 {
+                        fs::set_permissions(&to, fs::Permissions::from_mode(mode | 0o200))
+                            .map_err(io(&to))?;
+                        opened.push((to, mode));
+                    }
+                }
+                (Entry::Dir { mode, .. }, None) => {
+                    fs::create_dir(&to).map_err(io(&to))?;
+                    made.push((from, to, *mode));
+                }
+                (Entry::Dir { .. }, Some(_)) => return Err(conflict(file, rel, true)),
+                (_, Some(found)) if found.is_dir() => {
+                    return Err(conflict(file, rel, false));
+                }
+                _ => fs::rename(&from, &to).map_err(io(&to))?,
             }
-            (Entry::Dir { .. }, Some(_)) => return Err(conflict(file, rel, true)),
-            (_, Some(found)) if found.is_dir() => {
-                return Err(conflict(file, rel, false));
-            }
-            _ => fs::rename(&from, &to).map_err(io(&to))?,
+        }
+        Ok(())
+    })();
+    let mut restored = Ok(());
+    for (to, mode) in opened.into_iter().rev() {
+        if let Err(e) = fs::set_permissions(&to, fs::Permissions::from_mode(mode)) {
+            restored = restored.and(Err(io(&to)(e)));
         }
     }
+    moved.and(restored)?;
     // The modes come last, because a declared mode may keep the owner from
     // moving the directory's contents in.
     for (from, to, mode) in made {

@@ -194,3 +194,41 @@ fn a_new_directory_gets_the_mode_its_package_declares() {
         b"file"
     );
 }
+
+#[test]
+fn a_later_package_lands_in_a_directory_without_owner_write() {
+    let dir = laft_test::tempdir();
+    let sealed = dir.path().join("sealed");
+    write_tree(&sealed, &[("usr/share/sealed/first", b"first")]);
+    let later = dir.path().join("later");
+    write_tree(&later, &[("usr/share/sealed/second", b"second")]);
+    for file in [
+        sealed.join("usr/share/sealed/first"),
+        later.join("usr/share/sealed/second"),
+    ] {
+        fs::set_permissions(file, fs::Permissions::from_mode(0o444)).unwrap();
+    }
+    fs::set_permissions(
+        sealed.join("usr/share/sealed"),
+        fs::Permissions::from_mode(0o555),
+    )
+    .unwrap();
+    let (sealed, later) = (
+        package(dir.path(), "sealed", &sealed),
+        package(dir.path(), "later", &later),
+    );
+    let dest = dir.path().join("dest");
+    fs::create_dir_all(&dest).unwrap();
+
+    unpack_into(&sealed, &dest).unwrap();
+    unpack_into(&later, &dest).unwrap();
+    assert_eq!(
+        fs::read(dest.join("usr/share/sealed/second")).unwrap(),
+        b"second"
+    );
+    assert_eq!(
+        mode(&dest.join("usr/share/sealed")),
+        0o555,
+        "the directory keeps its mode"
+    );
+}
