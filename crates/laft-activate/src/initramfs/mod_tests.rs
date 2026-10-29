@@ -172,3 +172,16 @@ fn an_unchecked_root_without_shell_or_microcode_needs_no_initrd_package() {
     assert_eq!(names, ["cryptsetup:static", "f2fs-tools:static"]);
     assert_eq!(packages[1].origin, "fs \"/laft\"");
 }
+
+#[test]
+fn a_package_that_two_filesystems_need_names_both() {
+    let mut config = BootConfig::default();
+    config.fs.insert("/".into(), fs("ext4", None));
+    config.fs.insert("/laft".into(), fs("ext4", None));
+    let packages = initrd_packages(&config, &Host::default());
+    let e2fsprogs = packages
+        .iter()
+        .find(|p| p.pkg.to_string() == "e2fsprogs:static")
+        .expect("the root needs it");
+    assert_eq!(e2fsprogs.origin, "fs \"/\", fs \"/laft\"");
+}

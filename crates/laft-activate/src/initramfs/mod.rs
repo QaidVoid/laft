@@ -107,7 +107,14 @@ pub struct InitrdPackage {
 /// | `linux-firmware` | AMD microcode is selected by `boot.microcode` |
 ///
 /// A filesystem is checked when its `fsck` is set, and by default for
-/// ext2, ext3, ext4, f2fs and vfat.
+/// ext2, ext3, ext4, f2fs and vfat. The initramfs has no checker for vfat,
+/// so a vfat filesystem adds nothing. When `/` and `/laft` need the same
+/// package, its origin names both.
+///
+/// # Panics
+///
+/// Panics if a package name of the table is not a valid name, which the
+/// literals in this function rule out.
 ///
 /// ```
 /// use laft_activate::{BootConfig, Host, initrd_packages};
@@ -119,12 +126,17 @@ pub fn initrd_packages(config: &BootConfig, host: &Host) -> Vec<InitrdPackage> {
     let mut out = Vec::new();
     let mut add = |name: &str, variant: Variant, origin: String| {
         let pkg = PkgRef::new(
-            name.parse().expect("the initrd package names are valid"),
+            name.parse()
+                .expect("the package names of the table are valid names"),
             None,
             variant,
         );
-        if !out.iter().any(|p: &InitrdPackage| p.pkg == pkg) {
-            out.push(InitrdPackage { pkg, origin });
+        match out.iter_mut().find(|p: &&mut InitrdPackage| p.pkg == pkg) {
+            Some(known) if known.origin != origin => {
+                known.origin = format!("{}, {origin}", known.origin);
+            }
+            Some(_) => {}
+            None => out.push(InitrdPackage { pkg, origin }),
         }
     };
     if config.boot.initrd.shell {
@@ -645,8 +657,6 @@ impl Programs<'_, '_> {
     }
 }
 
-/// The uncompressed archive of CPU microcode that the kernel reads before
-/// the main archive.
 /// The CPU vendor id of Intel processors.
 const INTEL: &str = "GenuineIntel";
 /// The CPU vendor id of AMD processors.
@@ -669,6 +679,8 @@ fn microcode_vendors(config: &BootConfig, host: &Host) -> Vec<&'static str> {
     }
 }
 
+/// The uncompressed archive of CPU microcode that the kernel reads before
+/// the main archive.
 fn microcode(inputs: &Inputs<'_>, programs: &Programs<'_, '_>) -> Result<Archive> {
     let mut archive = Archive::default();
     for vendor in microcode_vendors(inputs.config, inputs.host) {
