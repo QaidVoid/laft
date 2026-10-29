@@ -97,8 +97,9 @@ impl Stage {
     ///
     /// Returns the [`crate::Report`] of a file that does not evaluate, and
     /// `R060` for a file without exactly one stage, a step that sets both or
-    /// neither of `packages` and `script`, a stage name that is not made of
-    /// lowercase letters, digits and dashes, a step name used twice, a search
+    /// neither of `packages` and `script`, a stage name that does not start
+    /// with a lowercase letter or digit followed by lowercase letters,
+    /// digits and dashes, a step name used twice, a search
     /// directory that is not a plain relative path, or a recipe repository
     /// that does not exist.
     pub fn load(file: &Path) -> Result<Self, Error> {
@@ -138,7 +139,7 @@ impl Stage {
         };
         if !plain(&name) {
             return Err(problem(format!(
-                "stage {name:?} is not named with lowercase letters, digits and dashes"
+                "stage {name:?} does not start with a lowercase letter or digit followed by lowercase letters, digits and dashes"
             )));
         }
         let recipes = fs::canonicalize(dir.join(&stage.recipes)).map_err(|e| {
@@ -674,7 +675,12 @@ impl StageRun<'_> {
     }
 
     /// Runs `command` with its output in `log`, killing it after `timeout`
-    /// if one is given, and fails with `B040` when it fails.
+    /// if one is given.
+    ///
+    /// # Errors
+    ///
+    /// Fails with `B040` when it fails and with `B030` when it runs longer
+    /// than `timeout`.
     fn run_logged(
         &self,
         command: laft_sandbox::Command,
@@ -691,7 +697,7 @@ impl StageRun<'_> {
             .stderr(err)
             .spawn()?;
         let status = match timeout {
-            Some(timeout) => wait(child, timeout, log)?,
+            Some(timeout) => wait(child, timeout, log, what)?,
             None => child.wait().map_err(io(log))?,
         };
         if status.success() {

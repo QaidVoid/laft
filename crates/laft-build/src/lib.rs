@@ -71,7 +71,7 @@
 //! | `R030` | an `env` key that does not match `[A-Z_][A-Z0-9_]*` |
 //! | `R031` | an `env` key that the builder sets itself, unless it is set with `force(...)`, and always `JOBS` and `MAKEFLAGS` |
 //! | `R050` | an `update` block without exactly one of `github`, `gitlab`, `anitya` and `url`, or with `pattern` and `url` not set together |
-//! | `R060` | a stage file without exactly one stage, a step that sets both or neither of `packages` and `script`, a step name used twice, a search directory that is not a plain relative path, a missing recipe repository, or a package that builds nothing in the variant named |
+//! | `R060` | a stage file without exactly one stage, a stage name that does not start with a lowercase letter or digit followed by lowercase letters, digits and dashes, a step that sets both or neither of `packages` and `script`, a step name used twice, a search directory that is not a plain relative path, a missing recipe repository, or a package that builds nothing in the variant named |
 //!
 //! Between recipes, and while planning, these problems are found:
 //!
@@ -96,12 +96,12 @@
 //!
 //! | Code | Problem |
 //! |---|---|
-//! | `B023` | a recipe file that changed since evaluation or cannot be read, a license file that is missing or outside the source tree, or a build record or reproducibility report that cannot be read or serialized |
-//! | `B030` | a phase that ran longer than the timeout |
+//! | `B023` | a recipe file that changed since evaluation or cannot be read, a license file that is missing or outside the source tree, a build record or reproducibility report that cannot be read or serialized, or an install or stage record that is neither a build key line nor a build key record of a format this version reads |
+//! | `B030` | a phase, or a stage script inside the root, that ran longer than the timeout |
 //! | `B031` | a build root with less than 10 GiB free |
 //! | `B040` | a phase or tool that failed |
 //! | `B041` | an installation or unpacking into a directory outside bootstrap mode |
-//! | `B042` | a stage root whose top-level entries differ from Laft's layout, or a `laft-build` that is not static for a step inside the root |
+//! | `B042` | a stage root whose top-level entries differ from Laft's layout, or a `laft-build` that is not a static ELF executable for a step inside the root |
 //! | `B043` | a payload path that is a directory in a package and something else in the system it is unpacked into, or the other way round |
 //! | `B050` | a build view that the build-side store cannot satisfy |
 //! | `B060` | a reproducibility check of a package without a successful build |

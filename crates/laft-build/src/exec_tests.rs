@@ -88,6 +88,17 @@ fn a_phase_that_runs_too_long_is_killed() {
         .expect_err("the phase times out");
     assert_eq!(error.code(), Some("B030"));
     assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(
+        error.to_string().contains("phase build ran longer than 0s"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_timeout_reads_in_hours_minutes_and_seconds() {
+    for (secs, text) in [(6 * 3600, "6h"), (90, "1m30s"), (3661, "1h1m1s"), (1, "1s")] {
+        assert_eq!(duration_text(Duration::from_secs(secs)), text);
+    }
 }
 
 #[test]

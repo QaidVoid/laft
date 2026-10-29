@@ -304,7 +304,7 @@ impl Executor {
                     .map_err(io(&shell))?
             }
         };
-        let status = wait(child, self.timeout, &log_path)?;
+        let status = wait(child, self.timeout, &log_path, &format!("phase {phase}"))?;
         if status.success() {
             return Ok(());
         }
@@ -319,15 +319,23 @@ impl Executor {
     }
 }
 
-/// Waits for `child` until `timeout` has passed, then kills it. A direct
-/// phase leads its own process group, which is killed with it, so that
-/// nothing it started keeps writing to the tree. A sandboxed phase is the
-/// first process of its PID namespace, whose other processes the kernel
-/// kills when it dies.
+/// Waits for `child`, which runs `what`, until `timeout` has passed, then
+/// kills it. A direct phase leads its own process group, which is killed
+/// with it, so that nothing it started keeps writing to the tree. A
+/// sandboxed phase is the first process of its PID namespace, whose other
+/// processes the kernel kills when it dies. The supervisor of a root
+/// sandbox leads no group of its own. The first process of the sandbox's
+/// PID namespace gets a death signal when the supervisor dies, and the
+/// kernel then kills the rest of the namespace.
+///
+/// # Errors
+///
+/// Fails with `B030` when `child` runs longer than `timeout`.
 pub(crate) fn wait(
     mut child: Child,
     timeout: Duration,
     log: &Path,
+    what: &str,
 ) -> Result<ExitStatus, BuildError> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -345,13 +353,29 @@ pub(crate) fn wait(
             }
             let _ = child.kill();
             let _ = child.wait();
-            let hours = timeout.as_secs_f64() / 3600.0;
             return Err(BuildError::problem(
                 "B030",
-                format!("build exceeded {hours}h"),
+                format!("{what} ran longer than {}", duration_text(timeout)),
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// `duration` in whole hours, minutes and seconds, such as `6h` or
+/// `1m30s`, leaving out the parts that are zero.
+fn duration_text(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    let parts = [(secs / 3600, "h"), (secs / 60 % 60, "m"), (secs % 60, "s")];
+    let text: String = parts
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, unit)| format!("{n}{unit}"))
+        .collect();
+    if text.is_empty() {
+        "0s".to_owned()
+    } else {
+        text
     }
 }
 
