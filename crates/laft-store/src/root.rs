@@ -52,6 +52,18 @@ impl Root {
         fsx::numbered(&self.gens_dir())
     }
 
+    /// The number the next transaction will give its generation. Planning
+    /// shows it without reserving it, so a transaction that starts later
+    /// may still take a higher one.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the counters or the generations directory cannot be
+    /// read.
+    pub fn next_generation(&self) -> Result<u64> {
+        crate::journal::Counters::next_generation(self)
+    }
+
     /// Reads the manifest of generation `number`.
     ///
     /// # Errors

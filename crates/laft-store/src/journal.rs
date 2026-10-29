@@ -218,6 +218,20 @@ impl Counters {
         Ok(counters)
     }
 
+    /// The generation number the next transaction reserves, without
+    /// reserving it: the stored counter, or one more than the newest
+    /// generation when that is higher.
+    pub(crate) fn next_generation(root: &Root) -> Result<u64> {
+        let path = Self::path(root);
+        let stored: u64 = if path.exists() {
+            read_json::<Self>(&path)?.generation
+        } else {
+            1
+        };
+        let newest = root.generations()?.last().map_or(1, |n| n + 1);
+        Ok(stored.max(newest))
+    }
+
     pub(crate) fn save(&self, root: &Root) -> Result<()> {
         let path = Self::path(root);
         fsx::write_atomic(&path, &to_json(&path, self)?, 0o600)

@@ -242,3 +242,24 @@ fn the_default_does_not_move_while_a_transaction_awaits_recovery() {
     assert!(matches!(lock.set_default(1), Err(Error::Pending { .. })));
     assert_eq!(env.root.default_generation().expect("readable"), Some(2));
 }
+
+#[test]
+fn the_next_generation_is_the_one_the_next_transaction_reserves() {
+    let env = Env::new();
+    assert_eq!(env.root.next_generation().expect("readable"), 1);
+    let base = Pkg::new("base", "1")
+        .file("usr/lib/libbase.so.1", b"base")
+        .build(&env);
+    assert_eq!(commit(&env, &[&base]), 1);
+    let lock = env.lock();
+    fault::fail_at(Some("begin.journal"));
+    let _ = apply(&lock, &[&base], None);
+    fault::fail_at(None);
+    lock.recover().expect("recovers");
+    assert_eq!(
+        env.root.next_generation().expect("readable"),
+        3,
+        "2 was reserved"
+    );
+    assert_eq!(apply(&lock, &[&base], None).expect("applies"), 3);
+}
