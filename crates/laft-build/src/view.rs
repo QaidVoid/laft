@@ -153,10 +153,10 @@ pub struct BuildView {
 /// Assembles the build view of `recipe` as `tree/usr` from the [`usable`]
 /// packages of `store` with the seeds `seeds`: [`requests`] and their
 /// runtime dependency closure, resolved like any view, with the
-/// alternatives the resolution chooses. With `pinned`, only the packages
-/// with those store ids are considered, seeds or not, so that a rebuild
-/// sees the view of an earlier build even after the store gained newer
-/// packages.
+/// alternatives the resolution chooses. With `pinned`, the view holds
+/// exactly the packages with those store ids, seeds or not, so that a
+/// rebuild sees the view of an earlier build even after the store gained
+/// newer packages, and whether or not it runs the check phase.
 ///
 /// # Errors
 ///
@@ -186,8 +186,16 @@ pub fn assemble(
     } else {
         entries = usable(entries, seeds);
     }
-    let names = entries.iter().map(|e| e.meta.name.clone()).collect();
-    let refs = requests(recipe, check, &names);
+    let refs = match pinned {
+        Some(_) => entries
+            .iter()
+            .map(|e| PkgRef::new(e.meta.name.clone(), None, e.meta.variant))
+            .collect(),
+        None => {
+            let names = entries.iter().map(|e| e.meta.name.clone()).collect();
+            requests(recipe, check, &names)
+        }
+    };
     let origin = format!("build view of {}", Item::of(recipe));
     let chosen = resolve(&entries, &refs, &origin, None, store, Some(tree))?;
     let mut statics = Vec::new();

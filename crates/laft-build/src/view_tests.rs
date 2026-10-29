@@ -362,3 +362,33 @@ fn key_inputs_follow_the_usable_packages() {
         ["libz.so.2"]
     );
 }
+
+#[test]
+fn a_pinned_view_holds_every_package_of_the_earlier_view_without_its_checks() {
+    let dir = laft_test::tempdir();
+    let store = store_with_base(dir.path());
+    TestPkg::new("expect").add(&store, dir.path());
+    let mut recipe = recipe("app");
+    recipe.check_deps = refs(&["expect"]);
+    let checked = assemble(
+        &store,
+        &none(),
+        &recipe,
+        true,
+        &dir.path().join("checked"),
+        None,
+    )
+    .unwrap();
+    assert!(checked.packages.iter().any(|p| p.name.as_str() == "expect"));
+    let pinned = checked.packages.iter().map(|p| p.id).collect();
+    let again = assemble(
+        &store,
+        &none(),
+        &recipe,
+        false,
+        &dir.path().join("again"),
+        Some(&pinned),
+    )
+    .unwrap();
+    assert_eq!(again.packages, checked.packages);
+}

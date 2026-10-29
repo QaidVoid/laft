@@ -246,9 +246,9 @@ pub struct Builder<'a> {
     /// Whether the packages of a [`Mode::Store`] build enter the store. A
     /// rebuild that only checks reproducibility leaves the store alone.
     pub add_to_store: bool,
-    /// The store ids a [`Mode::Store`] build view is limited to, as
-    /// [`view::assemble`] describes. A reproducibility check pins the view
-    /// of the build it repeats.
+    /// The store ids of the packages a [`Mode::Store`] build view holds,
+    /// as [`view::assemble`] describes. A reproducibility check pins the
+    /// view of the build it repeats.
     pub pinned_view: Option<BTreeSet<StoreId>>,
     /// Directories that [`Mode::Bootstrap`] phases search for programs
     /// before the root's `usr/bin`, as [`Executor::search_first`]
