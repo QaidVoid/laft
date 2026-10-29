@@ -102,7 +102,8 @@ impl<'a> Cx<'a> {
         error_at(code, self.span(path), message)
     }
 
-    /// Returns the place `span` names as `file:line:column`.
+    /// Returns the place `span` names as `file:line:column`. A start inside
+    /// a character names that character.
     pub(crate) fn location(&self, span: SourceSpan) -> String {
         let name = self
             .checked
@@ -110,7 +111,11 @@ impl<'a> Cx<'a> {
             .find(|&(file, _)| file == span.file)
             .map_or("<unknown>", |(_, name)| name);
         let text = self.checked.source(span.file).unwrap_or_default();
-        let before = text.get(..span.span.start).unwrap_or(text);
+        let start = (0..=span.span.start.min(text.len()))
+            .rev()
+            .find(|&i| text.is_char_boundary(i))
+            .unwrap_or(0);
+        let before = text.get(..start).unwrap_or_default();
         let line = before.matches('\n').count() + 1;
         let column = before.rsplit('\n').next().unwrap_or(before).chars().count() + 1;
         format!("{name}:{line}:{column}")
@@ -505,3 +510,7 @@ pub(crate) fn repos(cx: &Cx<'_>, found: &mut Vec<FileDiagnostic>) -> BTreeMap<Na
     }
     out
 }
+
+#[cfg(test)]
+#[path = "convert_tests.rs"]
+mod tests;
