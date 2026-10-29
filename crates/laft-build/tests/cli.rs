@@ -497,3 +497,25 @@ fn a_second_writer_of_a_locked_build_root_fails_at_once_with_4() {
     let output = without_recipes(&root, &["seed", file]);
     assert_eq!(output.status.code(), Some(1), "{output:?}");
 }
+
+#[test]
+fn check_repro_checks_every_built_package_and_names_the_unchecked() {
+    let dir = laft_test::tempdir();
+    let output = laft_build(dir.path(), &["check-repro"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(stdout(&output), "0 of 0 reproducible\n");
+
+    let output = laft_build(dir.path(), &["check-repro", "zlib:dynamic"]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let out = stdout(&output);
+    assert!(
+        out.contains("zlib: error[B060]: zlib has no successful build to check"),
+        "{out}"
+    );
+    assert!(out.ends_with("0 of 1 reproducible\n"), "{out}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error[B061]: not checked: zlib"),
+        "{stderr}"
+    );
+}

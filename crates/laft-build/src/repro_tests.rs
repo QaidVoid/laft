@@ -49,6 +49,7 @@ fn a_report_is_kept_per_item() {
     let report = ReproReport {
         build_key: Blake3Hash::of(b"key"),
         reproducible: true,
+        differing_packages: vec![],
         differing_files: vec![],
         checked: Timestamp::from_secs(0),
     };
@@ -58,4 +59,23 @@ fn a_report_is_kept_per_item() {
         serde_json::from_slice::<ReproReport>(&text).unwrap(),
         report
     );
+}
+
+#[test]
+fn package_files_are_compared_byte_for_byte() {
+    let (one, two) = (laft_test::tempdir(), laft_test::tempdir());
+    let (a, b) = (package(one.path(), b"v1"), package(two.path(), b"v1"));
+    assert_eq!(
+        differing_packages(std::slice::from_ref(&a), std::slice::from_ref(&b)).unwrap(),
+        Vec::<String>::new()
+    );
+    let mut bytes = std::fs::read(&b).unwrap();
+    bytes.push(0);
+    std::fs::write(&b, bytes).unwrap();
+    let name = "tool-1.0-r1.x86_64-v3.lpkg";
+    assert_eq!(
+        differing_packages(std::slice::from_ref(&a), std::slice::from_ref(&b)).unwrap(),
+        [name]
+    );
+    assert_eq!(differing_packages(&[a], &[]).unwrap(), [name]);
 }

@@ -110,6 +110,7 @@
 //! | `B043` | a payload path that is a directory in a package and something else in the system it is unpacked into, or the other way round |
 //! | `B050` | a build view that the build-side store cannot satisfy |
 //! | `B060` | a reproducibility check of a package without a successful build |
+//! | `B061` | a reproducibility check with a package that differs or could not be checked |
 //! | `B1xx`, `R040`, `W1xx` | a payload that breaks a post-processing rule, see [`post`] |
 
 #![forbid(unsafe_code)]
@@ -168,7 +169,9 @@ pub use recipe::{
     Runner, Shell, Source, Split, Subpackage, Update, Vendor, VendorKind,
 };
 pub use repo::{Evaluation, RecipeRepo, Repos};
-pub use repro::{DifferingFile, ReproReport, check_repro, compare, record_repro};
+pub use repro::{
+    DifferingFile, ReproReport, check_repro, compare, differing_packages, record_repro,
+};
 pub use seed::seed;
 pub use source::{SourceCache, SourceError};
 pub use stage::{

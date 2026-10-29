@@ -4,6 +4,7 @@
 //! laft-build --recipes ~/src/laft-recipes plan
 //! laft-build --recipes ~/src/laft-recipes build zlib --shell-on-failure
 //! laft-build --recipes ~/src/laft-recipes check-repro zlib
+//! laft-build --recipes ~/src/laft-recipes check-repro
 //! laft-build --recipes ~/src/laft-recipes bootstrap --root / zlib bzip2
 //! laft-build --recipes ~/src/stage0 bootstrap --root / --install ~/sys \
 //!     --path ~/sys/tools/bin binutils-pass1 gcc-pass1
@@ -211,7 +212,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
             after,
             options,
         } => shell(&cx, &package, after.as_deref(), &options),
-        Command::CheckRepro { package } => repro(&cx, &package),
+        Command::CheckRepro { packages } => repro(&cx, &packages),
         Command::Lint { packages } => lint(&cx, &packages),
         Command::Bootstrap {
             root,
@@ -580,49 +581,88 @@ fn one(mut recipes: Vec<Recipe>, package: &str) -> Result<Recipe, Failure> {
     }
 }
 
-fn repro(cx: &Context, package: &str) -> Result<(), Failure> {
+fn repro(cx: &Context, packages: &[String]) -> Result<(), Failure> {
     check_space(cx.root.path())?;
-    let recipe = one(recipes(cx, &[package.to_owned()])?, package)?;
-    let item = Item::of(&recipe);
     let db = cx.root.db();
-    let previous = db.latest(&item)?.ok_or_else(|| {
-        Failure::Build(BuildError::problem(
-            "B060",
-            format!("{item} has no successful build to check"),
-        ))
-    })?;
-    let buildinfo = fs::read(cx.root.out().join(&previous.buildinfo))
-        .ok()
-        .and_then(|b| Buildinfo::from_json(&b).ok());
-    let jobs = buildinfo.as_ref().map_or(2, |b| b.host.jobs);
-    let mut second = builder(cx, Mode::Store, None);
-    second.pinned_view = buildinfo.map(|b| b.build_view.iter().map(|p| p.id).collect());
     let base = cx.root.path().join("repro");
-    second.work = base.join("work");
-    second.out = base.join("out");
-    second.logs = base.join("logs");
-    second.jobs = (jobs / 2).max(1);
-    second.add_to_store = false;
-    let report = check_repro(&second, &recipe, &previous, &cx.root.out())?;
-    record_repro(&db, &item, &report)?;
-    if cx.json {
-        let value = serde_json::to_value(&report).map_err(|e| Failure::Usage(e.to_string()))?;
-        say(value);
-    } else if report.reproducible {
-        say(format_args!("{item}: reproducible"));
-    } else {
-        say(format_args!("{item}: not reproducible"));
-        for file in &report.differing_files {
-            say(format_args!(
-                "  {} {}: {} / {}",
-                file.package,
-                file.path,
-                file.first.as_deref().unwrap_or("missing"),
-                file.second.as_deref().unwrap_or("missing")
-            ));
+    let (mut same, mut differ, mut failed) = (0, Vec::new(), Vec::new());
+    let mut results = Vec::new();
+    for recipe in recipes(cx, packages)? {
+        let item = Item::of(&recipe);
+        let Some(previous) = db.latest(&item)? else {
+            if !packages.is_empty() {
+                let error = format!("error[B060]: {item} has no successful build to check");
+                say(format_args!("{item}: {error}"));
+                results.push(json!({ "item": item.to_string(), "error": error }));
+                failed.push(item.to_string());
+            }
+            continue;
+        };
+        let buildinfo = fs::read(cx.root.out().join(&previous.buildinfo))
+            .ok()
+            .and_then(|b| Buildinfo::from_json(&b).ok());
+        let jobs = buildinfo.as_ref().map_or(2, |b| b.host.jobs);
+        let mut second = builder(cx, Mode::Store, None);
+        second.pinned_view = buildinfo.map(|b| b.build_view.iter().map(|p| p.id).collect());
+        second.work = base.join("work");
+        second.out = base.join("out");
+        second.logs = base.join("logs");
+        second.jobs = (jobs / 2).max(1);
+        second.check = false;
+        second.add_to_store = false;
+        eprintln!("checking {item}");
+        let report = match check_repro(&second, &recipe, &previous, &cx.root.out()) {
+            Ok(report) => report,
+            Err(error) => {
+                say(format_args!("{item}: rebuild failed: {error}"));
+                results.push(json!({ "item": item.to_string(), "error": error.to_string() }));
+                failed.push(item.to_string());
+                continue;
+            }
+        };
+        record_repro(&db, &item, &report)?;
+        if report.reproducible {
+            same += 1;
+            say(format_args!("{item}: reproducible"));
+        } else {
+            differ.push(item.to_string());
+            say(format_args!("{item}: not reproducible"));
+            for file in &report.differing_packages {
+                say(format_args!("  {file} differs"));
+            }
+            for file in &report.differing_files {
+                say(format_args!(
+                    "  {} {}: {} / {}",
+                    file.package,
+                    file.path,
+                    file.first.as_deref().unwrap_or("missing"),
+                    file.second.as_deref().unwrap_or("missing")
+                ));
+            }
         }
+        let value = serde_json::to_value(&report).map_err(|e| Failure::Usage(e.to_string()))?;
+        results.push(json!({ "item": item.to_string(), "report": value }));
     }
-    Ok(())
+    let checked = same + differ.len() + failed.len();
+    if cx.json {
+        say(json!({ "repro": results }));
+    } else {
+        say(format_args!("{same} of {checked} reproducible"));
+    }
+    if differ.is_empty() && failed.is_empty() {
+        return Ok(());
+    }
+    let mut parts = Vec::new();
+    if !differ.is_empty() {
+        parts.push(format!("not reproducible: {}", differ.join(", ")));
+    }
+    if !failed.is_empty() {
+        parts.push(format!("not checked: {}", failed.join(", ")));
+    }
+    Err(Failure::Build(BuildError::problem(
+        "B061",
+        parts.join("\n"),
+    )))
 }
 
 fn lint(cx: &Context, packages: &[String]) -> Result<(), Failure> {

@@ -315,6 +315,10 @@ fn a_c_package_builds_in_the_sandbox_into_reproducible_packages() {
     second.logs = dir.path().join("elsewhere/logs");
     let report = check_repro(&second, &recipe, &previous, &root.out()).expect("the rebuild works");
     assert!(report.reproducible, "{:?}", report.differing_files);
+    assert!(
+        report.differing_packages.is_empty(),
+        "the package files are byte for byte the same"
+    );
     assert_eq!(report.build_key, previous.record.key);
 }
 

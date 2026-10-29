@@ -83,11 +83,15 @@ pub(crate) enum Command {
         #[command(flatten)]
         options: BuildOptions,
     },
-    /// Rebuild the latest build of a package with half the jobs elsewhere
-    /// and compare the store ids of its outputs.
+    /// Rebuild the latest builds of packages elsewhere, with half the jobs,
+    /// in the build view of the first build and without check phases, and
+    /// compare the store ids of their outputs and their package files byte
+    /// for byte. Every package is checked even when an earlier one differs
+    /// or fails to rebuild.
     CheckRepro {
-        /// The package, optionally with `:variant`.
-        package: String,
+        /// The packages, each optionally with `:variant`. Without any,
+        /// every package of the repositories that has a successful build.
+        packages: Vec<String>,
     },
     /// Type check and evaluate recipes and run the recipe checks.
     Lint {

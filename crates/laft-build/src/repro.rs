@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use laft_core::{Blake3Hash, Name, Timestamp};
@@ -35,8 +35,11 @@ pub struct DifferingFile {
 pub struct ReproReport {
     /// The build key of both builds.
     pub build_key: Blake3Hash,
-    /// Whether every output has the same store id in both builds.
+    /// Whether every output has the same store id and a byte-identical
+    /// package file in both builds.
     pub reproducible: bool,
+    /// The package files that differ byte for byte, by file name.
+    pub differing_packages: Vec<String>,
     /// The paths that differ, by package and path.
     pub differing_files: Vec<DifferingFile>,
     /// When the check ran.
@@ -45,9 +48,9 @@ pub struct ReproReport {
 
 /// Rebuilds `recipe` with exactly the build key inputs of its latest build
 /// `previous`, whose packages are in `previous_out`, and compares the store
-/// ids of every output. When they differ, the payload manifests are
-/// compared and every path whose type, mode, size or content differs is
-/// listed.
+/// ids of every output and the package files byte for byte. When the store
+/// ids differ, the payload manifests are compared and every path whose
+/// type, mode, size or content differs is listed.
 ///
 /// `builder` should use another working directory, another output
 /// directory and another number of jobs than the first build, so that the
@@ -66,20 +69,22 @@ pub fn check_repro(
     previous_out: &Path,
 ) -> Result<ReproReport, BuildError> {
     let outcome = builder.build(recipe, &previous.record.inputs)?;
-    let reproducible = outcome.built.outputs == previous.record.outputs;
-    let differing_files = if reproducible {
+    let first: Vec<PathBuf> = previous
+        .files
+        .iter()
+        .map(|f| previous_out.join(f))
+        .collect();
+    let same_ids = outcome.built.outputs == previous.record.outputs;
+    let differing_packages = differing_packages(&first, &outcome.packages)?;
+    let differing_files = if same_ids {
         Vec::new()
     } else {
-        let first: Vec<PathBuf> = previous
-            .files
-            .iter()
-            .map(|f| previous_out.join(f))
-            .collect();
         compare(&first, &outcome.packages)?
     };
     Ok(ReproReport {
         build_key: previous.record.key,
-        reproducible,
+        reproducible: same_ids && differing_packages.is_empty(),
+        differing_packages,
         differing_files,
         checked: Timestamp::now(),
     })
@@ -104,6 +109,61 @@ pub fn compare(first: &[PathBuf], second: &[PathBuf]) -> Result<Vec<DifferingFil
             second: b.get(&(package.clone(), path.clone())).cloned(),
         })
         .collect())
+}
+
+/// The file names of the package files that differ byte for byte between
+/// `first` and `second`, matched by file name, sorted. A file that only one
+/// side has differs too.
+///
+/// # Errors
+///
+/// Fails when a package file cannot be read.
+pub fn differing_packages(
+    first: &[PathBuf],
+    second: &[PathBuf],
+) -> Result<Vec<String>, BuildError> {
+    let by_name = |files: &[PathBuf]| -> BTreeMap<String, PathBuf> {
+        files
+            .iter()
+            .map(|f| (fsx::file_name(&f.to_string_lossy()).to_owned(), f.clone()))
+            .collect()
+    };
+    let (a, b) = (by_name(first), by_name(second));
+    let names: std::collections::BTreeSet<&String> = a.keys().chain(b.keys()).collect();
+    let mut differing = Vec::new();
+    for name in names {
+        let same = match (a.get(name), b.get(name)) {
+            (Some(x), Some(y)) => same_bytes(x, y)?,
+            _ => false,
+        };
+        if !same {
+            differing.push(name.clone());
+        }
+    }
+    Ok(differing)
+}
+
+/// Whether the files `a` and `b` hold the same bytes.
+fn same_bytes(a: &Path, b: &Path) -> Result<bool, BuildError> {
+    let size = |p: &Path| std::fs::metadata(p).map(|m| m.len()).map_err(io(p));
+    if size(a)? != size(b)? {
+        return Ok(false);
+    }
+    let (mut x, mut y) = (
+        BufReader::new(File::open(a).map_err(io(a))?),
+        BufReader::new(File::open(b).map_err(io(b))?),
+    );
+    let (mut one, mut two) = (vec![0; 1 << 16], vec![0; 1 << 16]);
+    loop {
+        let n = x.read(&mut one).map_err(io(a))?;
+        if n == 0 {
+            return Ok(true);
+        }
+        y.read_exact(&mut two[..n]).map_err(io(b))?;
+        if one[..n] != two[..n] {
+            return Ok(false);
+        }
+    }
 }
 
 /// Every payload path of the package files `files`, with a description of
