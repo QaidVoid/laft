@@ -12,19 +12,19 @@ use serde::Deserialize;
 
 /// What booting needs to know about a valid generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Generation {
+pub struct Generation {
     /// The generation number.
-    pub(crate) number: u64,
+    pub number: u64,
     /// The service backend, for example `runit`.
-    pub(crate) backend: String,
+    pub backend: String,
     /// The command line of PID 1.
-    pub(crate) exec: Vec<String>,
+    pub exec: Vec<String>,
     /// The store id of the kernel package.
-    pub(crate) kernel_id: String,
+    pub kernel_id: String,
     /// The kernel release, for example `6.17.5-laft1`.
-    pub(crate) kernel_release: String,
+    pub kernel_release: String,
     /// The hash naming the generation's initramfs.
-    pub(crate) initramfs: String,
+    pub initramfs: String,
 }
 
 #[derive(Deserialize)]
@@ -57,7 +57,7 @@ struct BootJson {
 /// # Errors
 ///
 /// Fails with the reason when the generation is not valid.
-pub(crate) fn read(gens: &Path, number: u64) -> Result<Generation, String> {
+pub fn read(gens: &Path, number: u64) -> Result<Generation, String> {
     let dir = gens.join(number.to_string());
     let gen_json: GenJson = read_json(&dir.join("gen.json"))?;
     if gen_json.format != 1 || gen_json.generation != number {
@@ -109,7 +109,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
 /// # Errors
 ///
 /// Fails when `gens` cannot be listed completely.
-pub(crate) fn numbers(gens: &Path) -> io::Result<BTreeSet<u64>> {
+pub fn numbers(gens: &Path) -> io::Result<BTreeSet<u64>> {
     let mut numbers = BTreeSet::new();
     for entry in fs::read_dir(gens)? {
         if let Some(number) = entry?.file_name().to_str().and_then(|n| n.parse().ok()) {
@@ -124,7 +124,7 @@ pub(crate) fn numbers(gens: &Path) -> io::Result<BTreeSet<u64>> {
 /// # Errors
 ///
 /// Fails when the link exists but does not name a generation number.
-pub(crate) fn read_link(link: &Path) -> Result<Option<u64>, String> {
+pub fn read_link(link: &Path) -> Result<Option<u64>, String> {
     let target = match fs::read_link(link) {
         Ok(target) => target,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -140,11 +140,11 @@ pub(crate) fn read_link(link: &Path) -> Result<Option<u64>, String> {
 
 /// The generation to boot, with warnings to log.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Selection {
+pub struct Selection {
     /// The chosen generation.
-    pub(crate) generation: Generation,
+    pub generation: Generation,
     /// Things worth telling the user about the choice.
-    pub(crate) warnings: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
 /// Chooses the generation to boot.
@@ -157,7 +157,7 @@ pub(crate) struct Selection {
 /// # Errors
 ///
 /// Fails when no valid generation can be chosen.
-pub(crate) fn select(
+pub fn select(
     requested: Option<u64>,
     default: Option<u64>,
     running: &str,

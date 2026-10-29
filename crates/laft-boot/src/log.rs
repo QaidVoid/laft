@@ -86,7 +86,7 @@ impl Log {
 }
 
 /// Prints `message` on the console, each line starting with `laft-boot: `.
-pub(crate) fn console(message: &str) {
+pub fn console(message: &str) {
     let mut out = String::new();
     for line in message.lines() {
         out.push_str("laft-boot: ");

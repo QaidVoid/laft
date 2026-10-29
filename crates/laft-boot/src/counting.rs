@@ -13,16 +13,16 @@ use crate::generation::Generation;
 
 /// What boot counting does for one boot, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Plan {
+pub struct Plan {
     /// The steps, carried out in order.
-    pub(crate) steps: Vec<Step>,
+    pub steps: Vec<Step>,
     /// How the boot goes on once every step is done.
-    pub(crate) then: Then,
+    pub then: Then,
 }
 
 /// One step of a [`Plan`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Step {
+pub enum Step {
     /// Points `/laft/gens/default` at generation `to`. A failure is logged
     /// and ends the plan early: no later step is carried out and
     /// `otherwise` boots.
@@ -51,7 +51,7 @@ pub(crate) enum Step {
 
 /// How the boot goes on after a [`Plan`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Then {
+pub enum Then {
     /// The generation boots now.
     Boot(Generation),
     /// The machine restarts, so that the boot loader starts another kernel.
@@ -67,11 +67,36 @@ pub(crate) enum Then {
 /// default link and the boot menu are pointed at it, and only then is the
 /// state saved that ends the trial. A boot that stops before the save, or
 /// cannot change the default link or the boot menu, therefore leaves the
-/// trial used up, and the next boot falls back again. A boot of the last good generation while
-/// the trial is used up finishes such a fallback. The new generation boots
-/// in place when it has the same kernel and initramfs as `booting`, and
-/// through a reboot otherwise. `now` stamps the fallback event.
-pub(crate) fn decide(
+/// trial used up, and the next boot falls back again. A boot of the last
+/// good generation while the trial is used up finishes such a fallback.
+/// The new generation boots in place when it has the same kernel and
+/// initramfs as `booting`, and through a reboot otherwise. `now` stamps the
+/// fallback event.
+///
+/// ```
+/// use laft_boot::counting::{Step, Then, decide};
+/// use laft_boot::generation::Generation;
+/// use laft_core::{BootState, BootTrial, Timestamp};
+///
+/// let booting = Generation {
+///     number: 2,
+///     backend: "runit".into(),
+///     exec: vec!["/usr/bin/runit".into()],
+///     kernel_id: "kernel".into(),
+///     kernel_release: "6.17.5-laft1".into(),
+///     initramfs: "initramfs".into(),
+/// };
+/// let mut state = BootState::default();
+/// state.trial = Some(BootTrial { generation: 2, tries_left: 3 });
+/// let read = |n| Err(format!("generation {n} is not needed"));
+/// let plan = decide(state, &booting, 3, false, read, Timestamp::from_secs(0));
+/// assert_eq!(plan.then, Then::Boot(booting));
+/// let [Step::Save(saved)] = plan.steps.as_slice() else {
+///     panic!("a boot on trial saves the try it used");
+/// };
+/// assert_eq!(saved.trial.map(|t| t.tries_left), Some(2));
+/// ```
+pub fn decide(
     mut state: BootState,
     booting: &Generation,
     tries: u32,
@@ -172,7 +197,7 @@ struct Entry {
 /// # Errors
 ///
 /// Fails when the document is not a version 1 menu index.
-pub(crate) fn menu_index(bytes: &[u8], generation: u64) -> Result<Option<u64>, String> {
+pub fn menu_index(bytes: &[u8], generation: u64) -> Result<Option<u64>, String> {
     let entries: Entries = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     if entries.version != 1 {
         return Err(format!("unsupported version {}", entries.version));
@@ -203,7 +228,7 @@ fn menu_generations(conf: &str) -> Vec<Option<u64>> {
 /// with a warning when they could not be listed. A failed listing leaves
 /// the state unpruned, so that a read error does not erase the boot
 /// history.
-pub(crate) fn prune_listed(
+pub fn prune_listed(
     mut state: BootState,
     existing: Result<BTreeSet<u64>, String>,
 ) -> (BootState, Option<String>) {
@@ -225,7 +250,7 @@ pub(crate) fn prune_listed(
 /// configuration `conf`. `index` from `entries.json` is used when the entry
 /// there belongs to `generation`. Otherwise the index is stale and the
 /// entry is looked up by its title. `None` when no entry boots it.
-pub(crate) fn menu_position(conf: &str, index: Option<u64>, generation: u64) -> Option<u64> {
+pub fn menu_position(conf: &str, index: Option<u64>, generation: u64) -> Option<u64> {
     let generations = menu_generations(conf);
     let at = |position: u64| {
         let slot = usize::try_from(position.checked_sub(1)?).ok()?;
@@ -241,7 +266,7 @@ pub(crate) fn menu_position(conf: &str, index: Option<u64>, generation: u64) -> 
 /// The boot loader configuration `conf` with its default entry set to
 /// `index`, or `None` when it has no `default_entry: <n>` line to replace.
 /// Every other line is kept byte for byte.
-pub(crate) fn set_default_entry(conf: &str, index: u64) -> Option<String> {
+pub fn set_default_entry(conf: &str, index: u64) -> Option<String> {
     let mut replaced = false;
     let mut out = String::with_capacity(conf.len());
     for line in conf.split_inclusive('\n') {
