@@ -665,9 +665,16 @@ fn a_root_script_that_runs_too_long_is_killed() {
     if no_shell() {
         return;
     }
+    let Ok(sleep) = fs::canonicalize("/usr/bin/sleep") else {
+        println!("skipping: the host has no /usr/bin/sleep");
+        return;
+    };
     let dir = laft_test::tempdir();
-    let steps = r#"    { name = "spin", place = root, script = "while :; do :; done" },"#;
+    let steps = r#"    { name = "spin", place = root, script = "sleep 3; : > /survived" },"#;
     let stage = root_stage(dir.path(), steps);
+    let root = dir.path().join("root");
+    write_program(&root.join("usr/bin/sleep"), &fs::read(&sleep).unwrap());
+    copy_libraries(&root, &sleep);
     let options = StageOptions {
         timeout: Duration::from_secs(1),
         ..options(dir.path())
@@ -677,4 +684,9 @@ fn a_root_script_that_runs_too_long_is_killed() {
         return;
     }
     assert_eq!(result.unwrap_err().code(), Some("B030"));
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(
+        !root.join("survived").exists(),
+        "the script was killed before it wrote its marker"
+    );
 }
