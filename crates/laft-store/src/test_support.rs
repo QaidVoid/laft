@@ -128,6 +128,7 @@ impl Pkg {
             .map(|(group, paths)| Alternative {
                 group: group.parse().expect("valid group"),
                 paths: paths.clone(),
+                priority: 0,
             })
             .collect();
         alternatives.sort_by(|a, b| a.group.cmp(&b.group));

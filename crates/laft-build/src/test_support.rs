@@ -162,6 +162,8 @@ pub(crate) struct TestPkg<'a> {
     pub(crate) files: &'a [(&'a str, &'a [u8])],
     pub(crate) depends: &'a [&'a str],
     pub(crate) provides: &'a [&'a str],
+    /// An alternatives group with the paths it ships and its priority.
+    pub(crate) alternative: Option<(&'a str, &'a [&'a str], i64)>,
 }
 
 impl<'a> TestPkg<'a> {
@@ -173,6 +175,7 @@ impl<'a> TestPkg<'a> {
             files: &[],
             depends: &[],
             provides: &[],
+            alternative: None,
         }
     }
 
@@ -219,7 +222,15 @@ impl<'a> TestPkg<'a> {
                 .collect(),
             conflicts: vec![],
             replaces: vec![],
-            alternatives: vec![],
+            alternatives: self
+                .alternative
+                .iter()
+                .map(|(group, paths, priority)| laft_pkg::Alternative {
+                    group: group.parse().expect("a valid group"),
+                    paths: paths.iter().map(|p| (*p).to_owned()).collect(),
+                    priority: *priority,
+                })
+                .collect(),
             triggers: vec![],
             static_deps: vec![],
             abi: Default::default(),

@@ -560,6 +560,44 @@ fn alternatives_use_the_configured_member_then_the_only_one_then_the_default() {
 }
 
 #[test]
+fn the_highest_priority_member_wins_when_nothing_chooses() {
+    let mut core = index(
+        "core",
+        vec![
+            pkg("neovim 0.11").ranked_alternative("vi", &["usr/bin/vi"], 20),
+            pkg("nvi 1.8").ranked_alternative("vi", &["usr/bin/vi"], -5),
+            pkg("vim 9.1").ranked_alternative("vi", &["usr/bin/vi"], 10),
+            pkg("busybox 1.37").ranked_alternative("vi", &["usr/bin/vi"], 20),
+        ],
+    );
+    let u = universe(&[(&core, 0)]);
+    let r = u
+        .resolve(&input(
+            "system",
+            vec![req("vim"), req("neovim"), req("nvi")],
+            &[],
+        ))
+        .unwrap();
+    assert_eq!(r.alternatives[&name("vi")], name("neovim"));
+
+    let tied = vec![req("vim"), req("neovim"), req("busybox")];
+    let e = u.resolve(&input("system", tied.clone(), &[])).unwrap_err();
+    assert!(matches!(*e.kind, ErrorKind::AlternativeAmbiguous { .. }));
+
+    let mut i = input("system", tied.clone(), &[]);
+    i.alternatives.insert(name("vi"), name("vim"));
+    assert_eq!(
+        u.resolve(&i).unwrap().alternatives[&name("vi")],
+        name("vim")
+    );
+
+    core.defaults.alternatives.insert(name("vi"), name("vim"));
+    let u = universe(&[(&core, 0)]);
+    let r = u.resolve(&input("system", tied, &[])).unwrap();
+    assert_eq!(r.alternatives[&name("vi")], name("vim"));
+}
+
+#[test]
 fn constraint_learned_from_a_dependency_applies_to_a_later_provider_choice() {
     let core = index(
         "core",

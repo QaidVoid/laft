@@ -159,3 +159,21 @@ fn key_inputs_take_link_dependencies_from_the_store() {
     );
     assert!(inputs.statics.is_empty());
 }
+
+#[test]
+fn the_view_takes_an_alternative_from_its_highest_priority_member() {
+    let dir = laft_test::tempdir();
+    let store = store_with_base(dir.path());
+    for (name, priority) in [("gcc", 100), ("clang", 10)] {
+        TestPkg {
+            files: &[("usr/bin/cc", name.as_bytes())],
+            alternative: Some(("cc", &["usr/bin/cc"], priority)),
+            ..TestPkg::new(name)
+        }
+        .add(&store, dir.path());
+    }
+    let mut recipe = recipe("app");
+    recipe.build_deps = refs(&["clang", "gcc"]);
+    let view = assemble(&store, &recipe, false, &dir.path().join("view")).unwrap();
+    assert_eq!(std::fs::read(view.usr.join("bin/cc")).unwrap(), b"gcc");
+}

@@ -56,6 +56,7 @@ pub(crate) trait MetaExt: Sized {
     fn conflicts(self, deps: &[&str]) -> Self;
     fn replaces(self, deps: &[&str]) -> Self;
     fn alternative(self, group: &str, paths: &[&str]) -> Self;
+    fn ranked_alternative(self, group: &str, paths: &[&str], priority: i64) -> Self;
 }
 
 fn parsed<T: std::str::FromStr + ToString>(items: &[&str]) -> Vec<T>
@@ -92,10 +93,15 @@ impl MetaExt for Meta {
         self
     }
 
-    fn alternative(mut self, group: &str, paths: &[&str]) -> Self {
+    fn alternative(self, group: &str, paths: &[&str]) -> Self {
+        self.ranked_alternative(group, paths, 0)
+    }
+
+    fn ranked_alternative(mut self, group: &str, paths: &[&str], priority: i64) -> Self {
         self.alternatives.push(Alternative {
             group: name(group),
             paths: paths.iter().map(|p| (*p).to_owned()).collect(),
+            priority,
         });
         self
     }

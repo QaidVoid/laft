@@ -91,6 +91,16 @@ pub struct Alternative {
     pub group: Name,
     /// The payload paths this package ships for the group, sorted.
     pub paths: Vec<String>,
+    /// The rank of this member when neither the configuration nor the
+    /// repository default chooses one: the highest wins. Its magnitude is
+    /// at most 2^53. A priority of 0 is left out of the JSON form, so
+    /// metadata written before priorities existed keeps its bytes.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub priority: i64,
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
 }
 
 /// A static library package whose code is linked into this package.
@@ -253,6 +263,12 @@ impl Meta {
                 )));
             }
             check_sorted("alternatives.paths", &alternative.paths, Clone::clone)?;
+            if alternative.priority.unsigned_abs() > MAX_SAFE_INTEGER {
+                return Err(Error::invalid(format!(
+                    "alternative group `{}` has priority {}, beyond 2^53",
+                    alternative.group, alternative.priority
+                )));
+            }
             for path in &alternative.paths {
                 check_path(path)?;
             }

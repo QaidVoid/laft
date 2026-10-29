@@ -418,7 +418,8 @@ pub struct Subpackage {
 pub struct Alternative {
     /// The payload paths the package ships for the group.
     pub paths: Vec<String>,
-    /// Higher wins when the configuration does not choose.
+    /// Higher wins when neither the configuration nor the repository
+    /// default chooses.
     pub priority: i64,
     /// The subpackage suffix that holds the paths, or `None` for the main
     /// package.

@@ -129,6 +129,7 @@ fn paths_in_metadata_follow_the_payload_rules() {
         m.alternatives = vec![Alternative {
             group: "cc".parse().expect("valid"),
             paths: vec!["/usr/bin/cc".into()],
+            priority: 0,
         }];
     });
     assert!(err.contains("/usr/bin/cc"), "{err}");
@@ -136,6 +137,7 @@ fn paths_in_metadata_follow_the_payload_rules() {
         m.alternatives = vec![Alternative {
             group: "cc".parse().expect("valid"),
             paths: vec![],
+            priority: 0,
         }];
     });
     assert!(err.contains("no paths"), "{err}");
@@ -206,4 +208,31 @@ fn static_deps_are_sorted_by_name_and_have_revisions() {
         rejected(|m| m.static_deps = vec![dep("zlib", 1), dep("musl", 1)]).contains("static_deps")
     );
     assert!(rejected(|m| m.static_deps = vec![dep("zlib", 0)]).contains("revision 0"));
+}
+
+#[test]
+fn alternative_priorities_round_trip_and_zero_keeps_the_old_form() {
+    let mut m = meta(0);
+    m.alternatives = vec![Alternative {
+        group: "vi".parse().expect("valid"),
+        paths: vec!["usr/bin/vi".into()],
+        priority: 0,
+    }];
+    let json = String::from_utf8(m.to_json().expect("valid")).expect("UTF-8");
+    assert!(
+        json.contains(r#""alternatives":[{"group":"vi","paths":["usr/bin/vi"]}]"#),
+        "{json}"
+    );
+    m.alternatives[0].priority = -20;
+    let json = m.to_json().expect("valid");
+    assert_eq!(Meta::from_json(&json).expect("parses"), m);
+
+    let err = rejected(|m| {
+        m.alternatives = vec![Alternative {
+            group: "vi".parse().expect("valid"),
+            paths: vec!["usr/bin/vi".into()],
+            priority: i64::MAX,
+        }];
+    });
+    assert!(err.contains("priority"), "{err}");
 }

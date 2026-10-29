@@ -1136,12 +1136,15 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
     }
 
     /// Chooses the member of every alternatives group present in the view:
-    /// the configured one, the only one, or the repository default.
+    /// the configured one, the only one, the repository default, or the
+    /// single member with the highest priority.
     fn alternatives(&self) -> Result<BTreeMap<Name, Name>, Box<ErrorKind>> {
         let mut groups: BTreeMap<&Name, Vec<&Name>> = BTreeMap::new();
+        let mut priorities: BTreeMap<(&Name, &Name), i64> = BTreeMap::new();
         for (name, sel) in &self.selected {
             for alternative in &sel.candidate.meta.alternatives {
                 groups.entry(&alternative.group).or_default().push(name);
+                priorities.insert((&alternative.group, name), alternative.priority);
             }
         }
         let mut chosen = BTreeMap::new();
@@ -1160,10 +1163,18 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                     ([one], _) => *one,
                     (_, Some(default)) if members.contains(&default) => default,
                     _ => {
-                        return Err(Box::new(ErrorKind::AlternativeAmbiguous {
-                            group: group.clone(),
-                            members: present(),
-                        }));
+                        let rank = |n: &&Name| priorities[&(group, *n)];
+                        let top = members.iter().map(rank).max();
+                        let mut highest = members.iter().filter(|n| Some(rank(n)) == top);
+                        match (highest.next(), highest.next()) {
+                            (Some(one), None) => *one,
+                            _ => {
+                                return Err(Box::new(ErrorKind::AlternativeAmbiguous {
+                                    group: group.clone(),
+                                    members: present(),
+                                }));
+                            }
+                        }
                     }
                 },
             };

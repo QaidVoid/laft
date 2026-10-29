@@ -160,8 +160,9 @@ pub enum ErrorKind {
         /// The members of the group in the view, sorted.
         present: Vec<Name>,
     },
-    /// Several members of an alternatives group are in the view and neither
-    /// the configuration nor a repository default chooses one.
+    /// Several members of an alternatives group are in the view, neither
+    /// the configuration nor a repository default chooses one, and more
+    /// than one of them has the highest priority.
     AlternativeAmbiguous {
         /// The alternatives group.
         group: Name,

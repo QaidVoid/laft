@@ -269,8 +269,9 @@ struct Subpackage {
 struct Alternative {
   ## Payload paths the package ships for this group.
   paths:      List<Str> where nonEmpty
-  ## Higher wins when the configuration does not choose.
-  priority:   Int = 0
+  ## Higher wins when neither the configuration nor the repository default
+  ## chooses.
+  priority:   Int where -1000000..=1000000 = 0
   ## The subpackage that contains the paths. none: the main package.
   subpackage: Option<Str>
 }

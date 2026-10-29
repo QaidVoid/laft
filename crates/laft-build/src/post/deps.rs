@@ -61,7 +61,7 @@ impl Detected {
     }
 }
 
-/// P9: finds what the files of the payload `out` need and offer.
+/// Finds what the files of the payload `out` need and offer.
 ///
 /// Every `DT_NEEDED` soname of an ELF file is a need, except one that a
 /// shared object of the payload outside `usr/lib/` provides, which the
@@ -185,7 +185,7 @@ fn interpreter(path: &Path) -> Result<Option<String>, BuildError> {
     }))
 }
 
-/// P9: what the payload's ELF files import from each library they need,
+/// What the payload's ELF files import from each library they need,
 /// written `name@VERSION` or `name`, for the import check of later builds.
 ///
 /// A versioned import belongs to the library its version names. An
@@ -245,7 +245,7 @@ pub fn imports(out: &Path, elves: &ElfFiles, view: &Path) -> BTreeMap<String, BT
     imports
 }
 
-/// P9: what the payload's libraries export, by the soname they provide,
+/// What the payload's libraries export, by the soname they provide,
 /// written like [`imports`]: `name@VERSION` for a versioned symbol, and
 /// the bare name for an unversioned one or one at its default version.
 pub fn exports(elves: &ElfFiles) -> BTreeMap<String, BTreeSet<String>> {
@@ -275,7 +275,7 @@ pub fn exports(elves: &ElfFiles) -> BTreeMap<String, BTreeSet<String>> {
     exports
 }
 
-/// P10: the static library packages linked into a `static` build, sorted
+/// The static library packages linked into a `static` build, sorted
 /// by name, from `view`, the `static` packages that came into the build
 /// view from its link dependencies. A `dynamic` build has none.
 pub fn static_deps(variant: Variant, view: &[StaticDep]) -> Vec<StaticDep> {
@@ -288,7 +288,7 @@ pub fn static_deps(variant: Variant, view: &[StaticDep]) -> Vec<StaticDep> {
     deps
 }
 
-/// P12: the triggers that the payload paths `paths` activate, sorted by
+/// The triggers that the payload paths `paths` activate, sorted by
 /// name.
 pub fn triggers<'a>(paths: impl IntoIterator<Item = &'a String>) -> Vec<Name> {
     let paths: Vec<&String> = paths.into_iter().collect();
@@ -300,9 +300,10 @@ pub fn triggers<'a>(paths: impl IntoIterator<Item = &'a String>) -> Vec<Name> {
     names.into_iter().collect()
 }
 
-/// P13: the alternative groups of every package of the build, by package
-/// name. Every path a group lists must be in the package that the group
-/// names, the main package unless it names a subpackage.
+/// The alternative groups of every package of the build, by package
+/// name, with the priority the recipe gives each. Every path a group lists
+/// must be in the package that the group names, the main package unless it
+/// names a subpackage.
 ///
 /// # Errors
 ///
@@ -343,7 +344,11 @@ pub fn alternatives(
         groups
             .entry(part.name.clone())
             .or_default()
-            .push(laft_pkg::Alternative { group, paths });
+            .push(laft_pkg::Alternative {
+                group,
+                paths,
+                priority: alternative.priority,
+            });
     }
     Ok(groups)
 }

@@ -176,7 +176,7 @@ fn alternative_paths_must_be_in_their_package() {
         "editor".into(),
         crate::Alternative {
             paths: vec!["usr/bin/vi".into()],
-            priority: 0,
+            priority: 50,
             subpackage: None,
         },
     );
@@ -187,6 +187,7 @@ fn alternative_paths_must_be_in_their_package() {
     };
     let groups = alternatives(&recipe, std::slice::from_ref(&main)).unwrap();
     assert_eq!(groups[&main.name][0].paths, ["usr/bin/vi"]);
+    assert_eq!(groups[&main.name][0].priority, 50);
     let empty = Part {
         paths: BTreeSet::new(),
         ..main

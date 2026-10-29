@@ -101,6 +101,7 @@ impl Pkg {
         self.meta.alternatives.push(Alternative {
             group: group.parse().expect("valid group"),
             paths: paths.iter().map(|p| (*p).into()).collect(),
+            priority: 0,
         });
         self
     }
