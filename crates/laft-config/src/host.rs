@@ -1,5 +1,5 @@
 //! The host side of the system configuration: prelude, base part, std
-//! catalog, symbol types and implicit primary groups.
+//! catalog, the `Pkg` symbol type and implicit primary groups.
 
 use std::path::Path;
 
@@ -25,22 +25,13 @@ pub(crate) fn host(root_dir: &Path) -> Host {
     let mut host = Host::new(DiskLoader::new(root_dir));
     host.prelude.push(Source::new(PRELUDE_NAME, PRELUDE));
     host.implicit_parts.push(Source::new(BASE_NAME, BASE));
-    host.symbols = vec![
-        SymbolType {
-            name: "Pkg".to_owned(),
-            words: true,
-            strings: false,
-            constructor: "pkg".to_owned(),
-            parse: parse_pkg,
-        },
-        SymbolType {
-            name: "Spdx".to_owned(),
-            words: false,
-            strings: false,
-            constructor: "spdx".to_owned(),
-            parse: parse_spdx,
-        },
-    ];
+    host.symbols = vec![SymbolType {
+        name: "Pkg".to_owned(),
+        words: true,
+        strings: false,
+        constructor: "pkg".to_owned(),
+        parse: parse_pkg,
+    }];
     host.implicit_refs.push(ImplicitRefs {
         target: "Group".to_owned(),
         labels: implicit_groups,
@@ -54,24 +45,6 @@ pub(crate) fn parse_pkg(text: &str) -> Result<String, String> {
     text.parse::<PkgRef>()
         .map(|r| r.to_string())
         .map_err(|e| format!("`{text}` is not a package reference: {e}"))
-}
-
-/// Returns a license identifier unchanged when it is written like an SPDX
-/// license identifier: letters, digits, `.` and `-`, optionally followed
-/// by `+`.
-pub(crate) fn parse_spdx(text: &str) -> Result<String, String> {
-    let id = text.strip_suffix('+').unwrap_or(text);
-    let valid = !id.is_empty()
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'));
-    if valid {
-        Ok(text.to_owned())
-    } else {
-        Err(format!(
-            "`{text}` is not a license identifier of letters, digits, `.` and `-`, optionally followed by `+`"
-        ))
-    }
 }
 
 /// Returns the names of the implicit primary groups of the root value

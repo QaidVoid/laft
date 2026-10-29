@@ -4,8 +4,8 @@
 //! imports or includes, written in Stav. This crate supplies everything the
 //! language needs to check that description: the prelude with the `System`
 //! schema, the base part that every system includes, the std catalog
-//! (`std/services` and `std/desktop`), the symbol types `Pkg` and `Spdx`,
-//! the implicit primary groups and a loader confined to the configuration
+//! (`std/services` and `std/desktop`), the symbol type `Pkg`, the
+//! implicit primary groups and a loader confined to the configuration
 //! directory. [`load`] evaluates the configuration, validates it and
 //! converts it into the plain values the rest of Laft works with.
 //!
