@@ -1,0 +1,161 @@
+use super::*;
+use crate::test_support::{TestPkg, recipe, refs};
+
+fn names(refs: &[PkgRef]) -> Vec<String> {
+    refs.iter()
+        .map(ToString::to_string)
+        .filter(|r| !BUILD_BASE.contains(&r.as_str()))
+        .collect()
+}
+
+#[test]
+fn a_dynamic_view_requests_build_base_tools_and_dev_packages() {
+    let mut recipe = recipe("app");
+    recipe.build_deps = refs(&["meson", "pkgconf"]);
+    recipe.link_deps = refs(&["zlib", "pcre2@10"]);
+    recipe.check_deps = refs(&["python"]);
+    let available = ["zlib-dev".parse().unwrap()].into_iter().collect();
+    let requested = requests(&recipe, false, &available);
+    for base in BUILD_BASE {
+        assert!(requested.iter().any(|r| r.to_string() == *base), "{base}");
+    }
+    assert_eq!(names(&requested), ["meson", "zlib", "zlib-dev", "pcre2@10"]);
+    assert_eq!(
+        names(&requests(&recipe, true, &available)),
+        ["meson", "zlib", "zlib-dev", "pcre2@10", "python"]
+    );
+}
+
+#[test]
+fn a_static_view_requests_static_libraries_and_the_cross_toolchain() {
+    let mut recipe = recipe("app:static");
+    recipe.build_deps = refs(&["meson"]);
+    recipe.link_deps = refs(&["zlib:static"]);
+    let available = ["zlib-dev".parse().unwrap()].into_iter().collect();
+    assert_eq!(
+        names(&requests(&recipe, false, &available)),
+        ["meson", "zlib:static", "toolchain-musl"]
+    );
+}
+
+fn store_with_base(dir: &Path) -> Store {
+    let store = Store::at(dir.join("store"));
+    for name in BUILD_BASE {
+        TestPkg::new(name).add(&store, dir);
+    }
+    store
+}
+
+#[test]
+fn the_view_holds_the_closure_of_the_requests() {
+    let dir = laft_test::tempdir();
+    let store = store_with_base(dir.path());
+    TestPkg {
+        files: &[("usr/lib/libz.so.1", b"z")],
+        provides: &["so:libz.so.1"],
+        ..TestPkg::new("zlib")
+    }
+    .add(&store, dir.path());
+    TestPkg {
+        files: &[("usr/include/zlib.h", b"h")],
+        depends: &["zlib"],
+        ..TestPkg::new("zlib-dev")
+    }
+    .add(&store, dir.path());
+    TestPkg::new("unrelated").add(&store, dir.path());
+    let mut recipe = recipe("app");
+    recipe.link_deps = refs(&["zlib"]);
+    let view = assemble(&store, &recipe, false, &dir.path().join("view")).unwrap();
+    assert!(view.usr.join("lib/libz.so.1").is_file());
+    assert!(view.usr.join("include/zlib.h").is_file());
+    assert!(view.usr.join("share/bash/file").is_file());
+    assert!(!view.usr.join("share/unrelated").exists());
+    let names: Vec<&str> = view.packages.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"zlib-dev") && !names.contains(&"unrelated"));
+    assert_eq!(
+        view.sonames.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        ["libz.so.1"]
+    );
+    assert!(view.statics.is_empty());
+}
+
+#[test]
+fn a_static_view_records_the_static_libraries_it_links() {
+    let dir = laft_test::tempdir();
+    let store = store_with_base(dir.path());
+    TestPkg::new("toolchain-musl").add(&store, dir.path());
+    let pcre = TestPkg {
+        variant: Variant::Static,
+        depends: &["zlib"],
+        ..TestPkg::new("pcre2")
+    }
+    .add(&store, dir.path());
+    let zlib = TestPkg {
+        variant: Variant::Static,
+        ..TestPkg::new("zlib")
+    }
+    .add(&store, dir.path());
+    let mut recipe = recipe("rg:static");
+    recipe.link_deps = refs(&["pcre2:static"]);
+    let view = assemble(&store, &recipe, false, &dir.path().join("view")).unwrap();
+    let statics: Vec<(&str, StoreId)> = view
+        .statics
+        .iter()
+        .map(|s| (s.name.as_str(), s.id))
+        .collect();
+    assert_eq!(statics, [("pcre2", pcre), ("zlib", zlib)]);
+}
+
+#[test]
+fn a_view_the_store_cannot_satisfy_fails() {
+    let dir = laft_test::tempdir();
+    let store = Store::at(dir.path().join("store"));
+    TestPkg::new("bash").add(&store, dir.path());
+    let error = assemble(&store, &recipe("app"), false, &dir.path().join("view")).unwrap_err();
+    assert_eq!(error.code(), Some("B050"));
+}
+
+#[test]
+fn a_smoke_view_holds_the_package_and_its_runtime_closure() {
+    let dir = laft_test::tempdir();
+    let store = Store::at(dir.path().join("store"));
+    for name in ["bash", "coreutils", "zlib", "gcc"] {
+        TestPkg::new(name).add(&store, dir.path());
+    }
+    TestPkg {
+        depends: &["zlib"],
+        ..TestPkg::new("app")
+    }
+    .add(&store, dir.path());
+    let entries = store_entries(&store).unwrap();
+    let app = entries
+        .iter()
+        .find(|e| e.meta.name.as_str() == "app")
+        .unwrap();
+    let usr = assemble_smoke(&store, app, &dir.path().join("smoke")).unwrap();
+    for present in ["app", "zlib", "bash", "coreutils"] {
+        assert!(usr.join("share").join(present).exists(), "{present}");
+    }
+    assert!(!usr.join("share/gcc").exists());
+}
+
+#[test]
+fn key_inputs_take_link_dependencies_from_the_store() {
+    let dir = laft_test::tempdir();
+    let store = Store::at(dir.path().join("store"));
+    TestPkg {
+        provides: &["so:libz.so.1"],
+        ..TestPkg::new("zlib")
+    }
+    .add(&store, dir.path());
+    let mut recipe = recipe("app");
+    recipe.link_deps = refs(&["zlib", "missing"]);
+    let inputs = key_inputs(&recipe, &store).unwrap();
+    assert_eq!(inputs.links.len(), 1);
+    assert_eq!(inputs.links[0].abi_epoch, 2);
+    assert_eq!(
+        inputs.links[0].sonames.iter().collect::<Vec<_>>(),
+        ["libz.so.1"]
+    );
+    assert!(inputs.statics.is_empty());
+}

@@ -1,6 +1,6 @@
 [package]
 name = "laft-build"
-description = "The Laft package builder: recipe evaluation, build planning and source fetching"
+description = "The Laft package builder: recipes, planning, sandboxed builds and packaging"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,11 +12,19 @@ workspace = true
 
 [dependencies]
 bzip2.workspace = true
+clap.workspace = true
 flate2.workspace = true
 laft-core.workspace = true
+laft-elf.workspace = true
 laft-fetch.workspace = true
+laft-index.workspace = true
+laft-pkg.workspace = true
+laft-resolve.workspace = true
+laft-sandbox.workspace = true
+laft-store.workspace = true
 lzma-rust2.workspace = true
-rustix = { workspace = true, features = ["fs"] }
+mimalloc.workspace = true
+rustix = { workspace = true, features = ["fs", "system"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true

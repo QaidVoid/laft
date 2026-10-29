@@ -36,6 +36,7 @@ insta = { version = "1.49.0", default-features = false }
 laft-activate = { version = "0.1.0", path = "crates/laft-activate" }
 laft-boot = { version = "0.1.0", path = "crates/laft-boot" }
 laft-core = { version = "0.1.0", path = "crates/laft-core" }
+laft-elf = { version = "0.1.0", path = "crates/laft-elf" }
 laft-fetch = { version = "0.1.0", path = "crates/laft-fetch" }
 laft-index = { version = "0.1.0", path = "crates/laft-index" }
 laft-pkg = { version = "0.1.0", path = "crates/laft-pkg" }

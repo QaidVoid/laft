@@ -114,3 +114,147 @@ pub(crate) fn subpackage() -> Subpackage {
         keep_empty: false,
     }
 }
+
+/// Writes `files` below `root`, creating parent directories, each with
+/// mode `0o644`.
+pub(crate) fn write_tree(root: &std::path::Path, files: &[(&str, &[u8])]) {
+    use std::os::unix::fs::PermissionsExt;
+    for (path, content) in files {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().expect("a file has a parent")).expect("mkdir");
+        std::fs::write(&path, content).expect("writable");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+    }
+}
+
+/// Creates the symlink `path` below `root` pointing at `target`.
+pub(crate) fn link(root: &std::path::Path, path: &str, target: &str) {
+    let path = root.join(path);
+    std::fs::create_dir_all(path.parent().expect("a link has a parent")).expect("mkdir");
+    std::os::unix::fs::symlink(target, path).expect("a symlink can be made");
+}
+
+/// The bytes of an ELF fixture of `laft-elf`: `libversioned.so` (soname
+/// `libversioned.so.1`, `DT_RPATH` `/opt/legacy/lib`), `program` (needs
+/// `libversioned.so.1`, `RUNPATH` `$ORIGIN/../lib:/usr/lib`), `program32`
+/// or `static`.
+pub(crate) fn elf_fixture(name: &str) -> Vec<u8> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../laft-elf/tests/fixtures")
+        .join(name);
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// The mode bits of `path`.
+pub(crate) fn mode(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::symlink_metadata(path)
+        .expect("the path exists")
+        .permissions()
+        .mode()
+        & 0o7777
+}
+
+/// A package to add to a store in tests.
+pub(crate) struct TestPkg<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) variant: Variant,
+    pub(crate) files: &'a [(&'a str, &'a [u8])],
+    pub(crate) depends: &'a [&'a str],
+    pub(crate) provides: &'a [&'a str],
+}
+
+impl<'a> TestPkg<'a> {
+    /// A `dynamic` package `name` with one file `usr/share/<name>/file`.
+    pub(crate) fn new(name: &'a str) -> Self {
+        Self {
+            name,
+            variant: Variant::Dynamic,
+            files: &[],
+            depends: &[],
+            provides: &[],
+        }
+    }
+
+    /// Writes the package file into `dir`, adds it to `store` and returns
+    /// its store id.
+    pub(crate) fn add(
+        &self,
+        store: &laft_store::Store,
+        dir: &std::path::Path,
+    ) -> laft_core::StoreId {
+        use std::os::unix::fs::PermissionsExt;
+        let payload = dir.join(format!("payload-{}-{}", self.name, self.variant));
+        let default = format!("usr/share/{}/file", self.name);
+        let files: Vec<(&str, &[u8])> = if self.files.is_empty() {
+            vec![(default.as_str(), self.name.as_bytes())]
+        } else {
+            self.files.to_vec()
+        };
+        write_tree(&payload, &files);
+        for (path, _) in &files {
+            std::fs::set_permissions(payload.join(path), std::fs::Permissions::from_mode(0o444))
+                .expect("chmod");
+        }
+        let meta = laft_pkg::Meta {
+            format: laft_pkg::FORMAT,
+            name: self.name.parse().expect("a valid name"),
+            version: "1.0".parse().expect("a valid version"),
+            rev: 1,
+            variant: self.variant,
+            arch: laft_pkg::Arch::X86_64V3,
+            origin: self.name.parse().expect("a valid name"),
+            summary: "A test package".into(),
+            homepage: None,
+            license: vec!["MIT".into()],
+            depends: self
+                .depends
+                .iter()
+                .map(|d| d.parse().expect("a dep"))
+                .collect(),
+            provides: self
+                .provides
+                .iter()
+                .map(|p| p.parse().expect("a provide"))
+                .collect(),
+            conflicts: vec![],
+            replaces: vec![],
+            alternatives: vec![],
+            triggers: vec![],
+            static_deps: vec![],
+            abi: Default::default(),
+            abi_epoch: 2,
+            requested_privileges: vec![],
+            installed_size: 0,
+        };
+        let entries = laft_pkg::scan(&payload).expect("scannable");
+        let mut meta = meta;
+        meta.installed_size = entries
+            .iter()
+            .map(|e| match e {
+                laft_pkg::Entry::File { size, .. } => *size,
+                _ => 0,
+            })
+            .sum();
+        let manifest = laft_pkg::Manifest::new(
+            meta.identity(),
+            laft_core::Blake3Hash::of(&meta.to_json().expect("valid meta")),
+            entries,
+        )
+        .expect("a valid manifest");
+        let file = dir.join(manifest.package().file_name());
+        let mut out = std::fs::File::create(&file).expect("writable");
+        laft_pkg::write_package(
+            &mut out,
+            &payload,
+            &meta,
+            &manifest,
+            laft_pkg::Compression::DEVELOPMENT,
+        )
+        .expect("the package is written");
+        store
+            .insert(&file, &manifest.store_id(), &dir.join("tmp"))
+            .expect("the package enters the store");
+        manifest.store_id()
+    }
+}

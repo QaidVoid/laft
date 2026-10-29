@@ -1,5 +1,5 @@
-//! The Laft package builder: recipe evaluation, build planning and source
-//! fetching.
+//! The Laft package builder: recipe evaluation, build planning, source
+//! fetching, sandboxed builds, post-processing and packaging.
 //!
 //! A recipe is a Stav file, `recipes/<name>/package.stav` in a recipe
 //! repository, with one `package` block. This crate supplies what the
@@ -27,8 +27,17 @@
 //!    SHA-256, verifying the hash before anything enters it, and
 //!    [`unpack`] places a fetched source in the source tree, extracting
 //!    archives with rules that keep every entry inside its destination.
-//! 6. A [`Buildinfo`] records what one build used and produced, as
-//!    canonical JSON written next to its packages.
+//! 6. A [`Builder`] builds each item the schedule hands out: it unpacks
+//!    the sources, assembles the build view from the build-side store
+//!    ([`view`]), runs every phase in a sandbox with fixed paths and no
+//!    network through an [`Executor`], turns the output into packages with
+//!    [`post`], and feeds the store ids back into the schedule
+//!    ([`Builder::run`]). [`Mode::Bootstrap`] builds without sandbox or
+//!    store, for the first stage of a new system.
+//! 7. A [`Buildinfo`] records what one build used and produced, as
+//!    canonical JSON written next to its packages, and the [`Db`] keeps
+//!    the record that plans the next run. [`check_repro`] rebuilds and
+//!    compares store ids.
 //!
 //! # Recipe checks
 //!
@@ -76,34 +85,60 @@
 //! | `B022` | no URL and no mirror has the file |
 //! | `B023` | a local file that cannot be read or written |
 //! | `B024` | an archive that cannot be read, or a git source, which this version cannot fetch |
+//!
+//! Builds report [`BuildError`]s and [`Warning`]s:
+//!
+//! | Code | Problem |
+//! |---|---|
+//! | `B023` | a recipe file that changed since evaluation, or a missing license file |
+//! | `B030` | a phase that ran longer than the timeout |
+//! | `B031` | a build root with less than 10 GiB free |
+//! | `B040` | a phase or tool that failed |
+//! | `B050` | a build view that the build-side store cannot satisfy |
+//! | `B060` | a reproducibility check of a package without a successful build |
+//! | `B1xx`, `R040`, `W1xx` | a payload that breaks a post-processing rule, see [`post`] |
 
 #![forbid(unsafe_code)]
 
+mod build;
 mod buildinfo;
 mod convert;
+mod db;
 mod env;
+mod error;
+mod exec;
 mod extract;
+mod fsx;
+mod glob;
 mod graph;
 mod host;
 mod loader;
 mod plan;
+pub mod post;
 mod recipe;
 mod repo;
+mod repro;
 mod schema;
 mod source;
 mod style;
 mod target;
+mod vendor;
+pub mod view;
 
 #[cfg(test)]
 mod test_support;
 
 use std::fmt;
 
+pub use build::{BuildRoot, Builder, Event, Mode, Outcome, Session};
 pub use buildinfo::{
     BUILDINFO_FORMAT, Buildinfo, BuildinfoError, BuildinfoHost, BuiltPackage, Output, RepoState,
     SourceHash, VendorHash, ViewPackage,
 };
+pub use db::{Db, Stored};
 pub use env::SOURCE_DATE_EPOCH;
+pub use error::{BuildError, Warning};
+pub use exec::{DEFAULT_TIMEOUT, Executor};
 pub use extract::unpack;
 pub use graph::{BuildGraph, Deps, Item};
 pub use plan::{
@@ -114,8 +149,10 @@ pub use recipe::{
     Runner, Source, Split, Subpackage, Update, Vendor, VendorKind,
 };
 pub use repo::{Evaluation, RecipeRepo, Repos};
+pub use repro::{DifferingFile, ReproReport, check_repro, compare, record_repro};
 pub use source::{SourceCache, SourceError};
 pub use target::{ARCH, CPU, GNU_TRIPLE, MUSL_TRIPLE, SYSROOT, Target};
+pub use vendor::normalized_tarball;
 
 /// Diagnostics about Stav files, with the names and texts of the files
 /// they point at, ready for a front end to render.
