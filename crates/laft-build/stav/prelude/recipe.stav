@@ -16,7 +16,8 @@ struct RecipeRepos {
 
 ## The root of a bootstrap stage file.
 struct StageFile {
-  ## The stage. Block label: the stage name.
+  ## The stage. Block label: the stage name, which names its logs and
+  ## records and is made of lowercase letters, digits and dashes.
   stages: Map<Str, Stage> = {} block stage
 }
 
@@ -44,7 +45,8 @@ struct Step {
   ## Packages built in this order and installed into the root.
   packages: List<Pkg> = []
   ## A POSIX shell script, such as a checkpoint. It runs once, and again
-  ## when it changes. `$ROOT` is the root as the script sees it.
+  ## when it or an earlier step changes. `$ROOT` is the root as the script
+  ## sees it.
   script:   Option<Str>
   ## Extra environment variables of the script.
   env:      Map<Str, Str> = {}

@@ -213,10 +213,36 @@ fn a_root_with_another_layout_is_refused() {
     assert_eq!(error.code(), Some("B042"));
 }
 
+/// This test program when it is dynamically linked, which it is unless
+/// the tests were built for a static target.
+fn dynamic_program() -> Option<PathBuf> {
+    let program = std::env::current_exe().unwrap();
+    let elf = laft_elf::inspect(&fs::read(&program).unwrap()).unwrap()?;
+    if elf.is_static() {
+        println!("skipping: the test program is statically linked");
+        return None;
+    }
+    Some(program)
+}
+
 #[test]
 fn a_dynamic_laft_build_cannot_build_inside_the_root() {
-    let error = check_static(Path::new("/bin/sh")).unwrap_err();
+    let Some(program) = dynamic_program() else {
+        return;
+    };
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "build", place = root, packages = [greet] },"#;
+    let stage = Stage::load(&write_stage(dir.path(), steps)).unwrap();
+    let options = StageOptions {
+        laft_build: program,
+        ..options(dir.path())
+    };
+    let error = run_with(dir.path(), &stage, &options).unwrap_err();
     assert_eq!(error.code(), Some("B042"));
+    assert!(
+        error.to_string().contains("not statically linked"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -289,4 +315,24 @@ fn a_script_runs_again_when_its_environment_changes() {
         fs::read_to_string(dir.path().join("root/notes")).unwrap(),
         "a\nb\n"
     );
+}
+
+#[test]
+fn a_stage_name_must_be_a_plain_name() {
+    let dir = laft_test::tempdir();
+    let file = write_stage(dir.path(), STEPS);
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(&file, text.replace("stage demo", "stage \"../demo\"")).unwrap();
+    let error = Stage::load(&file).unwrap_err();
+    assert!(error.to_string().contains("../demo"), "{error}");
+}
+
+#[test]
+fn a_laft_build_that_is_no_elf_file_is_named_as_such() {
+    let dir = laft_test::tempdir();
+    let program = dir.path().join("laft-build");
+    fs::write(&program, "not a program").unwrap();
+    let error = check_static(&program).unwrap_err();
+    assert_eq!(error.code(), Some("B042"));
+    assert!(error.to_string().contains("not an ELF file"), "{error}");
 }

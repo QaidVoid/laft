@@ -82,7 +82,8 @@ impl Stage {
     ///
     /// Returns the [`crate::Report`] of a file that does not evaluate, and
     /// `R060` for a file without exactly one stage, a step that sets both or
-    /// neither of `packages` and `script`, a step name used twice, a search
+    /// neither of `packages` and `script`, a stage name that is not made of
+    /// lowercase letters, digits and dashes, a step name used twice, a search
     /// directory that is not a plain relative path, or a recipe repository
     /// that does not exist.
     pub fn load(file: &Path) -> Result<Self, Error> {
@@ -114,6 +115,17 @@ impl Stage {
                 file.display()
             )));
         };
+        let plain = |text: &str| {
+            text.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+                && text
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        };
+        if !plain(&name) {
+            return Err(problem(format!(
+                "stage {name:?} is not named with lowercase letters, digits and dashes"
+            )));
+        }
         let recipes = fs::canonicalize(dir.join(&stage.recipes)).map_err(|e| {
             problem(format!(
                 "stage {name}: recipe repository {} cannot be opened: {e}",
@@ -425,21 +437,19 @@ fn check_static(program: &Path) -> Result<(), BuildError> {
     fs::File::open(program)
         .and_then(|mut f| f.read_to_end(&mut bytes))
         .map_err(io(program))?;
-    let is_static = laft_elf::inspect(&bytes)
-        .ok()
-        .flatten()
-        .is_some_and(|elf| elf.is_static());
-    if is_static {
-        Ok(())
-    } else {
-        Err(BuildError::problem(
-            "B042",
-            format!(
-                "{} is not statically linked, so it cannot build inside the root",
-                program.display()
-            ),
-        ))
-    }
+    let why = match laft_elf::inspect(&bytes) {
+        Ok(Some(elf)) if elf.is_static() => return Ok(()),
+        Ok(Some(_)) => "is not statically linked".to_owned(),
+        Ok(None) => "is not an ELF file".to_owned(),
+        Err(e) => format!("is not an ELF file that can be read: {e}"),
+    };
+    Err(BuildError::problem(
+        "B042",
+        format!(
+            "{} {why}, so it cannot build inside the root",
+            program.display()
+        ),
+    ))
 }
 
 /// The available memory of the host, from `MemAvailable` in
