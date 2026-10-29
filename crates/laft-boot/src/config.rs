@@ -3,10 +3,10 @@
 //! It holds nothing specific to one generation, so generations with the same
 //! boot configuration share one initramfs.
 
-use laft_core::LuksOption;
+use laft_core::{DeviceSpec, LuksOption};
 use serde::Deserialize;
 
-use crate::device::DeviceSpec;
+use crate::device::boot_spec;
 
 /// The only version of `laft-boot.json` this program reads.
 const VERSION: u32 = 1;
@@ -85,12 +85,12 @@ impl Config {
     pub(crate) fn unlock_specs(&self) -> Result<Vec<DeviceSpec>, String> {
         let mut specs = Vec::new();
         for luks in &self.luks {
-            specs.push(DeviceSpec::parse(&luks.device)?);
+            specs.push(boot_spec(&luks.device)?);
         }
         for fs in [Some(&self.root), self.laft.as_ref()].into_iter().flatten() {
-            match DeviceSpec::parse(&fs.device)? {
-                DeviceSpec::Mapper(_) => {}
-                spec => specs.push(spec),
+            let spec = boot_spec(&fs.device)?;
+            if spec.mapper_name().is_none() {
+                specs.push(spec);
             }
         }
         Ok(specs)
@@ -116,8 +116,9 @@ impl Config {
             ));
         }
         for luks in &config.luks {
-            DeviceSpec::parse(&luks.device)?;
-            if DeviceSpec::parse(&format!("/dev/mapper/{}", luks.name)).is_err() {
+            boot_spec(&luks.device)?;
+            let mapper = boot_spec(&format!("/dev/mapper/{}", luks.name));
+            if mapper.ok().as_ref().and_then(DeviceSpec::mapper_name) != Some(luks.name.as_str()) {
                 return Err(format!("invalid LUKS name {:?}", luks.name));
             }
         }
@@ -125,7 +126,7 @@ impl Config {
             .into_iter()
             .flatten()
         {
-            DeviceSpec::parse(&fs.device)?;
+            boot_spec(&fs.device)?;
         }
         Ok(config)
     }

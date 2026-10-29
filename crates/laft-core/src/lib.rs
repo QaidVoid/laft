@@ -2,9 +2,9 @@
 //!
 //! Package names, versions, variants, package references, dependencies,
 //! hashes, store identifiers, timestamps, the static system accounts,
-//! canonical JSON, file capabilities, the trigger table, the LUKS options of
-//! the boot and the boot counting state live here, so that every tool parses
-//! and prints them the same way.
+//! canonical JSON, file capabilities, the trigger table, device names, the
+//! LUKS options of the boot and the boot counting state live here, so that
+//! every tool parses and prints them the same way.
 
 #![forbid(unsafe_code)]
 
@@ -14,6 +14,7 @@ mod boot_state;
 mod caps;
 mod cjson;
 mod dep;
+mod device;
 mod error;
 mod hash;
 mod luks;
@@ -34,6 +35,7 @@ pub use boot_state::{
 pub use caps::FileCapabilities;
 pub use cjson::{CanonicalJsonError, to_canonical_json};
 pub use dep::{Constraint, Constraints, Dep, Op, PcName, Provide, Soname, VersionReq};
+pub use device::DeviceSpec;
 pub use error::ParseError;
 pub use hash::{Blake3Hash, Sha256Hash};
 pub use luks::LuksOption;

@@ -16,14 +16,14 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use laft_core::{BootState, Timestamp};
+use laft_core::{BootState, DeviceSpec, Timestamp};
 use rustix::io::Errno;
 use rustix::mount::{MountFlags, UnmountFlags};
 
 use crate::cmdline::Cmdline;
 use crate::config::{Config, Filesystem};
 use crate::counting::{self, Step, Then};
-use crate::device::{DeviceSpec, Devices};
+use crate::device::{Devices, boot_spec};
 use crate::generation::{self, Generation};
 use crate::log::{Log, console};
 use crate::plan::{self, Op};
@@ -184,7 +184,7 @@ impl Boot {
         let timeout = self.root_wait(config);
         let found = self.devices.wait(&config.unlock_specs()?, timeout, POLL)?;
         for (luks, device) in config.luks.iter().zip(found) {
-            let mapper = DeviceSpec::Mapper(luks.name.clone());
+            let mapper = DeviceSpec::Path(format!("/dev/mapper/{}", luks.name));
             if self.devices.find(&mapper).is_some() {
                 continue;
             }
@@ -238,7 +238,7 @@ impl Boot {
     }
 
     fn resolve(&mut self, fs: &Filesystem, timeout: Duration) -> Result<PathBuf, String> {
-        let spec = DeviceSpec::parse(&fs.device)?;
+        let spec = boot_spec(&fs.device)?;
         let found = self.devices.wait(&[spec], timeout, POLL)?;
         found
             .into_iter()

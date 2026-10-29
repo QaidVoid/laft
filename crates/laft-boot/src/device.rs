@@ -1,7 +1,6 @@
 //! Naming boot devices and finding them as the kernel discovers them.
 
 use std::collections::BTreeMap;
-use std::fmt;
 use std::fs::{self, File};
 use std::io::Read;
 use std::os::unix::fs::FileTypeExt;
@@ -9,57 +8,24 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use laft_core::{DeviceSpec, ParseError};
+
 use crate::probe::{PROBE_LEN, Probe, probe};
 
-/// How a boot device is named in `laft-boot.json`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum DeviceSpec {
-    /// `/dev/<name>`, a kernel device name such as `nvme0n1p2`.
-    Kernel(String),
-    /// `/dev/mapper/<name>`, which exists only once LUKS is unlocked.
-    Mapper(String),
-    /// `UUID=<uuid>`, matched against the UUID in the device's superblock.
-    Uuid(String),
-}
-
-impl DeviceSpec {
-    /// Reads a device name.
-    ///
-    /// # Errors
-    ///
-    /// Fails for anything but `UUID=<uuid>`, `/dev/<name>` and
-    /// `/dev/mapper/<name>` with a single path component other than `.` and
-    /// `..` as the name.
-    pub(crate) fn parse(text: &str) -> Result<Self, String> {
-        let single =
-            |name: &str| !name.is_empty() && !name.contains('/') && name != "." && name != "..";
-        if let Some(uuid) = text.strip_prefix("UUID=") {
-            if !uuid.is_empty() && uuid.bytes().all(|b| b.is_ascii_graphic()) {
-                return Ok(Self::Uuid(uuid.to_owned()));
-            }
-        } else if let Some(name) = text.strip_prefix("/dev/mapper/") {
-            if single(name) {
-                return Ok(Self::Mapper(name.to_owned()));
-            }
-        } else if let Some(name) = text.strip_prefix("/dev/")
-            && single(name)
-        {
-            return Ok(Self::Kernel(name.to_owned()));
-        }
-        Err(format!(
+/// Reads a boot device name from `laft-boot.json`.
+///
+/// # Errors
+///
+/// Fails for a malformed name and for a form the initramfs cannot resolve:
+/// anything but `UUID=<uuid>`, `/dev/<name>` and `/dev/mapper/<name>`.
+pub(crate) fn boot_spec(text: &str) -> Result<DeviceSpec, String> {
+    let spec: DeviceSpec = text.parse().map_err(|e: ParseError| e.to_string())?;
+    if !spec.resolved_at_boot() {
+        return Err(format!(
             "device {text:?} is not UUID=..., /dev/<name> or /dev/mapper/<name>"
-        ))
+        ));
     }
-}
-
-impl fmt::Display for DeviceSpec {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Kernel(name) => write!(f, "/dev/{name}"),
-            Self::Mapper(name) => write!(f, "/dev/mapper/{name}"),
-            Self::Uuid(uuid) => write!(f, "UUID={uuid}"),
-        }
-    }
+    Ok(spec)
 }
 
 /// The block devices the kernel has announced, with what each holds.
@@ -106,19 +72,25 @@ impl Devices {
         }
     }
 
-    /// The device node of `spec` if it is present now.
+    /// The device node of `spec` if it is present now. Only the forms of
+    /// [`boot_spec`] are ever found.
     pub(crate) fn find(&self, spec: &DeviceSpec) -> Option<PathBuf> {
-        match spec {
-            DeviceSpec::Kernel(name) => self.block_node(&self.dev.join(name)),
-            DeviceSpec::Mapper(name) => self.block_node(&self.dev.join("mapper").join(name)),
-            DeviceSpec::Uuid(uuid) => self.seen.iter().find_map(|(name, found)| {
-                let found = found.as_ref()?;
-                found
-                    .uuid
-                    .eq_ignore_ascii_case(uuid)
-                    .then(|| self.dev.join(name))
-            }),
+        if let Some(name) = spec.mapper_name() {
+            return self.block_node(&self.dev.join("mapper").join(name));
         }
+        if let Some(name) = spec.kernel_name() {
+            return self.block_node(&self.dev.join(name));
+        }
+        let DeviceSpec::Uuid(uuid) = spec else {
+            return None;
+        };
+        self.seen.iter().find_map(|(name, found)| {
+            let found = found.as_ref()?;
+            found
+                .uuid
+                .eq_ignore_ascii_case(uuid)
+                .then(|| self.dev.join(name))
+        })
     }
 
     fn block_node(&self, path: &Path) -> Option<PathBuf> {

@@ -2,11 +2,13 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use super::{DeviceSpec, Devices};
+use laft_core::DeviceSpec;
+
+use super::{Devices, boot_spec};
 use crate::probe::PROBE_LEN;
 
 fn spec(text: &str) -> DeviceSpec {
-    DeviceSpec::parse(text).expect("valid device")
+    boot_spec(text).expect("valid device")
 }
 
 /// Announces device `name` of `size` sectors whose node holds `content`.
@@ -26,33 +28,21 @@ fn xfs(uuid: [u8; 16]) -> Vec<u8> {
 }
 
 #[test]
-fn accepted_device_forms_round_trip() {
+fn the_initramfs_reads_only_the_forms_it_resolves() {
     for text in ["UUID=4A2B-91C0", "/dev/nvme0n1p2", "/dev/mapper/cryptroot"] {
         assert_eq!(spec(text).to_string(), text);
     }
-    assert_eq!(spec("/dev/sda1"), DeviceSpec::Kernel("sda1".into()));
-    assert_eq!(
-        spec("/dev/mapper/cryptroot"),
-        DeviceSpec::Mapper("cryptroot".into())
-    );
-}
-
-#[test]
-fn other_device_forms_are_rejected() {
     for text in [
         "LABEL=laft",
         "PARTUUID=1234",
+        "PARTLABEL=root",
         "/dev/disk/by-id/nvme-x",
-        "/dev/",
         "/dev/..",
-        "/dev/.",
         "/dev/mapper/",
-        "/dev/mapper/.",
-        "/dev/mapper/..",
         "UUID=",
         "sda1",
     ] {
-        assert!(DeviceSpec::parse(text).is_err(), "{text} was accepted");
+        assert!(boot_spec(text).is_err(), "{text} was accepted");
     }
 }
 
