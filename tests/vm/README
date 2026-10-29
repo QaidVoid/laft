@@ -143,3 +143,51 @@ here:
   previous generation is the default.
 - laft doctor on a running system passes the laft mount and generation
   mount checks.
+
+Early boot steps
+
+The unit tests of crates/laft-svc run every built-in step of the early
+boot graph against a temporary root with stand-in programs, and the
+tests of crates/laft-activate render /etc/fstab. What needs root and a
+real kernel will be tested here, on a booted generation:
+
+- kernel-fs mounts devpts on /dev/pts, tmpfs on /dev/shm, cgroup2 on
+  /sys/fs/cgroup and securityfs on /sys/kernel/security with the options
+  its table lists, and efivarfs on /sys/firmware/efi/efivars under OVMF
+  but not under legacy firmware. Running it again mounts nothing twice.
+- kmod loads the modules of kernel.modules, so they appear in
+  /proc/modules, and a blacklisted module listed by a package's
+  /usr/lib/modules-load.d stays unloaded.
+- udev-trigger leaves /dev/disk/by-uuid populated before mount-fs runs.
+- hostname sets the name that uname -n prints to the configured one.
+- mount-fs checks an ext4 /home with e2fsck and mounts it, mounts a vfat
+  /boot, skips noauto filesystems, and leaves a filesystem whose check
+  exits with status 4 unmounted while the others mount and the service
+  is reported failed. At shutdown, mount-fs down unmounts them in reverse
+  order.
+- swap enables the swap lines of the rendered /etc/fstab, with the
+  configured priority shown in /proc/swaps.
+- random-seed creates /var/lib/laft/random-seed with mode 0600 on the
+  first boot, and a different seed is there after every later boot and
+  after a clean shutdown.
+- sysctl applies kernel parameters, so /proc/sys/vm/swappiness shows the
+  configured value.
+- console loads the configured keymap and font on the virtual consoles.
+- clock sets the system time from the hardware clock at boot and writes
+  it back at shutdown.
+
+Live switch recovery
+
+The unit tests of crates/laft-store and crates/laft-activate interrupt a
+live switch after every step and recover. What needs root on a booted
+generation will be tested here:
+
+- Killing laft apply with SIGKILL right after it mounted the new
+  generation leaves /run/laft/system on the old one, and the next laft
+  command unmounts the new generation and keeps the old default.
+- Killing it after the switch of /run/laft/system makes the next laft
+  command finish the views, /etc, accounts, services and unmount steps
+  and make the new generation the default.
+- Cutting the power at any of those points boots the old default, and
+  laft activate --boot drops the interrupted switch and reconciles /etc
+  with the booted generation.

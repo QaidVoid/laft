@@ -94,8 +94,13 @@ pub(crate) fn activate_new(
     adopt: &BTreeSet<String>,
 ) -> Result<Activation, Failure> {
     let activation = match mode {
+        Mode::Switch if env.live() => {
+            let journaled = tx.activate(laft_activate::LIVE_STEPS)?;
+            let activation = crate::live::activate(env, lock, journaled, adopt)?;
+            activation.report(env);
+            return Ok(activation);
+        }
         Mode::Boot => Activation::default(),
-        Mode::Switch if env.live() => crate::live::activate(env, lock, number, adopt)?,
         Mode::Switch => offline(env, lock, number, adopt)?,
     };
     activation.report(env);
@@ -114,12 +119,18 @@ pub(crate) fn switch_to(
 ) -> Result<Activation, Failure> {
     env.generation(number)?;
     let activation = match mode {
+        Mode::Switch if env.live() => {
+            let journaled =
+                lock.activate("switch", number, env.active()?, laft_activate::LIVE_STEPS)?;
+            crate::live::activate(env, lock, journaled, adopt)?
+        }
         Mode::Boot => Activation::default(),
-        Mode::Switch if env.live() => crate::live::activate(env, lock, number, adopt)?,
         Mode::Switch => offline(env, lock, number, adopt)?,
     };
     activation.report(env);
-    lock.set_default(number)?;
+    if !(mode == Mode::Switch && env.live()) {
+        lock.set_default(number)?;
+    }
     install_boot(env, &env.esp_dir())?;
     Ok(activation)
 }

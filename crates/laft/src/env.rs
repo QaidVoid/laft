@@ -145,6 +145,7 @@ impl Env {
         for recovery in recovered {
             self.ui.note(recovery.to_string());
         }
+        crate::live::resume(self, &lock)?;
         Ok(lock)
     }
 

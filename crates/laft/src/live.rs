@@ -1,149 +1,119 @@
-//! Activation of a running system: the generation is mounted below
-//! `/run/laft/mounts`, `/run/laft/system` is switched to it with one
-//! rename, and the views, `/etc`, the accounts and the services follow.
+//! Activation of a running system: the steps run in `laft-activate`, each
+//! recorded in the store's journal, and the mounts in the initial mount
+//! namespace go through the coordinator.
 
 use std::collections::BTreeSet;
-use std::fs;
-use std::os::unix::fs::symlink;
-use std::path::Path;
 
-use laft_activate::OnConflict;
-use laft_store::Lock;
+use laft_activate::{LiveActivation, Mounts, Services};
+use laft_store::{Activation as Journaled, Lock};
 
 use crate::activate::Activation;
 use crate::env::Env;
 use crate::failure::Failure;
 use crate::worker::{self, Request};
 
-/// Points the symlink `link` at `target` with one rename.
-fn replace_link(link: &Path, target: &str) -> std::io::Result<()> {
-    let tmp = link.with_file_name(format!(
-        "{}.new",
-        link.file_name().and_then(|n| n.to_str()).unwrap_or("link")
-    ));
-    let _ = fs::remove_file(&tmp);
-    symlink(target, &tmp)?;
-    fs::rename(&tmp, link)
+/// The generation mounts of the running system, made by the coordinator.
+pub(crate) struct Coordinator<'e> {
+    env: &'e Env,
 }
 
-/// Switches the running system to generation `number`.
+impl<'e> Coordinator<'e> {
+    pub(crate) fn new(env: &'e Env) -> Self {
+        Self { env }
+    }
+}
+
+impl Mounts for Coordinator<'_> {
+    fn mount(&mut self, number: u64) -> Result<(), String> {
+        worker::request(self.env, &Request::Mount { generation: number }).map_err(|f| f.message)
+    }
+
+    fn unmount(&mut self, keep: &[u64]) -> Result<(), String> {
+        worker::request(
+            self.env,
+            &Request::Unmount {
+                keep: keep.to_vec(),
+            },
+        )
+        .map_err(|f| f.message)
+    }
+}
+
+/// Runs the live activation `journaled` of a generation and makes it the
+/// default.
 ///
-/// Conflicts in `/etc` stop the switch before anything changes. The
-/// generation is then mounted, and renaming `/run/laft/system` is the
-/// moment the running system uses it. After that, every remaining step
-/// runs even when one fails, and failures are reported in the result.
+/// Conflicts in `/etc` stop the switch before anything changes. Then the
+/// generation is mounted, and renaming `/run/laft/system` is the moment
+/// the running system uses it. After that, every remaining step runs even
+/// when one fails, and failures are reported in the result.
 pub(crate) fn activate(
     env: &Env,
     lock: &Lock,
-    number: u64,
+    journaled: Journaled<'_>,
     adopt: &BTreeSet<String>,
 ) -> Result<Activation, Failure> {
-    let conflicts = laft_activate::check_etc(lock, number, adopt)?;
+    let conflicts = laft_activate::check_etc(lock, journaled.generation(), adopt)?;
     if !conflicts.is_empty() {
+        journaled.abandon()?;
         return Err(laft_activate::Error::Conflicts(conflicts).into());
     }
-    let generation = env.generation(number)?;
-    let previous = env.active()?;
-    let mut activation = Activation::default();
-
-    worker::request(env, &Request::Mount { generation: number })?;
-    activation.done.push("mount");
-    replace_link(&env.path("/run/laft/system"), &format!("mounts/{number}"))
-        .map_err(|e| Failure::general(format!("switching /run/laft/system: {e}")))?;
-    activation.done.push("switch");
-    activation.active = true;
-
-    let mut views = Ok(());
-    for (name, version) in &generation.views {
-        let link = env.path(&format!("/laft/views/{name}/current"));
-        if let Err(e) = replace_link(&link, &version.to_string()) {
-            views = Err(format!("{}: {e}", link.display()));
-        }
-    }
-    record(&mut activation, "views", views);
-
-    let etc = laft_activate::reconcile_etc(lock, number, adopt, OnConflict::Stop);
-    if let Ok(report) = &etc {
-        for warning in &report.warnings {
-            env.ui.warn(warning.to_string());
-        }
-    }
-    record(
-        &mut activation,
-        "etc",
-        etc.map(|_| ()).map_err(|e| e.to_string()),
-    );
-    let accounts = laft_activate::apply_accounts(lock, number);
-    if let Ok(report) = &accounts {
-        for warning in &report.warnings {
-            env.ui.warn(warning.to_string());
-        }
-    }
-    record(
-        &mut activation,
-        "accounts",
-        accounts.map(|_| ()).map_err(|e| e.to_string()),
-    );
-    activation.done.push("entry-links");
-
-    services(env, &mut activation, previous, number);
-
-    let booted = env.booted()?;
-    let keep: Vec<u64> = std::iter::once(number).chain(booted).collect();
-    let unmounted = worker::request(env, &Request::Unmount { keep }).map_err(|f| f.message);
-    record(&mut activation, "unmount", unmounted);
-    Ok(activation)
+    let done = laft_activate::activate_live(lock, journaled, adopt, &mut Coordinator::new(env))?;
+    Ok(report(env, done))
 }
 
-fn record(activation: &mut Activation, step: &'static str, result: Result<(), String>) {
-    match result {
-        Ok(()) => activation.done.push(step),
-        Err(why) => activation.failed.push((step, why)),
-    }
-}
-
-/// Brings the running services in line with generation `number`, when the
-/// running init is the generation's.
-fn services(env: &Env, activation: &mut Activation, previous: Option<u64>, number: u64) {
-    let backend = fs::read_to_string(env.path("/run/laft/init-backend")).unwrap_or_default();
-    let configured = env
-        .root
-        .generation(number)
-        .map(|g| g.init.backend)
-        .unwrap_or_default();
-    if backend.trim() != configured {
-        env.ui.note(format!(
-            "services    skipped because the running init is not {configured}. Reboot to use it."
-        ));
-        return;
-    }
-    let units =
-        |n: u64| laft_svc::runit::load_units(&env.path(&format!("/laft/gens/{n}/services")));
-    let old = previous.map_or_else(|| Ok(Default::default()), units);
-    let (old, new) = match (old, units(number)) {
-        (Ok(old), Ok(new)) => (old, new),
-        (Err(e), _) | (_, Err(e)) => {
-            activation.failed.push(("services", e.to_string()));
-            return;
-        }
+/// Finishes or undoes a live activation that an earlier command left
+/// interrupted, and says what it did.
+pub(crate) fn resume(env: &Env, lock: &Lock) -> Result<(), Failure> {
+    let Some(done) = laft_activate::resume_live(lock, &mut Coordinator::new(env))? else {
+        return Ok(());
     };
-    let plan = laft_svc::reconcile::plan(&old, &new);
-    let applied = laft_svc::reconcile::apply(
-        &plan,
-        env.root.path(),
-        &env.path("/run/laft/system/services"),
-    );
-    for name in &plan.reboot {
-        env.ui
-            .note(format!("services    {name} changes on the next boot"));
+    let number = done.generation;
+    if done.active {
+        let activation = report(env, done);
+        for (step, why) in &activation.failed {
+            env.ui.warn(format!("activation step {step} failed: {why}"));
+        }
+        env.ui.note(format!(
+            "recovered   the interrupted switch to generation {number} was finished"
+        ));
+    } else {
+        env.ui.note(format!(
+            "recovered   the interrupted switch to generation {number} was rolled back"
+        ));
     }
-    for (name, why) in &applied.failed {
-        env.ui.warn(format!("service {name}: {why}"));
+    Ok(())
+}
+
+/// Prints the warnings of `done` and turns it into the command's report.
+fn report(env: &Env, done: LiveActivation) -> Activation {
+    for warning in &done.warnings {
+        env.ui.warn(warning.to_string());
     }
-    activation.services_failed = applied
-        .not_ready
-        .into_iter()
-        .chain(applied.failed.into_iter().map(|(n, _)| n))
-        .collect();
-    activation.done.push("services");
+    let mut activation = Activation {
+        active: done.active,
+        done: done.done,
+        failed: done.failed,
+        ..Activation::default()
+    };
+    match done.services {
+        Some(Services::Skipped { backend }) => env.ui.note(format!(
+            "services    skipped because the running init is not {backend}. Reboot to use it."
+        )),
+        Some(Services::Reconciled { reboot, applied }) => {
+            for name in &reboot {
+                env.ui
+                    .note(format!("services    {name} changes on the next boot"));
+            }
+            for (name, why) in &applied.failed {
+                env.ui.warn(format!("service {name}: {why}"));
+            }
+            activation.services_failed = applied
+                .not_ready
+                .into_iter()
+                .chain(applied.failed.into_iter().map(|(n, _)| n))
+                .collect();
+        }
+        None => {}
+    }
+    activation
 }

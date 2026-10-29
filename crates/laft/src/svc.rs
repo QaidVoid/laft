@@ -438,6 +438,24 @@ pub(crate) fn run(env: &Env, command: SvcCommand) -> Result<u8, Failure> {
         SvcCommand::Logger { name, .. } => Ok(launcher(env, |l| l.logger(&name))),
         SvcCommand::StopEarly { .. } => Ok(launcher(env, Launcher::stop_early)),
         SvcCommand::Ready { parent, name, .. } => Ok(launcher(env, |l| l.ready(&name, parent))),
+        SvcCommand::Builtin { step, action } => Ok(builtin(env, step, action)),
+    }
+}
+
+/// Runs a built-in early boot step on the root and prints its warnings.
+/// A failure exits with status 1, which fails the oneshot.
+fn builtin(env: &Env, step: laft_svc::builtin::Step, action: laft_svc::builtin::Action) -> u8 {
+    match laft_svc::builtin::run(env.root.path(), step, action) {
+        Ok(warnings) => {
+            for warning in warnings {
+                eprintln!("laft svc builtin: warning: {warning}");
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("laft svc builtin: {e}");
+            exit::FAILURE
+        }
     }
 }
 

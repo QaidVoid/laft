@@ -557,6 +557,14 @@ pub(crate) enum SvcCommand {
         /// The service.
         name: String,
     },
+    /// Run a step of the early boot graph that Laft implements itself.
+    #[command(hide = true)]
+    Builtin {
+        /// The step, such as kernel-fs or mount-fs.
+        step: laft_svc::builtin::Step,
+        /// up or down.
+        action: laft_svc::builtin::Action,
+    },
     /// Handle the end of a service process.
     #[command(hide = true)]
     Finish {
