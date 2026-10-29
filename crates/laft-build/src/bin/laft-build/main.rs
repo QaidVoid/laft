@@ -204,7 +204,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
 /// user's data directory.
 fn build_root(flag: Option<PathBuf>) -> Result<PathBuf, Failure> {
     if let Some(path) = flag {
-        return Ok(path);
+        return absolute(&path);
     }
     let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
     if let Some(path) = var("LAFT_BUILD_ROOT") {
@@ -605,13 +605,19 @@ fn bootstrap(
     if !dry_run {
         check_space(cx.root.path())?;
     }
+    let search = search
+        .iter()
+        .map(|d| absolute(d))
+        .collect::<Result<Vec<_>, _>>()?;
     if let Some(dir) = search.iter().find(|d| d.to_string_lossy().contains(':')) {
         return Err(Failure::Usage(format!(
             "{} contains a colon, which PATH cannot hold",
             dir.display()
         )));
     }
-    let mut builder = builder(cx, Mode::Bootstrap(root.to_path_buf()), Some(options));
+    let install = install.map(absolute).transpose()?;
+    let install = install.as_deref();
+    let mut builder = builder(cx, Mode::Bootstrap(absolute(root)?), Some(options));
     builder.check = false;
     builder.search = search;
     let db = cx.root.db();
@@ -676,8 +682,7 @@ fn stage(
     let laft_build = std::env::current_exe()
         .map_err(|e| Failure::Environment(format!("cannot find laft-build itself: {e}")))?;
     let options = StageOptions {
-        root: std::path::absolute(&root)
-            .map_err(|e| Failure::Usage(format!("{}: {e}", root.display())))?,
+        root: absolute(&root)?,
         jobs: options.jobs.unwrap_or_else(|| {
             std::thread::available_parallelism().map_or(1, |n| u32::try_from(n.get()).unwrap_or(1))
         }),
@@ -727,6 +732,12 @@ fn stage(
         say(json!({ "stage": stage.name, "steps": report }));
     }
     result.map_err(Failure::from)
+}
+
+/// `path` made absolute against the working directory, because builds
+/// run their phases in other directories.
+fn absolute(path: &Path) -> Result<PathBuf, Failure> {
+    std::path::absolute(path).map_err(|e| Failure::Usage(format!("{}: {e}", path.display())))
 }
 
 fn gc(root: &BuildRoot, sources_older_than: Option<u64>) -> Result<(), Failure> {

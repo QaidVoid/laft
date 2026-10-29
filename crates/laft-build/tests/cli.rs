@@ -127,6 +127,51 @@ fn an_installing_dry_run_lists_what_it_would_install() {
 }
 
 #[test]
+fn relative_bootstrap_directories_mean_the_working_directory() {
+    if !Path::new("/usr/bin/sh").exists() {
+        println!("skipping: the host has no /usr/bin/sh");
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let install = "  empty = true\n  build custom {}\n  phases {\n    \
+                   install = \"echo hi > \\\"$DESTDIR/greeting\\\"; echo \\\"$PATH\\\" > \\\"$DESTDIR/path\\\"\"\n  }";
+    support::write_repo(
+        &dir.path().join("repo"),
+        "t",
+        "",
+        &[(
+            "recipes/greet/package.stav",
+            &support::recipe("greet", install),
+        )],
+    );
+    std::fs::create_dir(dir.path().join("host")).unwrap();
+    std::os::unix::fs::symlink("/usr", dir.path().join("host/usr")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_laft-build"))
+        .env_remove("LAFT_RECIPES")
+        .env_remove("LAFT_BUILD_ROOT")
+        .current_dir(dir.path())
+        .args(["--root", "build", "--recipes", "repo", "bootstrap"])
+        .args(["--root", "host", "--install", "sys", "--path", "tools/bin"])
+        .arg("greet")
+        .output()
+        .expect("the binary runs");
+    assert!(output.status.success(), "{output:?}");
+    let sys = dir.path().join("sys");
+    assert_eq!(
+        std::fs::read_to_string(sys.join("greeting")).unwrap(),
+        "hi\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sys.join("path")).unwrap(),
+        format!(
+            "{}:{}\n",
+            dir.path().join("tools/bin").display(),
+            dir.path().join("host/usr/bin").display()
+        )
+    );
+}
+
+#[test]
 fn a_stage_dry_run_lists_its_steps_without_touching_the_root() {
     let dir = laft_test::tempdir();
     let file = dir.path().join("stage.stav");
