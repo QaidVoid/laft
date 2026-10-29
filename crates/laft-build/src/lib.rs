@@ -27,6 +27,8 @@
 //!    SHA-256, verifying the hash before anything enters it, and
 //!    [`unpack`] places a fetched source in the source tree, extracting
 //!    archives with rules that keep every entry inside its destination.
+//! 6. A [`Buildinfo`] records what one build used and produced, as
+//!    canonical JSON written next to its packages.
 //!
 //! # Recipe checks
 //!
@@ -74,6 +76,7 @@
 
 #![forbid(unsafe_code)]
 
+mod buildinfo;
 mod convert;
 mod env;
 mod extract;
@@ -93,6 +96,10 @@ mod test_support;
 
 use std::fmt;
 
+pub use buildinfo::{
+    BUILDINFO_FORMAT, Buildinfo, BuildinfoError, BuildinfoHost, BuiltPackage, Output, RepoState,
+    SourceHash, VendorHash, ViewPackage,
+};
 pub use env::SOURCE_DATE_EPOCH;
 pub use extract::unpack;
 pub use graph::{BuildGraph, Deps, Item};
