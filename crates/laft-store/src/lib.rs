@@ -50,7 +50,7 @@ mod view;
 mod test_support;
 
 pub use error::{Conflict, Error, Result};
-pub use gc::{Decision, GcPlan, GcPolicy, Subject, plan_gc};
+pub use gc::{Decision, GcPlan, GcPolicy, Subject, plan_gc, remove_generations};
 pub use generation::{
     CarriedModule, CarryOver, ConfigFile, ConfigRecord, EtcRecord, Generation, GenerationInput,
     IndexRecord, Init,

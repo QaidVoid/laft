@@ -241,3 +241,34 @@ fn gc_refuses_to_plan_around_unreadable_records() {
     fs::remove_file(env.root.pins_dir().join("broken")).expect("can remove");
     assert!(plan_gc(&lock, &policy, SystemTime::now()).is_ok());
 }
+
+#[test]
+fn named_generations_are_deleted_and_their_entries_wait_for_gc() {
+    let env = Env::new();
+    let one = Pkg::new("one", "1").file("usr/bin/one", b"1").build(&env);
+    let two = Pkg::new("two", "1").file("usr/bin/two", b"2").build(&env);
+    assert_eq!(commit(&env, &[&one]), 1);
+    assert_eq!(commit(&env, &[&two]), 2);
+    let lock = env.lock();
+    crate::remove_generations(&lock, &[1]).expect("generation 1 is not needed");
+    assert_eq!(env.root.generations().expect("lists"), vec![2]);
+    assert!(env.root.store().list().expect("lists").contains(&one.dir));
+    assert_consistent(&env.root);
+}
+
+#[test]
+fn the_default_and_missing_generations_are_never_deleted() {
+    let env = Env::new();
+    let one = Pkg::new("one", "1").file("usr/bin/one", b"1").build(&env);
+    assert_eq!(commit(&env, &[&one]), 1);
+    assert_eq!(commit(&env, &[&one]), 2);
+    let lock = env.lock();
+    let refused = crate::remove_generations(&lock, &[1, 2]);
+    assert!(matches!(refused, Err(crate::Error::Invalid(m)) if m.contains("default")));
+    assert!(crate::remove_generations(&lock, &[9]).is_err());
+    assert_eq!(
+        env.root.generations().expect("lists"),
+        vec![1, 2],
+        "nothing was deleted"
+    );
+}

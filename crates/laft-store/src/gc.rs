@@ -161,6 +161,53 @@ impl fmt::Display for GcPlan {
     }
 }
 
+/// Deletes the generations `numbers` that the user named, whatever the
+/// retention policy says. The store entries and view versions only they
+/// used stay until the next garbage collection.
+///
+/// # Errors
+///
+/// Fails with [`crate::Error::Invalid`] before deleting anything when one of them
+/// does not exist, is the active, booted or default generation, or is part
+/// of an unfinished transaction, and otherwise when one cannot be deleted.
+/// Whatever was deleted then stays deleted.
+pub fn remove_generations(lock: &Lock, numbers: &[u64]) -> Result<()> {
+    let root = lock.root();
+    let journals = Journal::all(root)?;
+    let run = root.run_dir();
+    let pointers = [
+        (fsx::link_number(&run.join("system"))?, "the active system"),
+        (fsx::link_number(&run.join("booted"))?, "booted"),
+        (root.default_generation()?, "the default"),
+    ];
+    let existing = root.generations()?;
+    for &number in numbers {
+        if !existing.contains(&number) {
+            return Err(crate::Error::Invalid(format!(
+                "generation {number} does not exist"
+            )));
+        }
+        if let Some((_, why)) = pointers.iter().find(|(target, _)| *target == Some(number)) {
+            return Err(crate::Error::Invalid(format!(
+                "generation {number} is {why} and cannot be deleted"
+            )));
+        }
+        if journals.iter().any(|j| j.generation == Some(number)) {
+            return Err(crate::Error::Invalid(format!(
+                "generation {number} is part of an unfinished transaction"
+            )));
+        }
+    }
+    let tmp = root.tmp_dir();
+    for &number in numbers {
+        fsx::retire(
+            &root.gen_dir(number),
+            &tmp.join(format!("trash-gen-{number}")),
+        )?;
+    }
+    Ok(())
+}
+
 /// Decides what garbage collection keeps under `policy`, with `now` as the
 /// current time. Nothing is deleted. Recover interrupted transactions with
 /// [`Lock::recover`] first.
