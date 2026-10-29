@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::ErrorKind;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -115,7 +116,8 @@ pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
 
 /// Links the package files of [`SELF_BUILT_PACKAGES`] from `dir` into a
 /// new directory `to`, with every buildinfo file of `dir`, which name the
-/// packages they describe, and returns `to`.
+/// packages they describe, and returns `to`. A file on another filesystem
+/// is copied instead.
 fn select(dir: &Path, to: &Path) -> Result<PathBuf> {
     let _ = fs::remove_dir_all(to);
     fs::create_dir_all(to).map_err(|e| fail(format!("{}: {e}", to.display())))?;
@@ -134,7 +136,12 @@ fn select(dir: &Path, to: &Path) -> Result<PathBuf> {
     }
     for from in chosen {
         let target = to.join(from.file_name().expect("a listed file has a name"));
-        fs::hard_link(&from, &target).map_err(|e| fail(format!("{}: {e}", from.display())))?;
+        fs::hard_link(&from, &target)
+            .or_else(|e| match e.kind() {
+                ErrorKind::CrossesDevices => fs::copy(&from, &target).map(drop),
+                _ => Err(e),
+            })
+            .map_err(|e| fail(format!("{} to {}: {e}", from.display(), target.display())))?;
     }
     Ok(to.to_path_buf())
 }
