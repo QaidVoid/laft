@@ -69,7 +69,7 @@ pub use boot::{BootActivation, activate_boot};
 pub use check::check_config;
 pub use config::{
     Boot, BootConfig, EtcConfig, File, Fs, Group, Initrd, Kernel, Loader, Luks, Microcode,
-    Privileged, Security, User, Users,
+    Privileged, Security, Swap, User, Users,
 };
 pub use error::{ConfigError, Conflict, ConflictKind, Error, Result, Setting, Warning};
 pub use esp::{BootInstall, check_esp, install_boot};

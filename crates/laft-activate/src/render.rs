@@ -58,7 +58,8 @@ pub struct EtcTree {
 ///    directory names. Two packages shipping the same path are an error.
 /// 2. Files derived from the configuration: `hostname`, `hosts`,
 ///    `localtime`, `timezone`, `locale.conf`, `profile.d/locale.sh`,
-///    `vconsole.conf` when a keymap or console font is set,
+///    `vconsole.conf` when a keymap or console font is set, `fstab` with
+///    the filesystems and swap devices,
 ///    `ssh/authorized_keys.d/<user>` for users with SSH keys, and
 ///    `modules-load.d/laft.conf`, `modprobe.d/laft.conf` and
 ///    `sysctl.d/laft.conf`. Next to them, `generated` holds the entries
@@ -480,7 +481,49 @@ fn derived(config: &EtcConfig, errors: &mut Vec<ConfigError>) -> Vec<(String, No
         files.push((format!("ssh/authorized_keys.d/{name}"), text(keys)));
     }
     files.extend(kernel_files(config, errors));
+    files.push(("fstab".to_owned(), text(fstab(config))));
     files
+}
+
+/// `fstab`: a line for every filesystem, in mountpoint order, then for
+/// every swap device. A filesystem that is checked gets pass 1 at `/` and
+/// 2 elsewhere, and a `tmpfs` without a device names `tmpfs`.
+fn fstab(config: &EtcConfig) -> String {
+    use laft_svc::builtin::fstab::escape;
+
+    let mut out = HEADER.to_owned();
+    for (mountpoint, fs) in &config.fs {
+        let device = fs.device.as_deref().unwrap_or(&fs.fstype);
+        let options = if fs.options.is_empty() {
+            "defaults".to_owned()
+        } else {
+            fs.options.join(",")
+        };
+        let checked = fs.fsck.unwrap_or(matches!(
+            fs.fstype.as_str(),
+            "ext2" | "ext3" | "ext4" | "f2fs" | "vfat"
+        ));
+        let pass = match (checked, mountpoint.as_str()) {
+            (false, _) => 0,
+            (true, "/") => 1,
+            (true, _) => 2,
+        };
+        let _ = writeln!(
+            out,
+            "{} {} {} {} 0 {pass}",
+            escape(device),
+            escape(mountpoint),
+            escape(&fs.fstype),
+            escape(&options)
+        );
+    }
+    for (device, swap) in &config.swap {
+        let options = swap
+            .priority
+            .map_or_else(|| "defaults".to_owned(), |p| format!("pri={p}"));
+        let _ = writeln!(out, "{} none swap {options} 0 0", escape(device));
+    }
+    out
 }
 
 /// `modules-load.d/laft.conf`, `modprobe.d/laft.conf` and

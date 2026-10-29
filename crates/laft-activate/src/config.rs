@@ -35,6 +35,10 @@ pub struct EtcConfig {
     pub kernel: Kernel,
     /// Kernel parameters, by key such as `vm.swappiness`.
     pub sysctl: BTreeMap<String, Value>,
+    /// The mounted filesystems, by mountpoint, for `/etc/fstab`.
+    pub fs: BTreeMap<String, Fs>,
+    /// The swap devices, by device, for `/etc/fstab`.
+    pub swap: BTreeMap<String, Swap>,
 }
 
 impl Default for EtcConfig {
@@ -49,6 +53,8 @@ impl Default for EtcConfig {
             files: BTreeMap::new(),
             kernel: Kernel::default(),
             sysctl: BTreeMap::new(),
+            fs: BTreeMap::new(),
+            swap: BTreeMap::new(),
         }
     }
 }
@@ -312,13 +318,42 @@ impl Default for Initrd {
 pub struct Fs {
     /// The device, such as `UUID=...` or `/dev/mapper/cryptroot`.
     pub device: Option<String>,
-    /// The filesystem type, such as `ext4` or `vfat`.
+    /// The filesystem type, such as `ext4` or `vfat`. The configuration's
+    /// `other(name = "zfs")` reads as its name.
+    #[serde(deserialize_with = "fs_type")]
     pub fstype: String,
     /// The mount options.
     pub options: Vec<String>,
     /// Whether the filesystem is checked before it is mounted. With `None`,
     /// true for ext2, ext3, ext4, f2fs and vfat.
     pub fsck: Option<bool>,
+}
+
+/// Reads a filesystem type: a name, or the variant `other` with its
+/// `name`.
+fn fs_type<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum FsType {
+        Name(String),
+        Other { other: OtherFs },
+    }
+    #[derive(Deserialize)]
+    struct OtherFs {
+        name: String,
+    }
+    Ok(match FsType::deserialize(deserializer)? {
+        FsType::Name(name) => name,
+        FsType::Other { other } => other.name,
+    })
+}
+
+/// A swap device.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Swap {
+    /// The swap priority, or `None` for the kernel's choice.
+    pub priority: Option<i64>,
 }
 
 /// A LUKS device unlocked in the initramfs.

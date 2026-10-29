@@ -1,5 +1,6 @@
 ---
 source: crates/laft-config/tests/examples.rs
+assertion_line: 132
 expression: "added_to_base(\"server\")"
 ---
 SystemConfig {
@@ -82,6 +83,40 @@ SystemConfig {
             options: {},
         },
         sysctl: {},
+        fs: {
+            "/": Fs {
+                device: Some(
+                    "UUID=3f1c2a8e-5b7d-4e2f-9a61-0c4d8b2e7f11",
+                ),
+                fstype: "ext4",
+                options: [
+                    "noatime",
+                ],
+                fsck: None,
+            },
+            "/boot": Fs {
+                device: Some(
+                    "UUID=1A2B-3C4D",
+                ),
+                fstype: "vfat",
+                options: [
+                    "umask=0077",
+                ],
+                fsck: None,
+            },
+            "/tmp": Fs {
+                device: None,
+                fstype: "tmpfs",
+                options: [
+                    "mode=1777",
+                    "nosuid",
+                    "nodev",
+                    "size=50%",
+                ],
+                fsck: None,
+            },
+        },
+        swap: {},
     },
     extra_locales: {},
     session: Session {
