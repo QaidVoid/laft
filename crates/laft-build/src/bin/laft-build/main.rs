@@ -22,9 +22,14 @@
 //! With `--json`, results go to standard output as JSON and progress to
 //! standard error.
 //!
+//! Every command that writes to the build root holds its lock for the whole
+//! run, so a second such run on the same build root fails at once. `eval`,
+//! `plan`, `lint` and dry runs only read and take no lock.
+//!
 //! The exit status is 0 on success, 1 when a build fails, 2 for a usage or
-//! evaluation error, and 3 when the machine lacks something builds need,
-//! such as unprivileged user namespaces or free disk space.
+//! evaluation error, 3 when the machine lacks something builds need, such
+//! as unprivileged user namespaces or free disk space, and 4 when another
+//! run holds the lock of the build root.
 
 #![forbid(unsafe_code)]
 
@@ -41,8 +46,9 @@ use std::time::{Duration, SystemTime};
 
 use clap::Parser;
 use laft_build::{
-    BuildError, BuildRoot, Builder, Buildinfo, Cutoff, Db, Event, Item, Mode, Outcome, Recipe,
-    Repos, SourceCache, Stage, StageEvent, StageOptions, check_repro, record_repro, run_stage,
+    BuildError, BuildRoot, Builder, Buildinfo, Cutoff, Db, Event, Item, LOCK_ENV, Mode, Outcome,
+    Recipe, Repos, RootLock, SourceCache, Stage, StageEvent, StageOptions, check_repro,
+    record_repro, run_stage,
 };
 use laft_core::PkgRef;
 use laft_fetch::{Config, Fetcher};
@@ -64,6 +70,8 @@ enum Failure {
     Build(BuildError),
     /// The machine lacks something builds need.
     Environment(String),
+    /// Another run holds the lock of the build root.
+    Busy(BuildError),
 }
 
 impl Failure {
@@ -73,6 +81,7 @@ impl Failure {
             Self::Build(_) => 1,
             Self::Usage(_) => 2,
             Self::Environment(_) => 3,
+            Self::Busy(_) => 4,
         }
     }
 }
@@ -87,7 +96,7 @@ impl fmt::Display for Failure {
                  `sysctl kernel.unprivileged_userns_clone=1`, or lift the restriction \
                  that a security module places on them"
             ),
-            Self::Build(e) => write!(f, "{e}"),
+            Self::Build(e) | Self::Busy(e) => write!(f, "{e}"),
         }
     }
 }
@@ -125,6 +134,10 @@ struct Context {
 fn run(cli: Cli) -> Result<(), Failure> {
     let root = BuildRoot::new(build_root(cli.root)?);
     let json = cli.json;
+    let lock = match writer(&cli.command) {
+        Some(command) => Some(lock(&root, command)?),
+        None => None,
+    };
     match cli.command {
         Command::Gc { sources_older_than } => return gc(&root, sources_older_than),
         Command::Seed { files } => return seed(&root, &files, json),
@@ -147,7 +160,8 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 dry_run,
                 rebuild,
             };
-            return stage(&root, &file, target, &run, &options, json);
+            let token = lock.as_ref().map(|l| l.token().to_owned());
+            return stage(&root, &file, target, &run, &options, token, json);
         }
         _ => {}
     }
@@ -218,6 +232,34 @@ fn run(cli: Cli) -> Result<(), Failure> {
         ),
         Command::Gc { .. } | Command::Seed { .. } | Command::Stage { .. } => Ok(()),
     }
+}
+
+/// The name of `command` when it writes to the build root, which makes it
+/// take the lock.
+fn writer(command: &Command) -> Option<&'static str> {
+    match command {
+        Command::Eval { .. } | Command::Plan { .. } | Command::Lint { .. } => None,
+        Command::Stage { dry_run: true, .. } | Command::Bootstrap { dry_run: true, .. } => None,
+        Command::Build { .. } => Some("build"),
+        Command::Fetch { .. } => Some("fetch"),
+        Command::Shell { .. } => Some("shell"),
+        Command::CheckRepro { .. } => Some("check-repro"),
+        Command::Bootstrap { .. } => Some("bootstrap"),
+        Command::Stage { .. } => Some("stage"),
+        Command::Seed { .. } => Some("seed"),
+        Command::Gc { .. } => Some("gc"),
+    }
+}
+
+/// Takes the lock of `root` for `command`, sharing it when [`LOCK_ENV`]
+/// holds the token of the run that started this one.
+fn lock(root: &BuildRoot, command: &str) -> Result<RootLock, Failure> {
+    let inherited = std::env::var(LOCK_ENV).ok();
+    root.lock(command, inherited.as_deref())
+        .map_err(|e| match e.code() {
+            Some("B032") => Failure::Busy(e),
+            _ => Failure::Build(e),
+        })
 }
 
 /// The build root: the flag, `$LAFT_BUILD_ROOT`, or `laft-build` in the
@@ -745,6 +787,7 @@ fn stage(
     root: Option<PathBuf>,
     run: &StageArgs,
     options: &BuildOptions,
+    lock: Option<String>,
     json: bool,
 ) -> Result<(), Failure> {
     let dry_run = run.dry_run;
@@ -771,6 +814,7 @@ fn stage(
         rebuild: run.rebuild,
         laft_build,
         mirrors: options.mirrors.clone(),
+        lock,
     };
     let mut report = Vec::new();
     let result = run_stage(

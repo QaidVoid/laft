@@ -459,3 +459,41 @@ fn gc_removes_the_outputs_of_reproducibility_checks() {
     assert!(!dir.path().join("repro/out").exists());
     assert!(!dir.path().join("repro/logs").exists());
 }
+
+#[test]
+fn a_second_writer_of_a_locked_build_root_fails_at_once_with_4() {
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("root");
+    let build_root = laft_build::BuildRoot::new(&root);
+    let held = build_root.lock("stage", None).unwrap();
+    let file = dir.path().join("junk.lpkg");
+    std::fs::write(&file, b"junk").unwrap();
+    let file = file.to_str().expect("a UTF-8 path");
+
+    let output = without_recipes(&root, &["seed", file]);
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error[B032]"), "{stderr}");
+    assert!(
+        stderr.contains(&build_root.lock_path().display().to_string()),
+        "{stderr}"
+    );
+    for args in [&["plan", "zlib"][..], &["eval", "zlib"], &["lint"]] {
+        let output = laft_build(&root, args);
+        assert!(output.status.success(), "{args:?} reads only: {output:?}");
+    }
+
+    let shared = Command::new(env!("CARGO_BIN_EXE_laft-build"))
+        .env(laft_build::LOCK_ENV, held.token())
+        .args(["--root", root.to_str().expect("a UTF-8 path"), "seed", file])
+        .output()
+        .expect("the binary runs");
+    assert_eq!(
+        shared.status.code(),
+        Some(1),
+        "a run started by the holder shares its lock: {shared:?}"
+    );
+    drop(held);
+    let output = without_recipes(&root, &["seed", file]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+}

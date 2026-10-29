@@ -103,6 +103,7 @@
 //! | `B023` | a recipe file that changed since evaluation or cannot be read, a license file that is missing or outside the source tree, a build record or reproducibility report that cannot be read or serialized, or an install or stage record that is neither a build key line nor a build key record of a format this version reads |
 //! | `B030` | a phase, or a stage script inside the root, that ran longer than the timeout |
 //! | `B031` | a build root with less than 10 GiB free |
+//! | `B032` | a build root whose lock another run holds |
 //! | `B040` | a phase or tool that failed |
 //! | `B041` | an installation or unpacking into a directory outside bootstrap mode |
 //! | `B042` | a stage root whose top-level entries differ from Laft's layout, or a `laft-build` that is not a static ELF executable for a step inside the root |
@@ -127,6 +128,7 @@ mod glob;
 mod graph;
 mod host;
 mod loader;
+mod lock;
 mod plan;
 pub mod post;
 mod recipe;
@@ -157,6 +159,7 @@ pub use error::{BuildError, Warning};
 pub use exec::{DEFAULT_TIMEOUT, Executor};
 pub use extract::unpack;
 pub use graph::{BuildGraph, Deps, Item};
+pub use lock::{LOCK_ENV, RootLock};
 pub use plan::{
     BuildRecord, Built, Cutoff, Dirtied, KeyInputs, LinkInput, Schedule, StaticInput, Trigger,
 };

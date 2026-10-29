@@ -259,6 +259,10 @@ pub struct StageOptions {
     pub laft_build: PathBuf,
     /// Extra source mirrors, tried after the repository's own.
     pub mirrors: Vec<String>,
+    /// The token of the lock of the build root that this run holds, which
+    /// a build inside the root receives in [`crate::LOCK_ENV`] so that it
+    /// shares the lock.
+    pub lock: Option<String>,
 }
 
 /// What became of one package or script of a stage.
@@ -826,6 +830,10 @@ impl StageRun<'_> {
             .command(run(INSIDE_LAFT_BUILD))
             .args(args)
             .env("HOME", "/root");
+        let command = match &self.options.lock {
+            Some(token) => command.env(crate::LOCK_ENV, token),
+            None => command,
+        };
         self.run_logged(command, log, package, None)
     }
 

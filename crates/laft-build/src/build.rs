@@ -37,6 +37,7 @@ use crate::{
 /// | `logs/<name>+<variant>/<key>/<phase>.log` | the output of every phase |
 /// | `tmp/` | staging for the store |
 /// | `stages/<stage>/<step>` | the records of a stage that builds into the store |
+/// | `lock` | the lock that every run that writes here holds, see [`BuildRoot::lock`] |
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildRoot {
     path: PathBuf,

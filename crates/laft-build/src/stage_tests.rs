@@ -52,6 +52,7 @@ fn options(dir: &Path) -> StageOptions {
         rebuild: false,
         laft_build: PathBuf::from("/nonexistent"),
         mirrors: Vec::new(),
+        lock: None,
     }
 }
 
@@ -720,8 +721,12 @@ fn a_root_step_builds_inside_the_root_with_laft_build() {
     let stage = root_stage(dir.path(), steps);
     let root = dir.path().join("root");
     copy_libraries(&root, &laft_build);
+    let held = BuildRoot::new(dir.path().join("build"))
+        .lock("stage", None)
+        .unwrap();
     let options = StageOptions {
         laft_build: laft_build.clone(),
+        lock: Some(held.token().to_owned()),
         ..options(dir.path())
     };
     let result = states(dir.path(), &stage, &options, false);
