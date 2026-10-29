@@ -1,0 +1,797 @@
+---
+source: crates/laft-config/tests/examples.rs
+expression: "added_to_base(\"laptop\")"
+---
+SystemConfig {
+    etc: EtcConfig {
+        hostname: "forge",
+        timezone: "Europe/Berlin",
+        locale: "en_US.UTF-8",
+        keymap: Some(
+            "us",
+        ),
+        console_font: None,
+        users: Users {
+            mutable: true,
+            accounts: {
+                "alice": User {
+                    uid: Some(
+                        1000,
+                    ),
+                    group: None,
+                    groups: {
+                        "kvm",
+                        "wheel",
+                    },
+                    description: "",
+                    home: None,
+                    create_home: None,
+                    shell: Some(
+                        "/usr/bin/zsh",
+                    ),
+                    system: false,
+                    password_hash: None,
+                    password_file: Some(
+                        "/etc/laft/secrets/alice.hash",
+                    ),
+                    ssh_keys: [],
+                },
+            },
+            groups: {
+                "alice": Group {
+                    gid: None,
+                    members: {},
+                    system: false,
+                },
+                "audio": Group {
+                    gid: Some(
+                        20,
+                    ),
+                    members: {
+                        "alice",
+                    },
+                    system: true,
+                },
+                "input": Group {
+                    gid: Some(
+                        23,
+                    ),
+                    members: {
+                        "alice",
+                    },
+                    system: true,
+                },
+                "video": Group {
+                    gid: Some(
+                        21,
+                    ),
+                    members: {
+                        "alice",
+                    },
+                    system: true,
+                },
+            },
+        },
+        files: {
+            "/etc/doas.conf": File {
+                text: Some(
+                    "permit persist :wheel\n",
+                ),
+                source: None,
+                link: None,
+                json: None,
+                toml: None,
+                yaml: None,
+                ini: None,
+                env: None,
+                mode: 256,
+                owner: "root",
+                group: "root",
+                copy: false,
+                enable: true,
+            },
+            "/etc/iwd/main.conf": File {
+                text: None,
+                source: None,
+                link: None,
+                json: None,
+                toml: None,
+                yaml: None,
+                ini: Some(
+                    {
+                        "General": {
+                            "EnableNetworkConfiguration": Bool(true),
+                        },
+                        "Network": {
+                            "NameResolvingService": String("resolvconf"),
+                        },
+                    },
+                ),
+                env: None,
+                mode: 420,
+                owner: "root",
+                group: "root",
+                copy: false,
+                enable: true,
+            },
+            "/etc/profile.d/wayland.sh": File {
+                text: Some(
+                    "export MOZ_ENABLE_WAYLAND=1\nexport QT_QPA_PLATFORM=wayland\nexport ELECTRON_OZONE_PLATFORM_HINT=auto\n",
+                ),
+                source: None,
+                link: None,
+                json: None,
+                toml: None,
+                yaml: None,
+                ini: None,
+                env: None,
+                mode: 420,
+                owner: "root",
+                group: "root",
+                copy: false,
+                enable: true,
+            },
+        },
+        kernel: Kernel {
+            modules: [
+                "kvm-amd",
+            ],
+            blacklist: {
+                "pcspkr",
+            },
+            options: {},
+        },
+        sysctl: {
+            "vm.swappiness": Number(10),
+        },
+    },
+    extra_locales: {
+        "de_DE.UTF-8",
+    },
+    session: Session {
+        rundir: Turnstile,
+    },
+    boot: BootConfig {
+        boot: Boot {
+            loader: Limine,
+            esp: "/boot",
+            kernel: "linux-lts",
+            cmdline: [
+                "quiet",
+                "loglevel=3",
+            ],
+            timeout: Some(
+                3,
+            ),
+            editor: false,
+            tries: 3,
+            microcode: Auto,
+            initrd: Initrd {
+                modules: {
+                    "virtio_blk",
+                    "virtio_pci",
+                },
+                hostonly: true,
+                shell: true,
+                root_wait: 30,
+            },
+        },
+        fs: {
+            "/": Fs {
+                device: Some(
+                    "UUID=3f1c2a8e-5b7d-4e2f-9a61-0c4d8b2e7f11",
+                ),
+                fstype: "ext4",
+                options: [
+                    "noatime",
+                ],
+                fsck: None,
+            },
+            "/boot": Fs {
+                device: Some(
+                    "UUID=1A2B-3C4D",
+                ),
+                fstype: "vfat",
+                options: [
+                    "umask=0077",
+                ],
+                fsck: None,
+            },
+        },
+        luks: {},
+    },
+    swap: {},
+    services: ServiceConfig {
+        init: Runit,
+        services: {
+            "dbus": Service {
+                description: "D-Bus system message bus",
+                kind: Longrun,
+                enable: true,
+                exec: [
+                    "/usr/bin/dbus-daemon",
+                    "--system",
+                    "--nofork",
+                    "--nopidfile",
+                    "--print-address=3",
+                ],
+                up: [],
+                down: [],
+                user: "root",
+                group: None,
+                groups: {},
+                env: {},
+                cwd: "/",
+                umask: 18,
+                after: [],
+                ready: Notify {
+                    fd: 3,
+                },
+                log: Logged,
+                rotate: LogRotation {
+                    size: 1000000,
+                    count: 10,
+                },
+                state_dirs: [],
+                runtime_dirs: [
+                    Dir {
+                        path: "dbus",
+                        mode: 493,
+                        owner: Some(
+                            "messagebus",
+                        ),
+                        group: None,
+                    },
+                ],
+                restart: Always,
+                restart_delay: 1,
+                stop_signal: Term,
+                stop_timeout: 10,
+                limits: Limits {
+                    nofile: None,
+                    nproc: None,
+                    core: None,
+                    memlock: None,
+                },
+                on_change: None,
+                early: false,
+                packages: {
+                    Name(
+                        "dbus",
+                    ),
+                },
+            },
+            "iwd": Service {
+                description: "Wireless daemon",
+                kind: Longrun,
+                enable: true,
+                exec: [
+                    "/usr/lib/iwd/iwd",
+                ],
+                up: [],
+                down: [],
+                user: "root",
+                group: None,
+                groups: {},
+                env: {},
+                cwd: "/",
+                umask: 18,
+                after: [
+                    "dbus",
+                ],
+                ready: Immediate,
+                log: Logged,
+                rotate: LogRotation {
+                    size: 1000000,
+                    count: 10,
+                },
+                state_dirs: [
+                    Dir {
+                        path: "iwd",
+                        mode: 448,
+                        owner: None,
+                        group: None,
+                    },
+                ],
+                runtime_dirs: [],
+                restart: Always,
+                restart_delay: 1,
+                stop_signal: Term,
+                stop_timeout: 10,
+                limits: Limits {
+                    nofile: None,
+                    nproc: None,
+                    core: None,
+                    memlock: None,
+                },
+                on_change: None,
+                early: false,
+                packages: {
+                    Name(
+                        "iwd",
+                    ),
+                },
+            },
+            "seatd": Service {
+                description: "Seat management daemon",
+                kind: Longrun,
+                enable: true,
+                exec: [
+                    "/usr/bin/seatd",
+                    "-n",
+                    "3",
+                    "-g",
+                    "video",
+                ],
+                up: [],
+                down: [],
+                user: "root",
+                group: None,
+                groups: {},
+                env: {},
+                cwd: "/",
+                umask: 18,
+                after: [],
+                ready: Notify {
+                    fd: 3,
+                },
+                log: Logged,
+                rotate: LogRotation {
+                    size: 1000000,
+                    count: 10,
+                },
+                state_dirs: [],
+                runtime_dirs: [],
+                restart: Always,
+                restart_delay: 1,
+                stop_signal: Term,
+                stop_timeout: 10,
+                limits: Limits {
+                    nofile: None,
+                    nproc: None,
+                    core: None,
+                    memlock: None,
+                },
+                on_change: None,
+                early: false,
+                packages: {
+                    Name(
+                        "seatd",
+                    ),
+                },
+            },
+        },
+        getty: Getty {
+            ttys: [
+                "tty1",
+                "tty2",
+            ],
+        },
+    },
+    security: Security {
+        privileged: {},
+    },
+    packages: [
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "brightnessctl",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "/etc/laft/system.stav:28:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "fd",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "/etc/laft/system.stav:24:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "firefox",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "/etc/laft/system.stav:26:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "flatpak",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "/etc/laft/system.stav:27:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "foot",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:19:19",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "fuzzel",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:32:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "git",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "/etc/laft/system.stav:21:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "jujutsu",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "/etc/laft/system.stav:22:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "mako",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:33:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "mesa",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:25:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "neovim",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "/etc/laft/system.stav:20:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "niri",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:10:12",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "noto-fonts",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:34:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "noto-fonts-cjk",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "/etc/laft/system.stav:46:34",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "noto-fonts-emoji",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:35:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "opendoas",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "/etc/laft/system.stav:29:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "pipewire",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:27:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "ripgrep",
+                ),
+                prefix: None,
+                variant: Static,
+            },
+            origin: "/etc/laft/system.stav:23:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "ttf-jetbrains-mono",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "/etc/laft/system.stav:46:14",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "vulkan-icd-loader",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:26:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "wireplumber",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:28:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "xdg-desktop-portal",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:29:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "xdg-desktop-portal-wlr",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:30:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "xwayland-satellite",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "std/desktop:31:5",
+        },
+        Request {
+            pkg: PkgRef {
+                name: Name(
+                    "zsh",
+                ),
+                prefix: None,
+                variant: Dynamic,
+            },
+            origin: "/etc/laft/system.stav:25:5",
+        },
+    ],
+    alternatives: {
+        Name(
+            "sh",
+        ): Name(
+            "dash",
+        ),
+    },
+    views: {
+        Name(
+            "dev",
+        ): View {
+            inherit: true,
+            packages: [
+                Request {
+                    pkg: PkgRef {
+                        name: Name(
+                            "clang",
+                        ),
+                        prefix: Some(
+                            VersionPrefix(
+                                "19",
+                            ),
+                        ),
+                        variant: Dynamic,
+                    },
+                    origin: "/etc/laft/system.stav:63:26",
+                },
+                Request {
+                    pkg: PkgRef {
+                        name: Name(
+                            "cmake",
+                        ),
+                        prefix: None,
+                        variant: Dynamic,
+                    },
+                    origin: "/etc/laft/system.stav:63:36",
+                },
+                Request {
+                    pkg: PkgRef {
+                        name: Name(
+                            "llvm",
+                        ),
+                        prefix: Some(
+                            VersionPrefix(
+                                "19",
+                            ),
+                        ),
+                        variant: Dynamic,
+                    },
+                    origin: "/etc/laft/system.stav:63:17",
+                },
+                Request {
+                    pkg: PkgRef {
+                        name: Name(
+                            "ninja",
+                        ),
+                        prefix: None,
+                        variant: Dynamic,
+                    },
+                    origin: "/etc/laft/system.stav:63:43",
+                },
+                Request {
+                    pkg: PkgRef {
+                        name: Name(
+                            "nodejs",
+                        ),
+                        prefix: Some(
+                            VersionPrefix(
+                                "22",
+                            ),
+                        ),
+                        variant: Dynamic,
+                    },
+                    origin: "/etc/laft/system.stav:63:63",
+                },
+                Request {
+                    pkg: PkgRef {
+                        name: Name(
+                            "python",
+                        ),
+                        prefix: Some(
+                            VersionPrefix(
+                                "3.12",
+                            ),
+                        ),
+                        variant: Dynamic,
+                    },
+                    origin: "/etc/laft/system.stav:63:50",
+                },
+            ],
+            alternatives: {},
+            users: {
+                "alice",
+            },
+            groups: {
+                "wheel",
+            },
+        },
+        Name(
+            "legacy",
+        ): View {
+            inherit: false,
+            packages: [
+                Request {
+                    pkg: PkgRef {
+                        name: Name(
+                            "base-minimal",
+                        ),
+                        prefix: None,
+                        variant: Dynamic,
+                    },
+                    origin: "/etc/laft/system.stav:69:17",
+                },
+                Request {
+                    pkg: PkgRef {
+                        name: Name(
+                            "openssl1.1",
+                        ),
+                        prefix: None,
+                        variant: Dynamic,
+                    },
+                    origin: "/etc/laft/system.stav:69:31",
+                },
+                Request {
+                    pkg: PkgRef {
+                        name: Name(
+                            "python",
+                        ),
+                        prefix: Some(
+                            VersionPrefix(
+                                "3.9",
+                            ),
+                        ),
+                        variant: Dynamic,
+                    },
+                    origin: "/etc/laft/system.stav:69:43",
+                },
+            ],
+            alternatives: {},
+            users: {
+                "alice",
+            },
+            groups: {
+                "wheel",
+            },
+        },
+    },
+    gc: Gc {
+        policy: GcPolicy {
+            keep_generations: 10,
+            keep_days: 30,
+        },
+        auto: true,
+        keep_downloads: false,
+    },
+    repos: {
+        Name(
+            "extra",
+        ): Repo {
+            url: "https://repo.laft.example/extra",
+            mirrors: [],
+            key: PublicKey(e7620f1842b4e81f),
+            keys: [],
+            channel: Name(
+                "current",
+            ),
+            priority: 10,
+            enable: true,
+            allow_http: false,
+        },
+    },
+}

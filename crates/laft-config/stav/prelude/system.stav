@@ -1,0 +1,441 @@
+# The schema of the Laft system configuration. Every declaration here is in
+# scope, unqualified, in every file of the system configuration.
+
+## The root of the system configuration: one `system` block.
+struct Root {
+  ## The whole system.
+  system: System = System {}
+}
+
+## Everything that describes one machine.
+struct System {
+  ## The host name: one label of `a-z`, `0-9` and `-`, at most 63
+  ## characters, not starting or ending with `-`.
+  hostname:      Str where hostname = "laft"
+  ## The IANA time zone name, for example "Europe/Berlin".
+  timezone:      Str where matches(r"[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*") = "UTC"
+  ## The value of LANG for logins and services.
+  locale:        Str where nonEmpty = "C.UTF-8"
+  ## More locales that must be available, for example "de_DE.UTF-8".
+  extra_locales: Set<Str> = []
+  ## The console keymap for loadkeys, for example "de-latin1".
+  keymap:        Option<Str where matches(r"[A-Za-z0-9._-]+")>
+  ## The console font for setfont, for example "ter-v22n".
+  console_font:  Option<Str where matches(r"[A-Za-z0-9._-]+")>
+  ## The declared accounts.
+  users:         Users = Users {}
+  ## Login session tracking.
+  session:       Session = Session {}
+  ## Files in /etc. Block label: the absolute path.
+  files:         Map<Str, File> = {} block file
+  ## Kernel modules to load, blacklist and configure.
+  kernel:        Kernel = Kernel {}
+  ## Kernel parameters by key, for example "vm.swappiness". Values are
+  ## integers, strings or booleans.
+  sysctl:        Map<Str, Data> = {}
+  ## Package repositories. Block label: the repository name.
+  repos:         Map<Str, Repo> = {} block repo
+  ## Packages in the system view.
+  packages:      Set<Pkg> = []
+  ## The chosen member of each alternatives group, for the system view.
+  alternatives:  Map<Str, Pkg> = {}
+  ## Views besides the system view. Block label: the view name.
+  views:         Map<Str, View> = {} block view
+  ## Retention of generations and automatic collection.
+  gc:            Gc = Gc {}
+  ## The boot loader, kernel, boot counting and initramfs.
+  boot:          Boot = Boot {}
+  ## Mounted filesystems. Block label: the mountpoint.
+  fs:            Map<Str, Fs> = {} block fs
+  ## Swap devices. Block label: the device.
+  swap:          Map<Str, Swap> = {} block swap
+  ## LUKS devices unlocked in the initramfs. Block label: the
+  ## device-mapper name.
+  luks:          Map<Str, Luks> = {} block luks
+  ## The init system.
+  init:          Init = runit
+  ## System services. Block label: the service name.
+  services:      Map<Str, Service> = {} block service
+  ## The terminals that get a login prompt.
+  getty:         Getty = Getty {}
+  ## Files that keep setuid, setgid or file capabilities.
+  security:      Security = Security {}
+}
+
+## True for a valid host name: one RFC 1123 label in lowercase.
+fn hostname(s: Str) -> Bool = matches(s, r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+
+## Account settings.
+struct Users {
+  ## true: accounts created outside Laft are kept. false: the account
+  ## databases contain exactly the declared accounts.
+  mutable:  Bool = true
+  ## Users. Block label: the user name.
+  accounts: Map<Str, User> = {} block user
+  ## Groups. Block label: the group name.
+  groups:   Map<Str, Group> = {} block group
+}
+
+## A user account. Block label: the user name.
+struct User {
+  ## Allocated when none.
+  uid:           Option<Int where 0..=65534>
+  ## The primary group. none: a group with the user's name, created when
+  ## it is not declared.
+  group:         Option<Ref<Group>>
+  ## Supplementary groups.
+  groups:        Set<Ref<Group>> = []
+  ## The comment field of /etc/passwd.
+  description:   Str = ""
+  ## none: /home/<name>, or /var/empty for system accounts.
+  home:          Option<Str where matches(r"/.*")>
+  ## none: true for regular accounts, false for system accounts.
+  create_home:   Option<Bool>
+  ## none: /usr/bin/bash, or /usr/bin/nologin for system accounts.
+  shell:         Option<Str where matches(r"/.*")>
+  ## System accounts take their ids from the system range.
+  system:        Bool = false
+  ## A crypt(3) hash, or "!" to lock the account.
+  password_hash: Option<Str where matches(r"!|\*|!?\$(y|gy|6|5|2b)\$.+")>
+  ## The absolute path of a file holding the hash, read at activation.
+  password_file: Option<Str where matches(r"/.*")>
+  ## OpenSSH public keys that may log in as the user.
+  ssh_keys:      List<Str> = []
+}
+
+## A group. Block label: the group name.
+struct Group {
+  ## Allocated when none.
+  gid:     Option<Int where 0..=65534>
+  ## Members in addition to the users that list this group in `groups`.
+  members: Set<Ref<User>> = []
+  ## System groups take their ids from the system range.
+  system:  Bool = false
+}
+
+## Who creates and removes /run/user/<uid>.
+type RundirOwner = turnstile | elogind
+
+## Login session tracking.
+struct Session {
+  ## Who creates and removes /run/user/<uid>.
+  rundir: RundirOwner = turnstile
+}
+
+## A file in /etc. Block label: the absolute path. Exactly one content
+## field is set when the file is enabled.
+struct File {
+  ## The content, verbatim.
+  text:   Option<Str>
+  ## A file whose bytes are the content.
+  source: Option<Path>
+  ## A symlink with this target.
+  link:   Option<Str where nonEmpty>
+  ## A value rendered as JSON.
+  json:   Option<Data>
+  ## A map rendered as TOML.
+  toml:   Option<Data>
+  ## A value rendered as YAML.
+  yaml:   Option<Data>
+  ## Sections of key=value lines, by section name.
+  ini:    Option<Map<Str, Map<Str, Data>>>
+  ## KEY=value lines readable by POSIX shells.
+  env:    Option<Map<Str, Str>>
+  ## The permission bits.
+  mode:   Int where 0..=0o777 = 0o644
+  ## The owning user.
+  owner:  Ref<User> = root
+  ## The owning group.
+  group:  Ref<Group> = root
+  ## Copy the file into /etc instead of linking it through /etc/static.
+  copy:   Bool = false
+  ## false removes the entry, including a package default or a derived
+  ## file.
+  enable: Bool = true
+}
+
+## Kernel modules to load, blacklist and configure.
+struct Kernel {
+  ## Loaded during boot, after the root filesystem is mounted, in order.
+  modules:   List<Str where matches(r"[A-Za-z0-9_-]+")> = []
+  ## Never loaded automatically.
+  blacklist: Set<Str where matches(r"[A-Za-z0-9_-]+")> = []
+  ## Module parameters, for example { snd_hda_intel = "power_save=1" }.
+  options:   Map<Str, Str> = {}
+}
+
+## The channel of a repository a client follows.
+type Channel = current | testing
+
+## A package repository. Block label: the repository name.
+struct Repo {
+  ## The primary base URL: https://, file://, or http:// with allow_http.
+  url:        Str where matches(r"(https|file|http)://.*")
+  ## More base URLs serving the same content, tried in order after url.
+  mirrors:    List<Str> = []
+  ## The root public key: the base64 line of a minisign public key.
+  key:        Str where nonEmpty
+  ## More accepted root keys, used while a root key is replaced.
+  keys:       List<Str> = []
+  ## The channel to follow.
+  channel:    Channel = current
+  ## Higher wins when several repositories offer a package.
+  priority:   Int = 0
+  ## Whether the repository is used.
+  enable:     Bool = true
+  ## Permit http:// URLs.
+  allow_http: Bool = false
+}
+
+## Retention policy for generations and automatic collection.
+struct Gc {
+  ## Always keep at least this many newest generations.
+  keep_generations: Int where 2..=1000 = 10
+  ## Also keep every generation younger than this many days.
+  keep_days:        Int where 0..=3650 = 30
+  ## Run gc after every successful apply.
+  auto:             Bool = true
+  ## Keep downloaded package files after unpacking.
+  keep_downloads:   Bool = false
+}
+
+## The only base a view can inherit from. `inherit = none` starts empty.
+type ViewBase = system
+
+## A view besides the system view. Block label: the view name.
+struct View {
+  ## system: start from the system's package requests. none: start empty.
+  inherit:      Option<ViewBase> = system
+  ## Package requests, replacing system requests of the same name.
+  packages:     Set<Pkg> = []
+  ## Group name to chosen member, overriding the system's choice.
+  alternatives: Map<Str, Pkg> = {}
+  ## Users allowed to enter the view, in addition to root.
+  users:        Set<Str> = []
+  ## Members of these groups may enter the view.
+  groups:       Set<Str> = ["wheel"]
+}
+
+## The boot loader.
+type Loader = limine
+
+## Which CPU microcode the initramfs carries.
+type Microcode = auto | intel | amd | both | off
+
+## Settings for the initramfs.
+struct Initrd {
+  ## Extra modules, by name.
+  modules:   Set<Str> = []
+  ## Detect the needed modules from the machine running the assembly.
+  hostonly:  Bool = true
+  ## Include the emergency shell.
+  shell:     Bool = true
+  ## Seconds to wait for boot devices.
+  root_wait: Int where 1..=600 = 30
+}
+
+## Boot loader, kernel and boot counting.
+struct Boot {
+  ## The boot loader.
+  loader:    Loader = limine
+  ## The mountpoint of the EFI system partition. It needs an `fs` entry of
+  ## type vfat.
+  esp:       Str = "/boot"
+  ## The package providing the kernel.
+  kernel:    Pkg = linux
+  ## The kernel command line.
+  cmdline:   List<Str> = ["quiet", "loglevel=3"]
+  ## The menu timeout in seconds. none waits forever.
+  timeout:   Option<Int where 0..=600> = 3
+  ## Allow editing entries at the boot menu.
+  editor:    Bool = false
+  ## Boot attempts before falling back. 0 disables boot counting.
+  tries:     Int where 0..=10 = 3
+  ## Which CPU microcode the initramfs carries.
+  microcode: Microcode = auto
+  ## Settings for the initramfs.
+  initrd:    Initrd = Initrd {}
+}
+
+## A filesystem type. `other` names one that is not listed.
+type FsType =
+    ext2
+  | ext3
+  | ext4
+  | xfs
+  | btrfs
+  | f2fs
+  | vfat
+  | tmpfs
+  | nfs
+  | nfs4
+  | other(name: Str where matches(r"[a-z0-9.]+"))
+
+## A mounted filesystem. Block label: the mountpoint.
+struct Fs {
+  ## Required unless fstype is tmpfs.
+  device:  Option<Str> = none
+  ## The filesystem type.
+  fstype:  FsType
+  ## Mount options. Empty means the defaults.
+  options: List<Str> = []
+  ## none: true for ext2, ext3, ext4, f2fs and vfat, false otherwise.
+  fsck:    Option<Bool> = none
+}
+
+## A swap device. Block label: the device.
+struct Swap {
+  ## The swap priority.
+  priority: Option<Int where -1..=32767> = none
+}
+
+## An option of an unlocked LUKS device.
+type LuksOption = discard | no-read-workqueue | no-write-workqueue
+
+## A LUKS device unlocked in the initramfs. Block label: the device-mapper
+## name.
+struct Luks {
+  ## UUID=... or /dev/...
+  device:  Str
+  ## Options for the unlocked device.
+  options: Set<LuksOption> = []
+}
+
+## The init system. Only runit is implemented.
+type Init = runit | s6 | dinit
+
+## How a service is supervised.
+type ServiceKind = longrun | oneshot
+
+## When a service counts as ready.
+type Ready =
+    immediate
+  | notify(fd: Int where 3..=1023)
+  | check(cmd: List<Str> where nonEmpty, interval: Int where 1..=3600 = 1, timeout: Int where 1..=86400 = 60)
+
+## Where the output of a service goes.
+type Log = logged | discard | console
+
+## Whether the supervisor restarts a longrun after it exits.
+type Restart = always | on-failure | never
+
+## The signal that asks a service to stop.
+type Signal = TERM | INT | HUP | QUIT | USR1 | USR2
+
+## What live reconciliation does when only the spec of a service changed.
+type OnChange = restart | rerun | ignore | reboot
+
+## How a logged service's output is rotated.
+struct LogRotation {
+  ## Bytes per file before rotation.
+  size:  Int where 4096..=1_073_741_824 = 1_000_000
+  ## Rotated files kept.
+  count: Int where 1..=1000 = 10
+}
+
+## A directory the launcher creates before every start.
+struct Dir {
+  ## Relative to /var/lib for state_dirs, or to /run for runtime_dirs.
+  path:  Str where matches(r"[A-Za-z0-9._@+-]+(/[A-Za-z0-9._@+-]+)*")
+  ## The permission bits.
+  mode:  Int where 0..=0o7777 = 0o755
+  ## none: the service user.
+  owner: Option<Ref<User>> = none
+  ## none: the primary group of owner, or the service's group.
+  group: Option<Ref<Group>> = none
+}
+
+## Resource limits, each applied as the soft and the hard limit.
+struct Limits {
+  ## Open files.
+  nofile:  Option<Int where 1..=1_073_741_816> = none
+  ## Processes of the service user.
+  nproc:   Option<Int where 1..=4_194_304> = none
+  ## Core dump size in bytes. 0 disables core dumps.
+  core:    Option<Int where 0..=1_099_511_627_776> = none
+  ## Locked memory in bytes.
+  memlock: Option<Int where 0..=1_099_511_627_776> = none
+}
+
+## A system service. Block label: the service name.
+struct Service {
+  ## A one-line description.
+  description:   Str = ""
+  ## How the service is supervised.
+  kind:          ServiceKind = longrun
+  ## Whether the service is part of the generation.
+  enable:        Bool = true
+  ## Longrun: the command to supervise, as argv.
+  exec:          List<Str> = []
+  ## Oneshot: the command run on start, as argv.
+  up:            List<Str> = []
+  ## Oneshot: the command run on stop, as argv.
+  down:          List<Str> = []
+  ## The account the service runs as.
+  user:          Ref<User> = root
+  ## none: the primary group of user.
+  group:         Option<Ref<Group>> = none
+  ## Supplementary groups.
+  groups:        Set<Ref<Group>> = []
+  ## Environment variables.
+  env:           Map<Str, Str> = {}
+  ## The working directory.
+  cwd:           Str = "/"
+  ## The file mode creation mask.
+  umask:         Int where 0..=0o777 = 0o022
+  ## Services that must be ready before this one starts.
+  after:         List<Ref<Service>> = []
+  ## When the service counts as ready.
+  ready:         Ready = immediate
+  ## Where its output goes.
+  log:           Log = logged
+  ## How its log is rotated.
+  rotate:        LogRotation = LogRotation {}
+  ## Directories under /var/lib to create before every start.
+  state_dirs:    List<Dir> = []
+  ## Directories under /run to create before every start.
+  runtime_dirs:  List<Dir> = []
+  ## The restart policy of a longrun.
+  restart:       Restart = always
+  ## Seconds to wait before a restart.
+  restart_delay: Int where 0..=3600 = 1
+  ## The signal that asks the service to stop.
+  stop_signal:   Signal = TERM
+  ## Seconds between the stop signal and SIGKILL.
+  stop_timeout:  Int where 1..=3600 = 10
+  ## Resource limits.
+  limits:        Limits = Limits {}
+  ## none: restart for longruns, rerun for oneshots.
+  on_change:     Option<OnChange> = none
+  ## Member of the early boot graph. Reserved for the base part.
+  early:         Bool = false
+  ## Packages added to the system view while the service is enabled.
+  packages:      Set<Pkg> = []
+}
+
+## The terminals that get a login prompt.
+struct Getty {
+  ## Terminal names. Each gets a service named getty-<tty>.
+  ttys: List<Str where matches(r"tty(S|USB)?[0-9]+")> = ["tty1", "tty2"]
+}
+
+## A file that keeps setuid, setgid or file capabilities in the active
+## generation. Block label: the absolute path.
+struct Privileged {
+  ## Whether the entry applies.
+  enable: Bool = true
+  ## The owning user.
+  owner:  Ref<User> = root
+  ## The owning group.
+  group:  Ref<Group> = root
+  ## The mode, including setuid and setgid bits.
+  mode:   Int where 0..=0o7777 = 0o4755
+  ## File capabilities in cap_from_text(3) syntax, such as "cap_setuid=ep".
+  caps:   Option<Str> = none
+}
+
+## Security settings.
+struct Security {
+  ## Privileged files. Block label: the absolute path.
+  privileged: Map<Str, Privileged> = {} block privileged
+}

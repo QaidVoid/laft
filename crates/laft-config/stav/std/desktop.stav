@@ -1,0 +1,54 @@
+# std/desktop: desktop profiles.
+import "std/services" as services
+
+## Wayland compositors with a supported profile.
+type Compositor = sway | niri | river
+
+## The package of a compositor.
+fn compositor_pkg(c: Compositor) -> Pkg = match c {
+  sway  => sway
+  niri  => niri
+  river => river
+}
+
+## A Wayland desktop for one user: compositor, seat management, audio,
+## portals and fonts. The user joins the device groups it needs.
+fn wayland(
+  user: Ref<User>,
+  compositor: Compositor = niri,
+  terminal: Pkg = foot,
+  fonts: Set<Pkg> = [],
+) -> Part<System> = part {
+  packages = [
+    compositor_pkg(compositor)
+    terminal
+    mesa
+    vulkan-icd-loader
+    pipewire
+    wireplumber
+    xdg-desktop-portal
+    xdg-desktop-portal-wlr
+    xwayland-satellite
+    fuzzel
+    mako
+    noto-fonts
+    noto-fonts-emoji
+  ]
+  packages = fonts
+
+  include services.seatd()
+
+  users {
+    group video { members = [user] }
+    group audio { members = [user] }
+    group input { members = [user] }
+  }
+
+  file "/etc/profile.d/wayland.sh" {
+    text = default("""
+      export MOZ_ENABLE_WAYLAND=1
+      export QT_QPA_PLATFORM=wayland
+      export ELECTRON_OZONE_PLATFORM_HINT=auto
+      """)
+  }
+}

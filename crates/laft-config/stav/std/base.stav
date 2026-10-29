@@ -1,0 +1,279 @@
+# The base part, included in every system before the entry file. Every
+# scalar uses default(...), so a plain assignment in the configuration
+# changes it, and entries with an `enable` field can be switched off.
+
+system {
+  # The static system accounts. Their ids are the same on every Laft
+  # system. An id is never reassigned, and new accounts are only appended.
+  users {
+    user root { uid = default(0), home = default("/root"), shell = default("/usr/bin/bash") }
+    group root { gid = default(0), system = default(true) }
+
+    group tty { gid = default(5), system = default(true) }
+    group disk { gid = default(6), system = default(true) }
+    group lp { gid = default(7), system = default(true) }
+    group kmem { gid = default(9), system = default(true) }
+    group wheel { gid = default(10), system = default(true) }
+    group cdrom { gid = default(11), system = default(true) }
+    group mail { gid = default(12), system = default(true) }
+    group dialout { gid = default(18), system = default(true) }
+    group floppy { gid = default(19), system = default(true) }
+    group audio { gid = default(20), system = default(true) }
+    group video { gid = default(21), system = default(true) }
+    group utmp { gid = default(22), system = default(true) }
+    group input { gid = default(23), system = default(true) }
+    group kvm { gid = default(24), system = default(true) }
+    group render { gid = default(25), system = default(true) }
+    group tape { gid = default(26), system = default(true) }
+    group sgx { gid = default(27), system = default(true) }
+
+    user messagebus { uid = default(30), system = default(true) }
+    group messagebus { gid = default(30), system = default(true) }
+    user sshd { uid = default(31), system = default(true) }
+    group sshd { gid = default(31), system = default(true) }
+    user dhcpcd { uid = default(32), system = default(true) }
+    group dhcpcd { gid = default(32), system = default(true) }
+    user chrony { uid = default(33), system = default(true) }
+    group chrony { gid = default(33), system = default(true) }
+    user polkitd { uid = default(34), system = default(true) }
+    group polkitd { gid = default(34), system = default(true) }
+    user rtkit { uid = default(35), system = default(true) }
+    group rtkit { gid = default(35), system = default(true) }
+    user uuidd { uid = default(36), system = default(true) }
+    group uuidd { gid = default(36), system = default(true) }
+    user dnsmasq { uid = default(37), system = default(true) }
+    group dnsmasq { gid = default(37), system = default(true) }
+    user avahi { uid = default(38), system = default(true) }
+    group avahi { gid = default(38), system = default(true) }
+    user tss { uid = default(39), system = default(true) }
+    group tss { gid = default(39), system = default(true) }
+    user log { uid = default(40), system = default(true) }
+    group log { gid = default(40), system = default(true) }
+    group shadow { gid = default(41), system = default(true) }
+    group plugdev { gid = default(42), system = default(true) }
+
+    group users { gid = default(100), system = default(true) }
+    user nobody { uid = default(65534), group = default(nogroup), system = default(true) }
+    group nogroup { gid = default(65534), system = default(true) }
+  }
+
+  # The early boot graph, which ends in the oneshot `early`, the session
+  # tracker and the oneshot that marks a boot as good.
+  service laft-activate {
+    description = default("Reconcile /etc and accounts with the booted generation")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/laft", "activate", "--boot"])
+    log         = default(console)
+    on_change   = default(ignore)
+    early       = default(true)
+  }
+
+  service kernel-fs {
+    description = default("Mount the kernel's pseudo filesystems")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/laft", "svc", "builtin", "kernel-fs", "up"])
+    after       = [laft-activate]
+    log         = default(console)
+    on_change   = default(ignore)
+    early       = default(true)
+  }
+
+  service kmod {
+    description = default("Load the configured kernel modules")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/laft", "svc", "builtin", "kmod", "up"])
+    after       = [kernel-fs]
+    log         = default(console)
+    on_change   = default(rerun)
+    early       = default(true)
+  }
+
+  service udevd {
+    description = default("Device manager")
+    exec        = default(["/usr/bin/udevd"])
+    ready       = default(check(cmd = ["/usr/bin/udevadm", "control", "--ping"]))
+    after       = [kernel-fs]
+    log         = default(console)
+    on_change   = default(restart)
+    early       = default(true)
+  }
+
+  service udev-trigger {
+    description = default("Replay kernel device events")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/laft", "svc", "builtin", "udev-trigger", "up"])
+    after       = [kmod]
+    log         = default(console)
+    on_change   = default(ignore)
+    early       = default(true)
+  }
+
+  service clock {
+    description = default("Set the system clock from the hardware clock")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/hwclock", "--hctosys", "--utc"])
+    down        = default(["/usr/bin/hwclock", "--systohc", "--utc"])
+    after       = [kernel-fs]
+    log         = default(console)
+    on_change   = default(ignore)
+    early       = default(true)
+  }
+
+  service hostname {
+    description = default("Set the host name")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/laft", "svc", "builtin", "hostname", "up"])
+    after       = [kernel-fs]
+    log         = default(console)
+    on_change   = default(rerun)
+    early       = default(true)
+  }
+
+  service mount-fs {
+    description = default("Check and mount the configured filesystems")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/laft", "svc", "builtin", "mount-fs", "up"])
+    down        = default(["/usr/bin/laft", "svc", "builtin", "mount-fs", "down"])
+    after       = [udev-trigger]
+    log         = default(console)
+    on_change   = default(rerun)
+    early       = default(true)
+  }
+
+  service swap {
+    description = default("Enable swap")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/swapon", "-a"])
+    down        = default(["/usr/bin/swapoff", "-a"])
+    after       = [mount-fs]
+    log         = default(console)
+    on_change   = default(rerun)
+    early       = default(true)
+  }
+
+  service random-seed {
+    description = default("Carry the random seed across boots")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/laft", "svc", "builtin", "random-seed", "up"])
+    down        = default(["/usr/bin/laft", "svc", "builtin", "random-seed", "down"])
+    after       = [mount-fs]
+    log         = default(console)
+    on_change   = default(ignore)
+    early       = default(true)
+  }
+
+  service sysctl {
+    description = default("Apply kernel parameters")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/sysctl", "-q", "-p", "/etc/sysctl.d/laft.conf"])
+    after       = [kmod, mount-fs]
+    log         = default(console)
+    on_change   = default(rerun)
+    early       = default(true)
+  }
+
+  service console {
+    description = default("Load the console keymap")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/laft", "svc", "builtin", "console", "up"])
+    after       = [udev-trigger]
+    log         = default(console)
+    on_change   = default(rerun)
+    early       = default(true)
+  }
+
+  service early {
+    description = default("End of the early boot graph")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/true"])
+    # `hostname` names a prelude function, so the reference is a string.
+    after       = [
+      clock
+      console
+      "hostname"
+      kernel-fs
+      kmod
+      laft-activate
+      mount-fs
+      random-seed
+      swap
+      sysctl
+      udev-trigger
+    ]
+    log         = default(console)
+    on_change   = default(ignore)
+    early       = default(true)
+  }
+
+  service turnstiled {
+    description = default("Login session tracker")
+    exec        = default(["/usr/bin/turnstiled"])
+    on_change   = default(restart)
+  }
+
+  service boot-complete {
+    description = default("Mark the boot as good")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/laft", "boot", "mark-good"])
+    on_change   = default(ignore)
+  }
+
+  file "/etc/turnstile/turnstiled.conf" {
+    text = default("""
+      backend = none
+      manage_rundir = #{if self.session.rundir == turnstile { "yes" } else { "no" }}
+      rundir_path = /run/user/%u
+      linger = no
+      """)
+  }
+
+  fs "/tmp" {
+    fstype  = default(tmpfs)
+    options = ["mode=1777", "nosuid", "nodev", "size=50%"]
+  }
+
+  # The official repository is not published yet. Until it is, the URL uses
+  # the reserved top-level domain `invalid`, which never resolves, and the
+  # key is one whose secret key was discarded, so nothing is trusted by
+  # accident.
+  repo core {
+    url = default("https://pkgs.laft.invalid/core")
+    key = default("RWSO9Zvh1ju0E6MO5PDnzQFYnptNxsLpLdwYSfm5Cs4Jc+14umRuka1M")
+  }
+
+  security {
+    privileged "/usr/bin/laft-enter" { mode = default(0o4755) }
+    privileged "/usr/bin/doas" { mode = default(0o4755) }
+    privileged "/usr/bin/passwd" { mode = default(0o4755) }
+    privileged "/usr/bin/newuidmap" { mode = default(0o755), caps = default("cap_setuid=ep") }
+    privileged "/usr/bin/newgidmap" { mode = default(0o755), caps = default("cap_setgid=ep") }
+    privileged "/usr/bin/fusermount3" { mode = default(0o4755) }
+    privileged "/usr/bin/unix_chkpwd" { mode = default(0o2755), group = default(shadow) }
+  }
+
+  # Kernel hardening.
+  sysctl {
+    "kernel.kptr_restrict"                   = default(1)
+    "kernel.dmesg_restrict"                  = default(1)
+    "kernel.yama.ptrace_scope"               = default(1)
+    "kernel.unprivileged_bpf_disabled"       = default(1)
+    "net.core.bpf_jit_harden"                = default(2)
+    "kernel.perf_event_paranoid"             = default(2)
+    "kernel.sysrq"                           = default(176)
+    "dev.tty.ldisc_autoload"                 = default(0)
+    "fs.protected_symlinks"                  = default(1)
+    "fs.protected_hardlinks"                 = default(1)
+    "fs.protected_fifos"                     = default(2)
+    "fs.protected_regular"                   = default(2)
+    "fs.suid_dumpable"                       = default(0)
+    "net.ipv4.ping_group_range"              = default("0 2147483647")
+    "net.ipv4.tcp_syncookies"                = default(1)
+    "net.ipv4.conf.all.accept_redirects"     = default(0)
+    "net.ipv4.conf.default.accept_redirects" = default(0)
+    "net.ipv6.conf.all.accept_redirects"     = default(0)
+    "net.ipv6.conf.default.accept_redirects" = default(0)
+    "net.ipv4.conf.all.send_redirects"       = default(0)
+    "net.ipv4.conf.all.accept_source_route"  = default(0)
+    "net.ipv4.conf.all.rp_filter"            = default(2)
+  }
+}

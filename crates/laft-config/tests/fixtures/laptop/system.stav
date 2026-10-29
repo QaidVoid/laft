@@ -1,0 +1,84 @@
+import "std/desktop" as desktop
+import "std/services" as services
+
+system {
+  include "./hardware.stav"
+
+  hostname      = "forge"
+  timezone      = "Europe/Berlin"
+  locale        = "en_US.UTF-8"
+  extra_locales = ["de_DE.UTF-8"]
+  keymap        = "us"
+
+  repo extra {
+    url      = "https://repo.laft.example/extra"
+    key      = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"
+    priority = 10
+  }
+
+  packages = [
+    neovim
+    git
+    jujutsu
+    ripgrep:static
+    fd
+    zsh
+    firefox
+    flatpak
+    brightnessctl
+    opendoas
+  ]
+
+  alternatives.sh = dash
+
+  users {
+    user alice {
+      uid           = 1000
+      groups        = [wheel, kvm]
+      shell         = "/usr/bin/zsh"
+      password_file = "/etc/laft/secrets/alice.hash"
+    }
+  }
+
+  include desktop.wayland(
+    user = alice,
+    compositor = niri,
+    fonts = [ttf-jetbrains-mono, noto-fonts-cjk],
+  )
+  include services.iwd()
+
+  file "/etc/iwd/main.conf" {
+    ini = {
+      General = { EnableNetworkConfiguration = true }
+      Network = { NameResolvingService = "resolvconf" }
+    }
+  }
+
+  file "/etc/doas.conf" {
+    text = "permit persist :wheel\n"
+    mode = 0o400
+  }
+
+  view dev {
+    packages = [llvm@19, clang@19, cmake, ninja, python@3.12, nodejs@22]
+    users    = ["alice"]
+  }
+
+  view legacy {
+    inherit  = none
+    packages = [base-minimal, openssl1.1, python@3.9]
+    users    = ["alice"]
+  }
+
+  kernel {
+    modules   = ["kvm-amd"]
+    blacklist = ["pcspkr"]
+  }
+
+  sysctl { "vm.swappiness" = 10 }
+
+  gc {
+    keep_generations = 10
+    keep_days        = 30
+  }
+}

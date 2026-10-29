@@ -1,0 +1,117 @@
+# std/services: optional daemons. Each function declares one daemon and the
+# packages it needs. Including the part enables it. Scalars use default(...),
+# so a plain assignment in the configuration changes them.
+#
+# A name that is also a function of this module, such as `dbus`, refers to
+# that function inside the module. Packages and references with such names
+# are therefore written as pkg("dbus") and "dbus".
+
+## OpenSSH server on `port`. Host keys are created on the first start.
+## Logins use public keys from ~/.ssh/authorized_keys and from the user's
+## `ssh_keys`, and root cannot log in.
+fn sshd(port: Int where 1..=65535 = 22) -> Part<System> = part {
+  service sshd-keygen {
+    description = default("Create missing SSH host keys")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/ssh-keygen", "-A"])
+    packages    = [openssh]
+  }
+
+  service sshd {
+    description = default("OpenSSH server")
+    exec        = default(["/usr/bin/sshd", "-D", "-e", "-p", "#{port}"])
+    after       = [sshd-keygen]
+    packages    = [openssh]
+  }
+
+  file "/etc/ssh/sshd_config" {
+    text = default("""
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/authorized_keys.d/%u
+      UsePAM yes
+      Subsystem sftp internal-sftp
+      """)
+  }
+}
+
+## The D-Bus system message bus.
+fn dbus() -> Part<System> = part {
+  service dbus {
+    description  = default("D-Bus system message bus")
+    exec         = default(["/usr/bin/dbus-daemon", "--system", "--nofork", "--nopidfile", "--print-address=3"])
+    ready        = default(notify(fd = 3))
+    runtime_dirs = [Dir { path = "dbus", owner = messagebus }]
+    packages     = [pkg("dbus")]
+  }
+}
+
+## The seat management daemon. Members of `video` may open a seat.
+fn seatd() -> Part<System> = part {
+  service seatd {
+    description = default("Seat management daemon")
+    exec        = default(["/usr/bin/seatd", "-n", "3", "-g", "video"])
+    ready       = default(notify(fd = 3))
+    packages    = [pkg("seatd")]
+  }
+}
+
+## The elogind login manager, with the system bus it needs. It manages
+## /run/user/<uid> instead of turnstile.
+fn elogind() -> Part<System> = part {
+  include dbus()
+
+  service elogind {
+    description = default("Login and seat manager")
+    exec        = default(["/usr/lib/elogind/elogind"])
+    after       = ["dbus"]
+    packages    = [pkg("elogind")]
+  }
+
+  session { rundir = default(RundirOwner.elogind) }
+}
+
+## The dhcpcd DHCP client for every interface.
+fn dhcpcd() -> Part<System> = part {
+  service dhcpcd {
+    description = default("DHCP client")
+    exec        = default(["/usr/bin/dhcpcd", "-B"])
+    packages    = [pkg("dhcpcd")]
+  }
+}
+
+## The iwd wireless daemon, with the system bus it needs.
+fn iwd() -> Part<System> = part {
+  include dbus()
+
+  service iwd {
+    description = default("Wireless daemon")
+    exec        = default(["/usr/lib/iwd/iwd"])
+    after       = ["dbus"]
+    state_dirs  = [Dir { path = "iwd", mode = 0o700 }]
+    packages    = [pkg("iwd")]
+  }
+}
+
+## The chrony time daemon, running as the `chrony` account.
+fn chronyd() -> Part<System> = part {
+  service chronyd {
+    description = default("Time synchronization daemon")
+    exec        = default(["/usr/bin/chronyd", "-d", "-u", "chrony"])
+    state_dirs  = [Dir { path = "chrony", mode = 0o750, owner = chrony }]
+    packages    = [chrony]
+  }
+}
+
+## The nftables firewall, loaded from /etc/nftables.conf on start and
+## flushed on stop.
+fn nftables() -> Part<System> = part {
+  service nftables {
+    description = default("Firewall rules")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/nft", "-f", "/etc/nftables.conf"])
+    down        = default(["/usr/bin/nft", "flush", "ruleset"])
+    packages    = [pkg("nftables")]
+  }
+}

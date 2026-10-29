@@ -1,0 +1,25 @@
+[package]
+name = "laft-config"
+description = "The Laft system configuration: the Stav prelude, base part, std catalog and conversion"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+laft-activate.workspace = true
+laft-core.workspace = true
+laft-index.workspace = true
+laft-resolve.workspace = true
+laft-store.workspace = true
+laft-svc.workspace = true
+serde = { workspace = true, features = ["derive"] }
+stav.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+laft-test.workspace = true

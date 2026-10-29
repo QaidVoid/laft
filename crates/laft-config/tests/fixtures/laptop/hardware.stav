@@ -1,0 +1,16 @@
+boot {
+  kernel = linux-lts
+  initrd { modules = ["virtio_blk", "virtio_pci"] }
+}
+
+fs "/" {
+  device  = "UUID=3f1c2a8e-5b7d-4e2f-9a61-0c4d8b2e7f11"
+  fstype  = ext4
+  options = ["noatime"]
+}
+
+fs "/boot" {
+  device  = "UUID=1A2B-3C4D"
+  fstype  = vfat
+  options = ["umask=0077"]
+}

@@ -1,0 +1,42 @@
+import "std/services" as services
+
+system {
+  include "./hardware.stav"
+
+  hostname = "vault"
+  timezone = "UTC"
+
+  packages = [opendoas, htop, ripgrep:static, prometheus-node-exporter]
+
+  users {
+    mutable = false
+    user admin {
+      uid      = 1000
+      groups   = [wheel]
+      ssh_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGq... admin@laptop"]
+    }
+  }
+
+  file "/etc/doas.conf" {
+    text = "permit persist :wheel\n"
+    mode = 0o400
+  }
+
+  include services.dhcpcd()
+  include services.chronyd()
+  include services.sshd()
+
+  service node-exporter {
+    exec  = ["/usr/bin/node_exporter", "--web.listen-address=:9100"]
+    user  = nobody
+    after = [dhcpcd]
+  }
+
+  service boot-complete { after = [sshd] }
+
+  getty { ttys = ["tty1"] }
+
+  sysctl { "net.ipv4.tcp_syncookies" = 1 }
+
+  gc { keep_generations = 5 }
+}
