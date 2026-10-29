@@ -233,6 +233,49 @@ fn the_root_device_must_be_resolvable_by_the_initramfs() {
 }
 
 #[test]
+fn device_names_the_initramfs_refuses_are_rejected() {
+    for device in ["/dev/..", "/dev/mapper/.", "UUID=a b", "UUID=", "/dev/"] {
+        let body = format!(
+            r#"fs "/" {{ device = "{device}", fstype = ext4 }}
+      fs "/boot" {{ device = "UUID=2", fstype = vfat }}"#
+        );
+        let (codes, at) = rejected_disks(&body);
+        assert!(codes.contains(&"C1105"), "{device}: {codes:?}");
+        assert_eq!(at, format!("{device:?}"), "{device}");
+    }
+}
+
+#[test]
+fn the_laft_device_must_be_resolvable_by_the_initramfs() {
+    let body = r#"fs "/laft" { device = "LABEL=laft", fstype = ext4 }"#;
+    assert_rejected(rejected(body), "C1105", r#""LABEL=laft""#);
+}
+
+#[test]
+fn the_esp_device_must_be_resolvable_by_the_initramfs() {
+    let body = r#"fs "/" { device = "UUID=1", fstype = ext4 }
+      fs "/efi" { device = "LABEL=ESP", fstype = vfat }
+      boot { esp = "/efi" }"#;
+    assert_rejected(rejected_disks(body), "C1105", r#""LABEL=ESP""#);
+}
+
+#[test]
+fn luks_devices_must_be_resolvable_by_the_initramfs() {
+    for device in ["/dev/disk/by-id/x", "/dev/mapper/other"] {
+        let body = format!(r#"luks cryptroot {{ device = "{device}" }}"#);
+        assert_rejected(rejected(&body), "C1105", &format!("{device:?}"));
+    }
+}
+
+#[test]
+fn luks_names_must_be_device_mapper_names() {
+    for name in [".", "..", "a/b"] {
+        let body = format!(r#"luks "{name}" {{ device = "UUID=3" }}"#);
+        assert_rejected(rejected(&body), "C1105", &body);
+    }
+}
+
+#[test]
 fn the_root_filesystem_is_mounted_read_write() {
     let body = r#"fs "/" { device = "UUID=1", fstype = ext4, options = ["ro"] }
       fs "/boot" { device = "UUID=2", fstype = vfat }"#;

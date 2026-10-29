@@ -377,18 +377,15 @@ fn check_boot(cx: &Cx<'_>, boot: &BootConfig, found: &mut Vec<FileDiagnostic>) {
                 ),
             ));
         }
+        let at_boot = mountpoint == "/" || mountpoint == "/laft" || *mountpoint == boot.boot.esp;
         match &entry.device {
-            Some(device) if mountpoint == "/" || mountpoint == "/laft" => {
-                if !boot_device(device) {
-                    found.push(cx.error(
-                        "C1105",
-                        &field("device"),
-                        format!(
-                            "fs {mountpoint:?}: laft-boot resolves only UUID=, kernel device names and /dev/mapper/<luks>, got {device:?}"
-                        ),
-                    ));
-                }
-            }
+            Some(device) if at_boot && !boot_device(device) => found.push(cx.error(
+                "C1105",
+                &field("device"),
+                format!(
+                    "fs {mountpoint:?}: laft-boot resolves only UUID=, kernel device names and /dev/mapper/<luks>, got {device:?}"
+                ),
+            )),
             Some(_) => {}
             None if entry.fstype != "tmpfs" => found.push(cx.error(
                 "C1109",
@@ -428,15 +425,46 @@ fn check_boot(cx: &Cx<'_>, boot: &BootConfig, found: &mut Vec<FileDiagnostic>) {
             format!("boot.esp is {esp:?} but there is no fs {esp:?} of type vfat"),
         ));
     }
+    for (name, luks) in &boot.luks {
+        if !device_name(name) {
+            found.push(cx.error(
+                "C1105",
+                &["system", "luks", name],
+                format!(
+                    "luks {name:?}: a device-mapper name is one path component other than . and .."
+                ),
+            ));
+        }
+        if luks.device.starts_with("/dev/mapper/") || !boot_device(&luks.device) {
+            found.push(cx.error(
+                "C1105",
+                &["system", "luks", name, "device"],
+                format!(
+                    "luks {name:?}: laft-boot unlocks only UUID= and kernel device names, got {:?}",
+                    luks.device
+                ),
+            ));
+        }
+    }
 }
 
-/// Whether the initramfs can resolve `device`: `UUID=...`, a kernel
-/// device name such as `/dev/sda2`, or `/dev/mapper/<name>`.
+/// Whether `name` can follow `/dev/` or `/dev/mapper/`: one path component
+/// other than `.` and `..`.
+fn device_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains('/') && name != "." && name != ".."
+}
+
+/// Whether laft-boot can resolve `device`: `UUID=` and printable ASCII
+/// without spaces, or `/dev/<name>` or `/dev/mapper/<name>` with a
+/// [`device_name`].
 fn boot_device(device: &str) -> bool {
-    let plain = |name: &str| !name.is_empty() && !name.contains('/');
-    device.strip_prefix("UUID=").is_some_and(|u| !u.is_empty())
-        || device.strip_prefix("/dev/mapper/").is_some_and(plain)
-        || device.strip_prefix("/dev/").is_some_and(plain)
+    match device.strip_prefix("UUID=") {
+        Some(uuid) => !uuid.is_empty() && uuid.bytes().all(|b| b.is_ascii_graphic()),
+        None => device
+            .strip_prefix("/dev/mapper/")
+            .or_else(|| device.strip_prefix("/dev/"))
+            .is_some_and(device_name),
+    }
 }
 
 /// Checks that every user and group a view names is declared (`C0904`).

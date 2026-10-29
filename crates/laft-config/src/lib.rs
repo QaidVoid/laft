@@ -46,7 +46,7 @@
 //! | `C1102` | mountpoint not an absolute, normalized path |
 //! | `C1103` | mountpoint managed by Laft |
 //! | `C1104` | root filesystem type that the initramfs cannot mount |
-//! | `C1105` | root or `/laft` device that the initramfs cannot resolve |
+//! | `C1105` | device of the root, `/laft`, the ESP or a LUKS block that the initramfs cannot resolve, or an invalid LUKS name |
 //! | `C1106` | root filesystem mounted read-only |
 //! | `C1107` | `boot.esp` without a `vfat` filesystem |
 //! | `C1108` | `/dev/mapper/<name>` device without `luks <name>` |
