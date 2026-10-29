@@ -24,4 +24,5 @@ zstd.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+laft-boot.workspace = true
 laft-test.workspace = true

@@ -21,6 +21,7 @@ fn generation(env: &Env, number: u64, release: &str, initramfs: &[u8], config: &
     fs::create_dir_all(&kernel).unwrap();
     fs::write(kernel.join("vmlinuz"), format!("kernel {release}")).unwrap();
     fs::create_dir_all(dir.join("boot")).unwrap();
+    fs::create_dir_all(dir.join("usr/bin")).unwrap();
     fs::write(dir.join("boot/initramfs"), initramfs).unwrap();
     let hash = Blake3Hash::of(initramfs).to_string()[3..35].to_owned();
     let record = BootRecord {
@@ -335,12 +336,18 @@ fn installing_a_new_default_starts_its_trial_until_it_is_marked_good() {
         })
     );
 
-    // laft-boot consumes a try on each boot of the generation on trial.
-    let mut booted = on_trial;
-    booted.trial = booted.trial.map(|t| laft_core::BootTrial {
-        tries_left: t.tries_left - 1,
-        ..t
-    });
+    let gens = env.path("laft/gens");
+    let read = |n| laft_boot::generation::read(&gens, n);
+    let booting = read(2).expect("laft-boot can boot the installed generation");
+    let plan =
+        laft_boot::counting::decide(on_trial, &booting, 2, false, read, Timestamp::from_secs(0));
+    assert_eq!(plan.then, laft_boot::counting::Then::Boot(booting));
+    let [laft_boot::counting::Step::Save(booted)] = plan.steps.as_slice() else {
+        panic!(
+            "a boot on trial only saves the try it used: {:?}",
+            plan.steps
+        );
+    };
     fs::write(env.path("laft/state/boot.json"), booted.to_json().unwrap()).unwrap();
     install_boot(&env.root, &esp).unwrap();
     assert_eq!(state(&env).trial.map(|t| t.tries_left), Some(1));

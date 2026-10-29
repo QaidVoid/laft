@@ -416,6 +416,7 @@ name = "laft-activate"
 version = "0.1.0"
 dependencies = [
  "insta",
+ "laft-boot",
  "laft-core",
  "laft-pkg",
  "laft-sandbox",
