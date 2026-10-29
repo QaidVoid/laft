@@ -33,14 +33,14 @@
 //! # Recipe checks
 //!
 //! Stav checks types, refinements, required fields and merge conflicts.
-//! A path literal that leaves its recipe repository is the Stav error
-//! `E0702`. After evaluation, the rules below are checked, and each
-//! problem is reported with the source it is about.
+//! After evaluation, the rules below are checked, and each problem is
+//! reported with the source it is about, together with the warnings of the
+//! language.
 //!
 //! | Code | Problem |
 //! |---|---|
 //! | `R001` | a recipe that declares a package other than its directory name, or none |
-//! | `R002` | a path literal outside the package's recipe directory and `common/` |
+//! | `R002` | a path literal outside the package's recipe directory and `common/`, or a path or import that leaves the recipe repositories |
 //! | `R003` | a recipe directory, subpackage or alternative group whose name is not a package name |
 //! | `R004` | a repository without exactly one `recipe_repo` block, listed twice, or extending one not listed before it |
 //! | `R006` | a path literal naming a file that cannot be read |
@@ -55,7 +55,7 @@
 //! | `R018` | a source label that is not a plain name of letters, digits, `-`, `_` and `.` |
 //! | `R019` | an alternative whose `subpackage` is neither an explicit nor an automatic subpackage of the package |
 //! | `R030` | an `env` key that does not match `[A-Z_][A-Z0-9_]*` |
-//! | `R031` | an `env` key that the builder sets itself |
+//! | `R031` | an `env` key that the builder sets itself, unless it is set with `force(...)` |
 //! | `R050` | an `update` block without exactly one of `github`, `gitlab`, `anitya` and `url`, or with `pattern` and `url` not set together |
 //!
 //! Between recipes, and while planning, these problems are found:

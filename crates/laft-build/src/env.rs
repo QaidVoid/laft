@@ -18,7 +18,8 @@ pub(crate) const MAKEFLAGS: &str = "MAKEFLAGS";
 /// formats can represent.
 pub const SOURCE_DATE_EPOCH: u64 = 315_532_800;
 
-/// Every variable the builder defines. A recipe's `env` may not set them.
+/// Every variable the builder defines. A recipe's `env` replaces them only
+/// with `force(...)`.
 pub(crate) const RESERVED: &[&str] = &[
     "AR",
     "AS",

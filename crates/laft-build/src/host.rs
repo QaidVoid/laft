@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use laft_core::PkgRef;
+use laft_core::{PkgRef, Variant};
 use stav::{Host, HostModule, Source, SymbolType};
 
 use crate::Target;
@@ -19,8 +19,9 @@ pub(crate) const PRELUDE_NAME: &str = "<prelude>/recipe.stav";
 pub(crate) const TARGET_MODULE: &str = "laft/target";
 
 /// Returns the host for the repositories `roots`, reading what `scope`
-/// allows. A package scope evaluates for `target`.
-pub(crate) fn host(roots: Vec<PathBuf>, scope: Scope, target: Target) -> Host {
+/// allows. The `laft/target` module holds the values of the `dynamic`
+/// target, and [`Target::values`] replaces them for one evaluation.
+pub(crate) fn host(roots: Vec<PathBuf>, scope: Scope) -> Host {
     let mut host = Host::new(RepoLoader::new(roots, scope));
     host.prelude.push(Source::new(PRELUDE_NAME, PRELUDE));
     host.symbols = vec![
@@ -41,7 +42,7 @@ pub(crate) fn host(roots: Vec<PathBuf>, scope: Scope, target: Target) -> Host {
     ];
     host.host_modules.push(HostModule {
         path: TARGET_MODULE.to_owned(),
-        source: target.module_source(),
+        source: Target::new(Variant::Dynamic).module_source(),
     });
     host
 }

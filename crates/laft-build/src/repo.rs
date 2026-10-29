@@ -5,11 +5,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use laft_core::{Name, Variant};
-use stav::{AttrPath, Diagnostic, FileDiagnostic, ImportRoot, Limits, RootSpec, Span, Value};
+use stav::{
+    AttrPath, Checked, Diagnostic, FileDiagnostic, ImportRoot, Limits, RootSpec, Span, Value,
+};
 
 use crate::convert::{self, Cx};
 use crate::host;
-use crate::loader::{DESCRIPTOR, RECIPE_FILE, RECIPES, Scope};
+use crate::loader::{COMMON, DESCRIPTOR, RECIPE_FILE, RECIPES, Scope};
 use crate::{Error, Problem, Recipe, Report, Target, schema};
 
 /// A recipe repository: a directory with a `recipes.stav` descriptor and a
@@ -161,9 +163,10 @@ impl Repos {
 
     /// Evaluates the package `name` for every variant it builds.
     ///
-    /// The recipe and its overlays are evaluated with the `dynamic` target
-    /// first, which decides the variants. Every variant is then evaluated
-    /// with its own `laft/target` module, checked and converted.
+    /// The recipe and its overlays are checked once, then evaluated with
+    /// the `dynamic` target first, which decides the variants. Every other
+    /// variant is evaluated with its own values of the `laft/target`
+    /// module and converted.
     ///
     /// # Errors
     ///
@@ -179,9 +182,18 @@ impl Repos {
             )]));
         };
         let repos: Vec<&RecipeRepo> = indices.iter().map(|&i| &self.repos[i]).collect();
-        // Every variant reads the same files, so the warnings of the first
-        // evaluation stand for all of them.
-        let (first, warnings) = self.evaluate_variant(name, &repos, Variant::Dynamic)?;
+        let roots: Vec<PathBuf> = repos.iter().map(|r| r.path.clone()).collect();
+        let host = host::host(roots.clone(), Scope::Package(name.to_string()));
+        let spec = RootSpec {
+            root_struct: "Recipes".to_owned(),
+            entries: roots
+                .iter()
+                .map(|r| r.join(RECIPES).join(name.as_str()).join(RECIPE_FILE))
+                .collect(),
+            import_roots: roots.iter().map(ImportRoot::new).collect(),
+        };
+        let checked = stav::check(&host, &spec).map_err(|e| Error::Report(own_codes(&e)))?;
+        let first = evaluate_variant(&checked, name, &repos, Variant::Dynamic)?;
         let mut recipes = Vec::new();
         let builds = convert::builds_for_arch(&repos, first.arch.as_deref());
         for variant in first.variants.iter().copied().collect::<BTreeSet<_>>() {
@@ -191,99 +203,109 @@ impl Repos {
             let recipe = if variant == Variant::Dynamic {
                 first.recipe.clone()
             } else {
-                self.evaluate_variant(name, &repos, variant)?.0.recipe
+                evaluate_variant(&checked, name, &repos, variant)?.recipe
             };
             recipes.push(recipe);
         }
-        let warnings = first.evaluated.diagnostics(warnings);
+        let warnings = checked.diagnostics(checked.warnings().iter().cloned());
         Ok(Evaluation { recipes, warnings })
     }
+}
 
-    fn evaluate_variant(
-        &self,
-        name: &Name,
-        repos: &[&RecipeRepo],
-        variant: Variant,
-    ) -> Result<(OneVariant, Vec<FileDiagnostic>), Error> {
-        let target = Target::new(variant);
-        let roots: Vec<PathBuf> = repos.iter().map(|r| r.path.clone()).collect();
-        let host = host::host(roots.clone(), Scope::Package(name.to_string()), target);
-        let spec = RootSpec {
-            root_struct: "Recipes".to_owned(),
-            entries: roots
-                .iter()
-                .map(|r| r.join(RECIPES).join(name.as_str()).join(RECIPE_FILE))
-                .collect(),
-            import_roots: roots.iter().map(ImportRoot::new).collect(),
-        };
-        let checked = stav::check(&host, &spec).map_err(Error::Report)?;
-        let evaluated = checked.eval(&Limits::default()).map_err(Error::Report)?;
-        let warnings: Vec<FileDiagnostic> = checked.warnings().iter().cloned().collect();
-        let mut found = Vec::new();
-        let declared = match evaluated.value_at(&AttrPath::new(["packages"])) {
-            Ok(Value::Map(entries)) => entries.iter().map(|(k, _)| k.clone()).collect(),
-            _ => Vec::new(),
-        };
-        for other in declared.iter().filter(|k| *k != name.as_str()) {
-            let span = evaluated
-                .spans(&AttrPath::new(["packages", other.as_str()]))
-                .first()
-                .copied();
-            found.push(FileDiagnostic {
-                file: span.map(|s| s.file),
-                diagnostic: Diagnostic::error(
-                    "R001",
-                    span.map_or(Span { start: 0, end: 0 }, |s| s.span),
-                    format!(
-                        "{RECIPES}/{name}/{RECIPE_FILE} declares package \"{other}\", expected \"{name}\""
-                    ),
+/// Evaluates the checked recipe of `name` for `variant`, checks it against
+/// the recipe rules and converts it.
+fn evaluate_variant(
+    checked: &Checked,
+    name: &Name,
+    repos: &[&RecipeRepo],
+    variant: Variant,
+) -> Result<OneVariant, Error> {
+    let target = Target::new(variant);
+    // The errors of any step are reported with the warnings of the check.
+    let failed = |errors: Vec<FileDiagnostic>| {
+        Error::Report(
+            checked.diagnostics(errors.into_iter().chain(checked.warnings().iter().cloned())),
+        )
+    };
+    let evaluated = checked
+        .eval_with(&Limits::default(), &target.values())
+        .map_err(|e| failed(e.iter().cloned().collect()))?;
+    let mut found = Vec::new();
+    let declared = match evaluated.value_at(&AttrPath::new(["packages"])) {
+        Ok(Value::Map(entries)) => entries.iter().map(|(k, _)| k.clone()).collect(),
+        _ => Vec::new(),
+    };
+    for other in declared.iter().filter(|k| *k != name.as_str()) {
+        let span = evaluated
+            .spans(&AttrPath::new(["packages", other.as_str()]))
+            .first()
+            .copied();
+        found.push(FileDiagnostic {
+            file: span.map(|s| s.file),
+            diagnostic: Diagnostic::error(
+                "R001",
+                span.map_or(Span { start: 0, end: 0 }, |s| s.span),
+                format!(
+                    "{RECIPES}/{name}/{RECIPE_FILE} declares package \"{other}\", expected \"{name}\""
                 ),
-            });
-        }
-        if !declared.iter().any(|k| k == name.as_str()) {
-            found.push(FileDiagnostic {
-                file: None,
-                diagnostic: Diagnostic::error(
-                    "R001",
-                    Span { start: 0, end: 0 },
-                    format!("{RECIPES}/{name}/{RECIPE_FILE} declares no package \"{name}\""),
-                ),
-            });
-        }
-        if !found.is_empty() {
-            return Err(Error::Report(
-                evaluated.diagnostics(found.into_iter().chain(warnings)),
-            ));
-        }
-        let package: schema::Package = evaluated
-            .get(&AttrPath::new(["packages", name.as_str()]))
-            .map_err(Error::Report)?;
-        let variants = package.variants.clone();
-        let arch = package.arch.clone();
-        let mut cx = Cx {
-            evaluated: &evaluated,
-            name,
-            target,
-            repos,
-            found: Vec::new(),
-        };
-        let recipe = convert::convert(&mut cx, package);
-        let found = cx.found;
-        match recipe {
-            Some(recipe) if found.is_empty() => Ok((
-                OneVariant {
-                    recipe,
-                    variants,
-                    arch,
-                    evaluated,
-                },
-                warnings,
-            )),
-            _ => Err(Error::Report(
-                evaluated.diagnostics(found.into_iter().chain(warnings)),
-            )),
-        }
+            ),
+        });
     }
+    if !declared.iter().any(|k| k == name.as_str()) {
+        found.push(FileDiagnostic {
+            file: None,
+            diagnostic: Diagnostic::error(
+                "R001",
+                Span { start: 0, end: 0 },
+                format!("{RECIPES}/{name}/{RECIPE_FILE} declares no package \"{name}\""),
+            ),
+        });
+    }
+    if !found.is_empty() {
+        return Err(failed(found));
+    }
+    let package: schema::Package = evaluated
+        .get(&AttrPath::new(["packages", name.as_str()]))
+        .map_err(|e| failed(e.iter().cloned().collect()))?;
+    let variants = package.variants.clone();
+    let arch = package.arch.clone();
+    let mut cx = Cx {
+        evaluated: &evaluated,
+        name,
+        target,
+        repos,
+        found: Vec::new(),
+    };
+    let recipe = convert::convert(&mut cx, package);
+    match recipe {
+        Some(recipe) if cx.found.is_empty() => Ok(OneVariant {
+            recipe,
+            variants,
+            arch,
+        }),
+        _ => Err(failed(cx.found)),
+    }
+}
+
+/// Reports a path or import that leaves the recipe repositories, which
+/// Stav reports as `E0702`, as `R002`.
+fn own_codes(report: &Report) -> Report {
+    report.with_items(report.iter().map(|item| {
+        match item.diagnostic.code {
+        "E0702" => FileDiagnostic {
+            file: item.file,
+            diagnostic: Diagnostic::error(
+                "R002",
+                item.diagnostic.span,
+                "the path leaves the recipe repository",
+            )
+            .with_help(format!(
+                "a recipe reads files only from {RECIPES}/<name>/ and {COMMON}/ of its repository"
+            )),
+        },
+        _ => item.clone(),
+    }
+    }))
 }
 
 /// A recipe evaluated for one variant, with what decides the others.
@@ -291,24 +313,20 @@ struct OneVariant {
     recipe: Recipe,
     variants: Vec<Variant>,
     arch: Option<Vec<String>>,
-    evaluated: stav::Evaluated,
 }
 
 /// Evaluates the descriptor of the repository at `path`.
 fn descriptor(path: &Path) -> Result<RecipeRepo, Error> {
-    let host = host::host(
-        vec![path.to_path_buf()],
-        Scope::Descriptor,
-        Target::new(Variant::Dynamic),
-    );
+    let host = host::host(vec![path.to_path_buf()], Scope::Descriptor);
     let spec = RootSpec {
         root_struct: "RecipeRepos".to_owned(),
         entries: vec![path.join(DESCRIPTOR)],
         import_roots: vec![ImportRoot::new(path)],
     };
-    let evaluated = stav::check(&host, &spec)
-        .and_then(|c| c.eval(&Limits::default()))
-        .map_err(Error::Report)?;
+    let checked = stav::check(&host, &spec).map_err(|e| Error::Report(own_codes(&e)))?;
+    let evaluated = checked.eval(&Limits::default()).map_err(|e| {
+        Error::Report(checked.diagnostics(e.iter().chain(checked.warnings().iter()).cloned()))
+    })?;
     let repos: BTreeMap<String, schema::RecipeRepo> = evaluated
         .get(&AttrPath::new(["repos"]))
         .map_err(Error::Report)?;

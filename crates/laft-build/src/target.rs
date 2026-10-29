@@ -2,6 +2,9 @@
 //! host module that exposes it to recipes.
 
 use laft_core::Variant;
+use stav::{HostValues, Value};
+
+use crate::host::TARGET_MODULE;
 
 /// The architecture every package is built for.
 pub const ARCH: &str = "x86_64-v3";
@@ -63,6 +66,16 @@ impl Target {
             Variant::Dynamic => "glibc",
             Variant::Static => "musl",
         }
+    }
+
+    /// The values of the `laft/target` module for this target, which one
+    /// checked recipe is evaluated with for every variant.
+    pub fn values(self) -> HostValues {
+        let text = |s: &str| Value::Str(s.to_owned());
+        HostValues::new()
+            .with(TARGET_MODULE, "variant", text(&self.variant.to_string()))
+            .with(TARGET_MODULE, "triple", text(self.triple()))
+            .with(TARGET_MODULE, "libc", text(self.libc()))
     }
 
     /// The source of the `laft/target` module for this target. The types

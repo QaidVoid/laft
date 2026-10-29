@@ -81,8 +81,11 @@ fn path_literals_stay_in_the_recipe_directory_and_common() {
     };
     let escaping = run("../../../../etc/passwd");
     assert_eq!(
-        escaping[0].0, "E0702",
-        "Stav refuses paths that leave the repository"
+        escaping,
+        [(
+            "R002".to_owned(),
+            "the path leaves the recipe repository".to_owned()
+        )]
     );
     let other = run("../bar/patches/x.patch");
     assert_eq!(other[0].0, "R002");
@@ -220,13 +223,26 @@ fn styles_and_empty_packages_fit_their_sources() {
 }
 
 #[test]
-fn environment_variables_are_named_and_never_replace_the_builder_s() {
+fn environment_variables_are_named_and_replace_the_builder_s_only_when_forced() {
     let body = |env: &str| format!("{SOURCE}  build custom {{}}\n  env {{ {env} }}");
     assert_eq!(codes("foo", &body("FOO_1 = \"x\"")), Vec::<String>::new());
     assert_eq!(codes("foo", &body("\"foo\" = \"x\"")), ["R030"]);
     assert_eq!(codes("foo", &body("\"1FOO\" = \"x\"")), ["R030"]);
     assert_eq!(codes("foo", &body("PATH = \"/bin\"")), ["R031"]);
     assert_eq!(codes("foo", &body("MAKEFLAGS = \"-j1\"")), ["R031"]);
+    assert_eq!(codes("foo", &body("PATH = default(\"/bin\")")), ["R031"]);
+
+    let dir = laft_test::tempdir();
+    let text = recipe("foo", &body("PATH = force(\"/opt/bin:/usr/bin\")"));
+    let repo = write_repo(
+        &dir.path().join("core"),
+        "core",
+        "",
+        &[("recipes/foo/package.stav", &text)],
+    );
+    let repos = Repos::open(&[repo]).expect("the repository opens");
+    let recipes = support::evaluate(&repos, "foo");
+    assert_eq!(recipes[0].env["PATH"], "/opt/bin:/usr/bin");
 }
 
 #[test]
@@ -311,4 +327,44 @@ fn recipes_branch_on_the_target_they_are_evaluated_for() {
             ("x86_64-laft-linux-musl", "musl", true)
         ]
     );
+}
+
+#[test]
+fn warnings_are_reported_with_the_errors_of_a_failed_evaluation() {
+    let text = format!(
+        "let dynamic: Variant = Variant.static\n{}",
+        recipe(
+            "foo",
+            &format!("{SOURCE}  build custom {{}}\n  variants = [dynamic]\n  rev = 1 / 0")
+        )
+    );
+    let found = errors("foo", &[("recipes/foo/package.stav", &text)]);
+    let codes: Vec<&str> = found.iter().map(|(code, _)| code.as_str()).collect();
+    assert_eq!(codes, ["E0603", "W0302"], "{found:?}");
+}
+
+#[test]
+fn a_missing_patch_is_reported_where_the_list_names_it() {
+    let dir = laft_test::tempdir();
+    let text = recipe(
+        "foo",
+        &format!("{SOURCE}  build custom {{}}\n  patches = [./a.patch, ./missing.patch]"),
+    );
+    let repo = write_repo(
+        &dir.path().join("core"),
+        "core",
+        "",
+        &[
+            ("recipes/foo/package.stav", &text),
+            ("recipes/foo/a.patch", "a\n"),
+        ],
+    );
+    let repos = Repos::open(&[repo]).expect("the repository opens");
+    let Err(Error::Report(report)) = repos.evaluate(&support::name("foo")) else {
+        panic!("the patch is missing");
+    };
+    let item = report.iter().next().expect("one error");
+    assert_eq!(item.diagnostic.code, "R006");
+    let source = report.source(item.file.expect("a place")).expect("known");
+    assert_eq!(&source[item.diagnostic.span.range()], "./missing.patch");
 }

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use laft_core::{Blake3Hash, Name, PkgRef, Sha256Hash, Variant};
-use stav::{AttrPath, Diagnostic, FileDiagnostic, Span};
+use stav::{AttrPath, Diagnostic, FileDiagnostic, Priority, Span};
 
 use crate::env::{self, EnvInput, RESERVED};
 use crate::loader::{COMMON, RECIPES};
@@ -101,7 +101,8 @@ pub(crate) fn convert(cx: &mut Cx<'_>, p: schema::Package) -> Option<Recipe> {
     let patches: Vec<FileRef> = p
         .patches
         .iter()
-        .filter_map(|path| file_ref(cx, &["patches"], path))
+        .enumerate()
+        .filter_map(|(i, path)| file_ref(cx, &["patches", &i.to_string()], path))
         .collect();
     let kernel_config = match &p.build {
         Build::Kernel { config, .. } => file_ref(cx, &["build", "kernel", "config"], config),
@@ -462,7 +463,8 @@ fn check_package_shape(cx: &mut Cx<'_>, p: &schema::Package) {
     }
 }
 
-/// Checks the names of the recipe's environment variables.
+/// Checks the names of the recipe's environment variables. A variable the
+/// builder sets may be replaced only with `force(...)`.
 fn check_env(cx: &mut Cx<'_>, env: &BTreeMap<String, String>) {
     for key in env.keys() {
         let mut bytes = key.bytes();
@@ -476,11 +478,18 @@ fn check_env(cx: &mut Cx<'_>, env: &BTreeMap<String, String>) {
                 "R030",
                 format!("environment variable `{key}` does not match [A-Z_][A-Z0-9_]*"),
             );
-        } else if RESERVED.contains(&key.as_str()) {
+        } else if RESERVED.contains(&key.as_str())
+            && cx.evaluated.priority(&AttrPath::new([
+                "packages",
+                cx.name.as_str(),
+                "env",
+                key.as_str(),
+            ])) != Some(Priority::Force)
+        {
             cx.error(
                 &["env", key],
                 "R031",
-                format!("environment variable `{key}` is set by the builder"),
+                format!("environment variable `{key}` is set by the builder, and only force(...) replaces it"),
             );
         }
     }
