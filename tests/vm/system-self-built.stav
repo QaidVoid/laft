@@ -8,7 +8,7 @@ system {
   hostname = "laft-vm"
 
   packages = [glibc, dash, bash, coreutils, util-linux, shadow, procps-ng, kmod, kbd,
-              grep, sed, udev, runit, linux, limine, laft]
+              grep, sed, udev, runit, linux, limine, dosfstools, laft]
 
   repo core {
     url = "file:///repo"

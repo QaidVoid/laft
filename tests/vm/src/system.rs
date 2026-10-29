@@ -26,6 +26,7 @@ pub(crate) const SELF_BUILT_PACKAGES: &[&str] = &[
     "bzip2",
     "coreutils",
     "dash",
+    "dosfstools",
     "file",
     "gcc-libs",
     "glibc",

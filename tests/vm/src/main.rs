@@ -175,7 +175,7 @@ fn test(keep: bool, system: &System) -> Result<()> {
     let vars = paths.work.join("vars.fd");
     let _ = fs::remove_file(&vars);
     qemu::prepare_vars(&vars)?;
-    first_boot(&paths, accel, &disk, &vars)?;
+    first_boot(&paths, accel, &disk, &vars, system)?;
     second_boot(&paths, accel, &disk, &vars)?;
     if !keep {
         for file in [disk, vars] {
@@ -270,6 +270,17 @@ fn power_off(machine: &mut Machine) -> Result<()> {
 }
 
 /// Fails unless `output` contains `needle`.
+/// Fails unless `output` lacks `needle`, which describes what `what`
+/// rules out.
+fn check_absent(what: &str, output: &str, needle: &str) -> Result<()> {
+    if output.contains(needle) {
+        Err(fail(format!("{what}: unexpected {needle:?} in:\n{output}")))
+    } else {
+        eprintln!("laft-vmtest: ok: {what}");
+        Ok(())
+    }
+}
+
 fn check(what: &str, output: &str, needle: &str) -> Result<()> {
     if output.contains(needle) {
         eprintln!("laft-vmtest: ok: {what}");
@@ -280,7 +291,13 @@ fn check(what: &str, output: &str, needle: &str) -> Result<()> {
 }
 
 /// Boots the new system and checks every stage, then the booted system.
-fn first_boot(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<()> {
+fn first_boot(
+    paths: &Paths,
+    accel: Accel,
+    disk: &Path,
+    vars: &Path,
+    system: &System,
+) -> Result<()> {
     let mut machine = start(paths, accel, disk, vars, "boot-1.log")?;
     machine.expect("Limine loads", "Booting automatically")?;
     machine.expect("Limine loads the kernel", "linux: Loading kernel")?;
@@ -300,6 +317,18 @@ fn first_boot(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<(
         "laft-vmtest: marker service is running",
     )?;
     login(&mut machine)?;
+    check_absent(
+        "every early service succeeded",
+        &machine.transcript(),
+        "laft: early service",
+    )?;
+    if matches!(system, System::SelfBuilt(_)) {
+        check_absent(
+            "the EFI system partition is checked",
+            &machine.transcript(),
+            "mounted unchecked",
+        )?;
+    }
     // boot-complete and the getty start together, so the note of
     // `laft boot mark-good` may come before or after the prompt.
     check(

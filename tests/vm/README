@@ -25,20 +25,24 @@ configuration in system.stav. The install runs in a machine because laft
 install wants the EFI system partition mounted as FAT, which an
 unprivileged user cannot do on the host. The disk then boots through the
 firmware, Limine and laft-boot into runit, and the harness checks each
-stage on the serial console, logs in as root, checks the boot state and
-the mounts of /laft and the generation, and powers off with runit-init 0.
-A second boot checks that the first one was recorded as good.
+stage on the serial console, logs in as root, checks that every early
+service succeeded, the boot state and the mounts of /laft and the
+generation, and powers off with runit-init 0. A second boot checks that
+the first one was recorded as good. The machine has no HPET, because with
+UEFI firmware it would leave the CMOS clock without interrupts, which
+hwclock waits for.
 
     tests/vm/run --self-built ~/.cache/laft-bootstrap/build/out
 
 installs the base system that the bootstrap of the recipe repository
 built instead, from the package files in the given directory: glibc,
-dash, bash, coreutils, util-linux, shadow, udev, runit, the kernel built
-from kernel.org source and Limine built from source, with the
+dash, bash, coreutils, util-linux, shadow, udev, runit, dosfstools, the
+kernel built from kernel.org source and Limine built from source, with the
 configuration in system-self-built.stav. Only busybox, which the
 installer runs, comes from recipes/. The self-built kernel boots the
 installer too. The system boots without busybox, with udev populating
-/dev, and the same checks run.
+/dev, and the same checks run, together with one that fsck.vfat checked
+the EFI system partition.
 
 laft-boot
 

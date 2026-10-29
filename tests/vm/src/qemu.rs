@@ -177,7 +177,12 @@ impl Machine {
     ) -> Result<Self> {
         check_memory()?;
         let mut command = Command::new("qemu-system-x86_64");
-        command.args(["-machine", "q35", "-smp", "2", "-m"]);
+        // Under UEFI firmware dated 2015 or later, the kernel's CMOS clock
+        // driver takes its alarm from the ACPI RTC event, which this
+        // machine never raises, while the HPET in legacy replacement mode
+        // takes over the clock's own IRQ 8. The clock would then deliver no
+        // interrupt, and hwclock, which waits for one, would time out.
+        command.args(["-machine", "q35,hpet=off", "-smp", "2", "-m"]);
         command.arg(MEMORY_MIB.to_string());
         match accel {
             Accel::Kvm => command.args(["-accel", "kvm", "-cpu", "host"]),
