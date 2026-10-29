@@ -283,6 +283,14 @@ fn sources(cx: &mut Cx<'_>, p: &schema::Package) -> Vec<Source> {
     for (label, s) in &p.sources {
         let keys = ["sources", label.as_str()];
         let what = format!("source \"{label}\" of {name}");
+        if !is_label(label) {
+            cx.error(
+                &keys,
+                "R018",
+                format!("{what} has a label that is not a plain name of letters, digits, `-`, `_` and `.`"),
+            );
+            continue;
+        }
         let dest = s.dest.clone().unwrap_or_else(|| {
             if label == "main" {
                 String::new()
@@ -515,6 +523,16 @@ fn check_relative(cx: &mut Cx<'_>, keys: &[&str], field: &str, path: &str) {
             ),
         );
     }
+}
+
+/// Whether `label` is a source label: one path component of ASCII letters,
+/// digits, `-`, `_` and `.` that does not start with `.`.
+fn is_label(label: &str) -> bool {
+    !label.starts_with('.')
+        && !label.is_empty()
+        && label
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
 /// Whether `file` can be the name of a downloaded file.

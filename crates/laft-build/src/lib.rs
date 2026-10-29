@@ -52,6 +52,7 @@
 //! | `R015` | a `dest`, `dir`, `subdir` or file name that is not a plain relative path |
 //! | `R016` | an empty package with sources or a style other than `custom`, or a package without sources that is not empty |
 //! | `R017` | the `cargo` or `go` style without the matching `vendor` block |
+//! | `R018` | a source label that is not a plain name of letters, digits, `-`, `_` and `.` |
 //! | `R030` | an `env` key that does not match `[A-Z_][A-Z0-9_]*` |
 //! | `R031` | an `env` key that the builder sets itself |
 //! | `R050` | an `update` block without exactly one of `github`, `gitlab`, `anitya` and `url`, or with `pattern` and `url` not set together |

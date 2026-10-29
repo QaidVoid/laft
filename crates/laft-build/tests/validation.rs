@@ -143,6 +143,32 @@ fn sources_need_https_a_hash_and_exactly_one_origin() {
 }
 
 #[test]
+fn source_labels_are_plain_names() {
+    let labelled = |label: &str| {
+        format!(
+            "  source {label} {{\n    url = [\"https://example.org/a.tar.gz\"]\n    sha256 = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n    dest = \"safe\"\n  }}\n  build custom {{}}"
+        )
+    };
+    for label in [
+        "\"../../victim\"",
+        "\"a/b\"",
+        "\"..\"",
+        "\".hidden\"",
+        "\"a b\"",
+        "\"\"",
+    ] {
+        assert_eq!(codes("foo", &labelled(label)), ["R018"], "{label}");
+    }
+    for label in ["main", "\"docs-1.2_x\""] {
+        assert_eq!(
+            codes("foo", &labelled(label)),
+            Vec::<String>::new(),
+            "{label}"
+        );
+    }
+}
+
+#[test]
 fn styles_and_empty_packages_fit_their_sources() {
     let vendor = "  vendor cargo { sha256 = \"sha256:1111111111111111111111111111111111111111111111111111111111111111\", source = \"other\" }";
     let cases = [
