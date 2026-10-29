@@ -433,6 +433,20 @@ fn a_failing_script_stops_the_stage_and_runs_again_next_time() {
 }
 
 #[test]
+fn a_script_stops_at_its_first_failing_command() {
+    if no_shell() {
+        return;
+    }
+    for script in ["false; true", "echo \"$UNSET\""] {
+        let dir = laft_test::tempdir();
+        let steps = format!("    {{ name = \"check\", script = {script:?} }},");
+        let stage = Stage::load(&write_stage(dir.path(), &steps)).unwrap();
+        let error = run(dir.path(), &stage, false).unwrap_err();
+        assert_eq!(error.code(), Some("B040"), "{script}: {error}");
+    }
+}
+
+#[test]
 fn a_root_with_another_layout_is_refused() {
     let dir = laft_test::tempdir();
     let stage = Stage::load(&write_stage(dir.path(), STEPS)).unwrap();

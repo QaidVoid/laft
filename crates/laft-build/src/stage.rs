@@ -356,8 +356,9 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// and the build database records it, so every later build of the stage
 /// sees it in its build view, in place of a seed of the same origin.
 ///
-/// A script runs with POSIX `sh` and `HOME`, `TMPDIR`, `LANG`, `LC_ALL`
-/// and `TZ` besides its own variables, and with `ROOT` when the stage has
+/// A script runs with POSIX `sh`, which stops at the first command that
+/// fails or the first unset variable, and with `HOME`, `TMPDIR`, `LANG`,
+/// `LC_ALL` and `TZ` besides its own variables, and with `ROOT` when the stage has
 /// a root: on the host in a scratch directory with the stage's search
 /// path, inside the root in `/` with `PATH=/usr/bin`, and in a view in a
 /// sandbox like a build's, whose `/usr` is a view of the build-side store
@@ -878,6 +879,7 @@ impl StageRun<'_> {
             &self.stage.path,
             serde_json::json!({ "script": script, "env": env }),
         )?;
+        let script = &format!("{}{script}", crate::Shell::Sh.header());
         if let Some(state) = self.skipped(step, key)? {
             progress(finished(&step.name, "script", state, Duration::ZERO));
             return Ok(key);

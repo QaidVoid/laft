@@ -59,9 +59,10 @@ struct Step {
   ## Packages built in this order and installed into the root or the
   ## store.
   packages: List<Pkg> = []
-  ## A POSIX shell script, such as a checkpoint. It runs once, and again
-  ## when it or an earlier step changes. `$ROOT` is the root as the script
-  ## sees it, unset in a view.
+  ## A POSIX shell script, such as a checkpoint. It stops at the first
+  ## command that fails, like a phase. It runs once, and again when it or
+  ## an earlier step changes. `$ROOT` is the root as the script sees it,
+  ## unset in a view.
   script:   Option<Str>
   ## Extra environment variables of the script.
   env:      Map<Str, Str> = {}
