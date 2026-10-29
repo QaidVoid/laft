@@ -277,13 +277,6 @@ fn check_services(cx: &Cx<'_>, services: &ServiceConfig, found: &mut Vec<FileDia
                     d.diagnostic.help = suggestion.as_ref().map(|s| format!("did you mean `{s}`?"));
                     d
                 }
-                // A getty is generated, so its dependency on a disabled
-                // service is shown where that service is disabled.
-                ServiceError::DisabledDependency { service: s, dep }
-                    if !services.services.contains_key(s) =>
-                {
-                    cx.error("C1205", &["system", "services", dep, "enable"], message)
-                }
                 ServiceError::DisabledDependency { service: s, dep }
                 | ServiceError::EarlyDependency { service: s, dep } => {
                     cx.element_error("C1205", &["system", "services", s, "after"], dep, message)

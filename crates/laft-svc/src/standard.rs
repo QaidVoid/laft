@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::model::{Getty, OnChange, Service, strings};
+use crate::model::{OnChange, Service, ServiceConfig, strings};
 
 /// The oneshot that ends the early boot graph. Every service outside the
 /// graph depends on it implicitly.
@@ -19,10 +19,11 @@ pub const ACTIVATE: &str = "laft-activate";
 /// The oneshot that marks the boot as good.
 pub const BOOT_COMPLETE: &str = "boot-complete";
 
-/// The login session tracker that every getty is ordered after.
+/// The login session tracker that every getty is ordered after when it is
+/// enabled.
 pub const TURNSTILED: &str = "turnstiled";
 
-/// The prefix of the services generated from [`Getty::ttys`].
+/// The prefix of the services generated from [`Getty::ttys`](crate::Getty::ttys).
 pub const GETTY_PREFIX: &str = "getty-";
 
 /// The name of the getty service for `tty`: the terminal name in lowercase
@@ -33,15 +34,25 @@ pub fn getty_name(tty: &str) -> String {
     format!("{GETTY_PREFIX}{}", tty.to_ascii_lowercase())
 }
 
-/// The services that give every terminal of `getty` a login prompt, by name.
-pub fn getty_services(getty: &Getty) -> BTreeMap<String, Service> {
-    getty
+/// The services that give every terminal of `config.getty` a login prompt,
+/// by name. Each is ordered after [`TURNSTILED`] only when `config`
+/// enables it, so that a system without the session tracker still gets
+/// its gettys.
+pub fn getty_services(config: &ServiceConfig) -> BTreeMap<String, Service> {
+    let tracked = config.services.get(TURNSTILED).is_some_and(|s| s.enable);
+    let after = if tracked {
+        strings(&[TURNSTILED])
+    } else {
+        Vec::new()
+    };
+    config
+        .getty
         .ttys
         .iter()
         .map(|tty| {
             let service = Service {
                 description: format!("Login prompt on {tty}"),
-                after: strings(&[TURNSTILED]),
+                after: after.clone(),
                 on_change: Some(OnChange::Restart),
                 ..Service::longrun(&["/usr/bin/agetty", "--noclear", tty, "38400", "linux"])
             };

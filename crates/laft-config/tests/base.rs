@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use laft_config::RundirOwner;
 use laft_core::{system_gid, system_uid};
-use laft_svc::{ACTIVATE, BOOT_COMPLETE, EARLY, ServiceKind, TURNSTILED};
+use laft_svc::{ACTIVATE, BOOT_COMPLETE, EARLY, ServiceKind, ServiceSet, TURNSTILED};
 use support::{codes, config_dir, load, load_body};
 
 #[test]
@@ -37,6 +37,19 @@ fn the_base_part_declares_an_early_graph_that_starts_with_activation() {
             "{name} does not wait for {ACTIVATE}"
         );
     }
+}
+
+#[test]
+fn gettys_wait_for_the_session_tracker_only_when_it_is_enabled() {
+    let getty_after = |body: &str| {
+        let loaded = load_body(body).expect("valid");
+        let set = ServiceSet::new(&loaded.config.services).expect("the services are valid");
+        set.specs()["getty-ttys0"].after.clone()
+    };
+    let getty = r#"getty { ttys = ["ttyS0"] }"#;
+    assert!(getty_after(getty).contains(&TURNSTILED.to_owned()));
+    let without = format!("{getty}\nservice turnstiled {{ enable = false }}");
+    assert!(!getty_after(&without).contains(&TURNSTILED.to_owned()));
 }
 
 #[test]

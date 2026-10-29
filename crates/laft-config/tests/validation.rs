@@ -405,13 +405,6 @@ fn dependencies_must_be_enabled() {
 }
 
 #[test]
-fn a_getty_after_a_disabled_session_tracker_points_at_the_disabling() {
-    let body = r#"getty { ttys = ["ttyS0"] }
-      service turnstiled { enable = false }"#;
-    assert_rejected(rejected(body), "C1205", "false");
-}
-
-#[test]
 fn dependency_cycles_are_rejected() {
     let body = r#"service a { exec = ["/usr/bin/a"], after = [b] }
       service b { exec = ["/usr/bin/b"], after = [a] }"#;

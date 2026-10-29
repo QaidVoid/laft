@@ -303,7 +303,7 @@ impl ServiceSet {
         }
         let mut declared = config.services.clone();
         check_ttys(&config.getty.ttys, &mut errors);
-        for (name, getty) in standard::getty_services(&config.getty) {
+        for (name, getty) in standard::getty_services(config) {
             match declared.entry(name) {
                 Entry::Occupied(entry) => errors.push(ConfigError::InvalidName {
                     service: entry.key().clone(),

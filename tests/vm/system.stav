@@ -34,9 +34,8 @@ system {
   service udevd { enable = false }
   service udev-trigger { up = ["/usr/bin/mdev", "-s"] }
 
-  # Every getty starts after the session tracker, which this system lacks,
-  # so a process that only waits stands in for it.
-  service turnstiled { exec = ["/usr/bin/sleep", "2147483647"] }
+  # This system has no session tracker.
+  service turnstiled { enable = false }
 
   service boot-complete { log = console }
 
