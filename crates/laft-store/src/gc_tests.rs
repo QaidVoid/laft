@@ -272,3 +272,36 @@ fn the_default_and_missing_generations_are_never_deleted() {
         "nothing was deleted"
     );
 }
+
+#[test]
+fn the_active_booted_and_unfinished_generations_are_never_deleted() {
+    let env = Env::new();
+    let one = Pkg::new("one", "1").file("usr/bin/one", b"1").build(&env);
+    for _ in 0..3 {
+        commit(&env, &[&one]);
+    }
+    let lock = env.lock();
+    let run = env.root.run_dir();
+    fs::create_dir_all(&run).expect("can create");
+    std::os::unix::fs::symlink("mounts/1", run.join("system")).expect("can link");
+    std::os::unix::fs::symlink("mounts/2", run.join("booted")).expect("can link");
+    for (number, why) in [(1, "active"), (2, "booted")] {
+        let refused = crate::remove_generations(&lock, &[number]);
+        assert!(
+            matches!(&refused, Err(crate::Error::Invalid(m)) if m.contains(why)),
+            "{refused:?}"
+        );
+    }
+    let mut activation = lock
+        .activate("switch", 1, None, &["mount"])
+        .expect("starts an activation of 1");
+    activation.step_finished().expect("records");
+    drop(activation);
+    fs::remove_file(run.join("system")).expect("can remove");
+    let refused = crate::remove_generations(&lock, &[1]);
+    assert!(
+        matches!(&refused, Err(crate::Error::Invalid(m)) if m.contains("unfinished")),
+        "{refused:?}"
+    );
+    assert_eq!(env.root.generations().expect("lists"), vec![1, 2, 3]);
+}
