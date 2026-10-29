@@ -13,7 +13,7 @@ workspace = true
 [dependencies]
 blake3.workspace = true
 laft-core.workspace = true
-rustix = { workspace = true, features = ["event", "fs", "pipe", "process", "stdio", "thread"] }
+rustix = { workspace = true, features = ["event", "fs", "pipe", "process", "rand", "stdio", "thread"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 

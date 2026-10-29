@@ -9,10 +9,12 @@
 //! which running services to stop, redefine and start when the system
 //! switches generations, and the [`Launcher`] does at every start what the
 //! init system cannot express: dependency gates, readiness, directories,
-//! limits and privilege dropping.
+//! limits and privilege dropping. [`builtin`] holds the steps of the early
+//! boot graph that Laft runs itself.
 
 #![forbid(unsafe_code)]
 
+pub mod builtin;
 mod error;
 mod graph;
 mod launcher;
