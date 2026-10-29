@@ -69,7 +69,9 @@ pub struct Buildinfo {
     pub plan_hash: Blake3Hash,
     /// The recipe repositories that contributed, lowest priority first.
     pub recipe_repos: Vec<RepoState>,
-    /// The hash of every source, in plan order.
+    /// The hash of every source that declares one, in plan order. A git
+    /// source without a `sha256` is left out, because its hash is known
+    /// only once its tarball has been made.
     pub sources: Vec<SourceHash>,
     /// The hash of every vendor tarball.
     pub vendors: Vec<VendorHash>,
@@ -227,7 +229,8 @@ impl std::error::Error for BuildinfoError {
 impl Buildinfo {
     /// The parts of a buildinfo that come from the recipe alone, with
     /// everything the build itself decides left empty: no repository
-    /// states, build view, outputs or ABI digests, and a host to fill in.
+    /// states, build view, environment, outputs or ABI digests, and a host
+    /// to fill in. Sources are listed as [`Buildinfo::sources`] describes.
     pub fn for_recipe(recipe: &Recipe, build_key: Blake3Hash, host: BuildinfoHost) -> Self {
         Self {
             format: BUILDINFO_FORMAT,
