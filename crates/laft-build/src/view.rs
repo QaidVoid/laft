@@ -221,16 +221,7 @@ pub fn assemble(
     }
     Ok(BuildView {
         usr: tree.join("usr"),
-        packages: chosen
-            .iter()
-            .map(|e| ViewPackage {
-                name: e.meta.name.clone(),
-                version: e.meta.version.clone(),
-                rev: e.meta.rev,
-                variant: e.meta.variant,
-                id: e.id,
-            })
-            .collect(),
+        packages: chosen.iter().map(|e| view_package(e)).collect(),
         sonames: chosen
             .iter()
             .flat_map(|e| &e.meta.provides)
@@ -269,6 +260,38 @@ pub fn assemble_smoke(
     let origin = format!("smoke test of {}", main.meta.name);
     resolve(&entries, &refs, &origin, Some(main), store, tree)?;
     Ok(tree.join("usr"))
+}
+
+/// Assembles a view of `refs` and their runtime dependency closure as
+/// `tree/usr` from the [`usable`] packages of `store` with the seeds
+/// `seeds`, such as the view a checkpoint of a stage runs in, and returns
+/// its packages, sorted by name. `origin` names the view in errors.
+///
+/// # Errors
+///
+/// Fails with `B050` when the store cannot satisfy `refs`, and when the
+/// tree cannot be assembled.
+pub fn assemble_view(
+    store: &Store,
+    seeds: &BTreeSet<StoreId>,
+    refs: &[PkgRef],
+    origin: &str,
+    tree: &Path,
+) -> Result<Vec<ViewPackage>, BuildError> {
+    let entries = usable(store_entries(store)?, seeds);
+    let chosen = resolve(&entries, refs, origin, None, store, tree)?;
+    Ok(chosen.iter().map(|e| view_package(e)).collect())
+}
+
+/// The [`ViewPackage`] that `entry` is in a view.
+fn view_package(entry: &StoreEntry) -> ViewPackage {
+    ViewPackage {
+        name: entry.meta.name.clone(),
+        version: entry.meta.version.clone(),
+        rev: entry.meta.rev,
+        variant: entry.meta.variant,
+        id: entry.id,
+    }
 }
 
 /// Resolves `refs` against `entries`, preferring the installed `pinned`

@@ -131,17 +131,19 @@ pub(crate) enum Command {
         packages: Vec<String>,
     },
     /// Run a bootstrap stage: build the packages of a stage file into a
-    /// root, on the host or inside the root entered as a chroot, and run
-    /// its scripts, in order. Finished steps and the finished packages of a
-    /// step are skipped, so a failed run continues with the package or
-    /// script that failed. A step that changed runs again, and so does
-    /// every step after it.
+    /// root, on the host or inside the root entered as a chroot, or into
+    /// the build-side store, and run its scripts, in order. Finished steps
+    /// and the finished packages of a step are skipped, so a failed run
+    /// continues with the package or script that failed. A step that
+    /// changed runs again, and so does every step after it.
     Stage {
         /// The stage file.
         file: PathBuf,
-        /// The root the stage builds. It gets Laft's top-level layout.
+        /// The root the stage builds. It gets Laft's top-level layout. A
+        /// stage that installs into the store has none, and every other
+        /// stage needs one.
         #[arg(long, value_name = "DIR")]
-        root: PathBuf,
+        root: Option<PathBuf>,
         /// The available memory, in GiB, that a build of a recipe whose CI
         /// runner is `big` waits for, at most 1048576.
         #[arg(

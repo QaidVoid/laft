@@ -23,20 +23,23 @@ struct StageFile {
 }
 
 ## Where a step of a stage runs.
-type Place = host | root
+type Place = host | root | view
 
 ## How the packages of a stage reach its root.
-type Install = direct | packages
+type Install = direct | packages | store
 
 ## A stage of a bootstrap: steps that build packages from one recipe
-## repository into a root directory, or run scripts, in order.
+## repository into a root directory or the build-side store, or run
+## scripts, in order.
 struct Stage {
   ## The recipe repository of the packages, relative to the stage file.
   recipes: Str
   ## `direct` installs every build straight into the root and makes no
   ## package. `packages` makes Laft packages, keeps them in the output
   ## directory of the build root and unpacks them into the root, all but
-  ## the debug info.
+  ## the debug info. `store` builds every package in a sandbox with a
+  ## build view of the build-side store, which its packages enter for the
+  ## builds after it. A `store` stage has no root.
   install: Install = direct
   ## Directories below the root that steps on the host search for programs
   ## before the host's own, such as the bin directory of a cross toolchain.
@@ -49,16 +52,22 @@ struct Stage {
 struct Step {
   ## The name in progress reports and logs, unique in the stage.
   name:     Str where matches(r"^[a-z0-9][a-z0-9-]*$")
-  ## On the host, or inside the root entered as a chroot.
+  ## On the host, inside the root entered as a chroot, or, for a script
+  ## of a `store` stage, in a sandbox whose `/usr` is a view of the
+  ## build-side store that holds the packages of `view`.
   place:    Place = host
-  ## Packages built in this order and installed into the root.
+  ## Packages built in this order and installed into the root or the
+  ## store.
   packages: List<Pkg> = []
   ## A POSIX shell script, such as a checkpoint. It runs once, and again
   ## when it or an earlier step changes. `$ROOT` is the root as the script
-  ## sees it.
+  ## sees it, unset in a view.
   script:   Option<Str>
   ## Extra environment variables of the script.
   env:      Map<Str, Str> = {}
+  ## The packages of the view a script with `place = view` runs in. Their
+  ## runtime dependencies come with them.
+  view:     List<Pkg> = []
 }
 
 ## The identity of a recipe repository.

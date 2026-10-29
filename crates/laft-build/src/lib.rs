@@ -41,7 +41,8 @@
 //!    under construction instead of making packages, and
 //!    [`Builder::build_into`] makes the packages and unpacks them there. A
 //!    [`Stage`] runs such builds and scripts in order, on the host or
-//!    inside the root entered as a chroot, with [`run_stage`].
+//!    inside the root entered as a chroot, or store builds and scripts in
+//!    views of the store, with [`run_stage`].
 //! 7. A [`Buildinfo`] records what one build used and produced, as
 //!    canonical JSON written next to its packages, and the [`Db`] keeps
 //!    the record that plans the next run. [`check_repro`] rebuilds and
@@ -74,7 +75,7 @@
 //! | `R030` | an `env` key that does not match `[A-Z_][A-Z0-9_]*` |
 //! | `R031` | an `env` key that the builder sets itself, unless it is set with `force(...)`, and always `JOBS` and `MAKEFLAGS` |
 //! | `R050` | an `update` block without exactly one of `github`, `gitlab`, `anitya` and `url`, or with `pattern` and `url` not set together |
-//! | `R060` | a stage file without exactly one stage, a stage name that does not start with a lowercase letter or digit followed by lowercase letters, digits and dashes, a step that sets both or neither of `packages` and `script`, a step name used twice, a search directory that is not a plain relative path, a missing recipe repository, or a package that builds nothing in the variant named |
+//! | `R060` | a stage file without exactly one stage, a stage name that does not start with a lowercase letter or digit followed by lowercase letters, digits and dashes, a step that sets both or neither of `packages` and `script`, a step name used twice, a search directory that is not a plain relative path, a missing recipe repository, a package that builds nothing in the variant named, a step or search directory that a stage building into the store cannot have, a view script outside such a stage or without packages, a view named by a step that does not run in one, or a stage given a root it cannot have or missing one it needs |
 //!
 //! Between recipes, and while planning, these problems are found:
 //!

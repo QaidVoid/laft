@@ -43,7 +43,8 @@ const STEPS: &str = r#"    { name = "build", packages = [greet] },
 /// The options of a run into `dir/root`.
 fn options(dir: &Path) -> StageOptions {
     StageOptions {
-        root: dir.join("root"),
+        root: Some(dir.join("root")),
+        check: false,
         jobs: 1,
         timeout: Duration::from_secs(600),
         min_available: 0,
@@ -828,4 +829,260 @@ fn a_root_script_that_runs_too_long_is_killed() {
         !root.join("survived").exists(),
         "the script was killed before it wrote its marker"
     );
+}
+
+/// Writes a recipe repository with `greet` and a stage file that builds
+/// into the store with `steps` below `dir`, and returns the stage file.
+fn write_store_stage(dir: &Path, steps: &str) -> PathBuf {
+    let file = write_stage(dir, steps);
+    let text = fs::read_to_string(&file)
+        .unwrap()
+        .replace("  path = [\"tools/bin\"]\n", "  install = store\n");
+    fs::write(&file, text).unwrap();
+    file
+}
+
+/// The options of a run of a stage without a root.
+fn store_options(dir: &Path) -> StageOptions {
+    StageOptions {
+        root: None,
+        ..options(dir)
+    }
+}
+
+#[test]
+fn a_store_stage_takes_view_scripts_and_refuses_what_needs_a_root() {
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "build", packages = [greet] },
+    { name = "check", place = view, view = [greet, dash], script = "true" },"#;
+    let stage = Stage::load(&write_store_stage(dir.path(), steps)).unwrap();
+    assert_eq!(stage.install, Install::Store);
+    assert_eq!(stage.steps[1].place, Place::View);
+    assert_eq!(
+        stage.steps[1].work,
+        Work::Script {
+            script: "true".into(),
+            env: BTreeMap::new(),
+            view: vec!["greet".parse().unwrap(), "dash".parse().unwrap()],
+        }
+    );
+    for (steps, store) in [
+        (
+            r#"    { name = "a", place = root, script = "true" },"#,
+            true,
+        ),
+        (
+            r#"    { name = "a", place = root, packages = [greet] },"#,
+            true,
+        ),
+        (
+            r#"    { name = "a", place = view, packages = [greet] },"#,
+            true,
+        ),
+        (
+            r#"    { name = "a", place = view, script = "true" },"#,
+            true,
+        ),
+        (
+            r#"    { name = "a", view = [greet], script = "true" },"#,
+            true,
+        ),
+        (
+            r#"    { name = "a", place = view, view = [greet], script = "true" },"#,
+            false,
+        ),
+    ] {
+        let dir = laft_test::tempdir();
+        let file = if store {
+            write_store_stage(dir.path(), steps)
+        } else {
+            write_stage(dir.path(), steps)
+        };
+        let error = Stage::load(&file).unwrap_err();
+        assert!(error.to_string().contains("R060"), "{steps}: {error}");
+    }
+    let file = write_stage(dir.path(), "    { name = \"a\", script = \"true\" },");
+    let text = fs::read_to_string(&file).unwrap().replace(
+        "  path = [\"tools/bin\"]\n",
+        "  install = store\n  path = [\"tools/bin\"]\n",
+    );
+    fs::write(&file, text).unwrap();
+    let error = Stage::load(&file).unwrap_err();
+    assert!(error.to_string().contains("no root to search"), "{error}");
+}
+
+#[test]
+fn only_a_store_stage_runs_without_a_root() {
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "check", script = "true" },"#;
+    let store = Stage::load(&write_store_stage(dir.path(), steps)).unwrap();
+    let error = run_with(dir.path(), &store, &options(dir.path())).unwrap_err();
+    assert_eq!(error.code(), Some("R060"));
+    let other = Stage::load(&write_stage(dir.path(), steps)).unwrap();
+    let error = run_with(dir.path(), &other, &store_options(dir.path())).unwrap_err();
+    assert_eq!(error.code(), Some("R060"));
+    assert!(!dir.path().join("root").exists());
+}
+
+/// The files of a package that holds the host's `/bin/sh` and `mkdir` at
+/// `usr/bin`, with their loader and libraries in `usr/lib`, where the
+/// `lib` and `lib64` links of a view lead, so that they run in a view.
+fn host_tools() -> Vec<(String, Vec<u8>)> {
+    let mut files = Vec::new();
+    let dir = laft_test::tempdir();
+    let mut libraries = BTreeSet::new();
+    for (name, host) in [("sh", "/bin/sh"), ("mkdir", "/bin/mkdir")] {
+        let host = fs::canonicalize(host).unwrap();
+        files.push((format!("usr/bin/{name}"), fs::read(&host).unwrap()));
+        copy_libraries(dir.path(), &host);
+    }
+    for (rel, kind) in crate::fsx::walk(dir.path()).unwrap() {
+        if kind == crate::fsx::Kind::File {
+            libraries.insert(rel);
+        }
+    }
+    for rel in libraries {
+        let under_usr = rel.strip_prefix("usr/").unwrap_or(&rel);
+        let inside = match under_usr.split_once('/') {
+            Some(("lib" | "lib64", rest)) => format!("usr/lib/{rest}"),
+            _ => format!("usr/{under_usr}"),
+        };
+        files.push((inside, fs::read(dir.path().join(&rel)).unwrap()));
+    }
+    files
+}
+
+/// The build root `dir/build` with every package of the build base in its
+/// store, `dash` with [`host_tools`].
+fn store_with_host_tools(dir: &Path) {
+    let store = BuildRoot::new(dir.join("build")).store();
+    let tools = host_tools();
+    let files: Vec<(&str, &[u8])> = tools
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_slice()))
+        .collect();
+    for name in crate::view::BUILD_BASE {
+        let package = crate::test_support::TestPkg::new(name);
+        if *name == "dash" {
+            crate::test_support::TestPkg {
+                files: &files,
+                ..package
+            }
+            .add(&store, dir);
+        } else {
+            package.add(&store, dir);
+        }
+    }
+}
+
+/// The store stage with `steps` below `dir`, whose `greet` finds the
+/// libraries of [`host_tools`].
+fn host_tools_stage(dir: &Path, steps: &str) -> Stage {
+    let stage = Stage::load(&write_store_stage(dir, steps)).unwrap();
+    // Some hosts' dynamic loaders search only `/usr/lib64`, which no view
+    // has.
+    fs::write(
+        stage.recipes.join("recipes/greet/package.stav"),
+        RECIPE.replace(
+            "  build custom {}",
+            "  build custom {}\n  env = { LD_LIBRARY_PATH = \"/usr/lib\" }",
+        ),
+    )
+    .unwrap();
+    stage
+}
+
+#[test]
+fn a_store_stage_builds_into_the_store_and_checks_in_views() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "build", packages = [greet] },
+    { name = "check", place = view, view = [greet, dash],
+      env = { LD_LIBRARY_PATH = "/usr/lib" }, script = """
+        read -r line < /usr/share/greeting
+        test "$line" = hi
+        test -z "${ROOT:-}"
+        """ },"#;
+    let stage = host_tools_stage(dir.path(), steps);
+    store_with_host_tools(dir.path());
+    let pending = run_with(
+        dir.path(),
+        &stage,
+        &StageOptions {
+            dry_run: true,
+            ..store_options(dir.path())
+        },
+    )
+    .unwrap();
+    assert!(
+        pending.iter().all(|(_, s)| *s == StageState::Pending),
+        "{pending:?}"
+    );
+    let result = run_with(dir.path(), &stage, &store_options(dir.path()));
+    if refused(&result) {
+        return;
+    }
+    let first = result.unwrap();
+    assert!(
+        first.iter().all(|(_, s)| *s == StageState::Done),
+        "{first:?}"
+    );
+    let build = BuildRoot::new(dir.path().join("build"));
+    let greet = crate::view::store_entries(&build.store())
+        .unwrap()
+        .into_iter()
+        .find(|e| e.meta.name.as_str() == "greet")
+        .expect("greet entered the store");
+    assert!(
+        build
+            .store()
+            .path(&greet.dir)
+            .join("usr/share/greeting")
+            .is_file()
+    );
+    let latest = build
+        .db()
+        .latest(&Item::new(
+            "greet".parse().unwrap(),
+            laft_core::Variant::Dynamic,
+        ))
+        .unwrap()
+        .expect("the database records the build");
+    assert_eq!(latest.record.outputs.values().next(), Some(&greet.id));
+    assert!(dir.path().join("build/stages/demo/check").is_file());
+    let log = fs::read_to_string(dir.path().join("build/logs/stage/demo/02-check.log")).unwrap();
+    assert!(log.starts_with("the view holds:\n"), "{log}");
+    assert!(
+        log.contains(&format!("  greet 1-r1 {}\n", greet.id)),
+        "{log}"
+    );
+    assert!(!dir.path().join("build/work/stage-demo-check").exists());
+
+    let second = run_with(dir.path(), &stage, &store_options(dir.path())).unwrap();
+    assert!(
+        second.iter().all(|(_, s)| *s == StageState::UpToDate),
+        "{second:?}"
+    );
+
+    let failing = steps.replace("test -z", "test -n");
+    let stage = host_tools_stage(dir.path(), &failing);
+    let error = run_with(dir.path(), &stage, &store_options(dir.path())).unwrap_err();
+    assert_eq!(error.code(), Some("B040"), "{error}");
+    assert!(
+        dir.path()
+            .join("build/work/stage-demo-check/build")
+            .is_dir()
+    );
+}
+
+#[test]
+fn a_view_the_store_cannot_satisfy_stops_the_stage() {
+    let dir = laft_test::tempdir();
+    let steps = r#"    { name = "check", place = view, view = [missing], script = "true" },"#;
+    let stage = Stage::load(&write_store_stage(dir.path(), steps)).unwrap();
+    let error = run_with(dir.path(), &stage, &store_options(dir.path())).unwrap_err();
+    assert_eq!(error.code(), Some("B050"), "{error}");
+    assert!(!dir.path().join("build/stages/demo/check").exists());
 }

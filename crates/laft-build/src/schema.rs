@@ -253,4 +253,5 @@ pub(crate) struct Step {
     pub(crate) packages: Vec<PkgRef>,
     pub(crate) script: Option<String>,
     pub(crate) env: BTreeMap<String, String>,
+    pub(crate) view: Vec<PkgRef>,
 }

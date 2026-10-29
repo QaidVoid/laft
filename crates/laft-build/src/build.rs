@@ -36,6 +36,7 @@ use crate::{
 /// | `work/<key>/` | the working tree of a build, removed after success |
 /// | `logs/<name>+<variant>/<key>/<phase>.log` | the output of every phase |
 /// | `tmp/` | staging for the store |
+/// | `stages/<stage>/<step>` | the records of a stage that builds into the store |
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildRoot {
     path: PathBuf,

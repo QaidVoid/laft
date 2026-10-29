@@ -172,6 +172,7 @@ pub(crate) struct TestPkg<'a> {
 
 impl<'a> TestPkg<'a> {
     /// A `dynamic` package `name` with one file `usr/share/<name>/file`.
+    /// Files below `usr/bin/` and ELF files are executable.
     pub(crate) fn new(name: &'a str) -> Self {
         Self {
             name,
@@ -210,8 +211,13 @@ impl<'a> TestPkg<'a> {
             self.files.to_vec()
         };
         write_tree(&payload, &files);
-        for (path, _) in &files {
-            std::fs::set_permissions(payload.join(path), std::fs::Permissions::from_mode(0o444))
+        for (path, bytes) in &files {
+            let mode = if path.starts_with("usr/bin/") || bytes.starts_with(b"\x7fELF") {
+                0o555
+            } else {
+                0o444
+            };
+            std::fs::set_permissions(payload.join(path), std::fs::Permissions::from_mode(mode))
                 .expect("chmod");
         }
         let meta = laft_pkg::Meta {

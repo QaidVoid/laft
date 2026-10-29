@@ -331,6 +331,36 @@ fn stage_usage_errors_exit_with_2() {
     let file = stage_file(dir.path(), "nonexistent");
     let output = without_recipes(dir.path(), &["stage", &file, "--root", root, "--dry-run"]);
     assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let file = stage_file(dir.path(), "zlib");
+    let output = without_recipes(dir.path(), &["stage", &file, "--dry-run"]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("needs a root"));
+}
+
+#[test]
+fn a_store_stage_dry_run_needs_no_root_and_refuses_one() {
+    let dir = laft_test::tempdir();
+    let file = dir.path().join("store.stav");
+    std::fs::write(
+        &file,
+        format!(
+            "stage s {{\n  recipes = \"{}\"\n  install = store\n  steps = [\n    \
+             {{ name = \"check\", place = view, view = [zlib], script = \"true\" }},\n  ]\n}}\n",
+            support::core().display()
+        ),
+    )
+    .unwrap();
+    let file = file.to_str().unwrap();
+    let output = without_recipes(dir.path(), &["stage", file, "--dry-run"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(stdout(&output), "check: script: pending (0s)\n");
+    let root = dir.path().join("system");
+    let output = without_recipes(
+        dir.path(),
+        &["stage", file, "--root", root.to_str().unwrap(), "--dry-run"],
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(!root.exists());
 }
 
 #[test]

@@ -742,7 +742,7 @@ struct StageArgs {
 fn stage(
     build_root: &BuildRoot,
     file: &Path,
-    root: PathBuf,
+    root: Option<PathBuf>,
     run: &StageArgs,
     options: &BuildOptions,
     json: bool,
@@ -760,7 +760,8 @@ fn stage(
     let laft_build = std::env::current_exe()
         .map_err(|e| Failure::Environment(format!("cannot find laft-build itself: {e}")))?;
     let options = StageOptions {
-        root: absolute(&root)?,
+        root: root.as_deref().map(absolute).transpose()?,
+        check: !options.no_check,
         jobs: options.jobs.unwrap_or_else(|| {
             std::thread::available_parallelism().map_or(1, |n| u32::try_from(n.get()).unwrap_or(1))
         }),

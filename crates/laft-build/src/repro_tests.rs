@@ -31,14 +31,14 @@ fn differing_files_are_listed_with_both_versions() {
             .first
             .as_deref()
             .unwrap()
-            .starts_with("file 444 2 ")
+            .starts_with("file 555 2 ")
     );
     assert!(
         differing[0]
             .second
             .as_deref()
             .unwrap()
-            .starts_with("file 444 3 ")
+            .starts_with("file 555 3 ")
     );
 }
 

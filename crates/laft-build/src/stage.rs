@@ -1,6 +1,7 @@
 //! Bootstrap stages: a list of steps in a Stav file that build packages
 //! into a root directory, on the host or inside the root entered as a
-//! chroot, and run scripts such as checkpoints.
+//! chroot, or into the build-side store, and run scripts such as
+//! checkpoints.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -32,6 +33,9 @@ pub enum Place {
     Host,
     /// Inside the root, entered as a chroot through a [`RootSandbox`].
     Root,
+    /// For a script of an [`Install::Store`] stage: in a sandbox whose
+    /// `/usr` is a view of the build-side store.
+    View,
 }
 
 /// How the packages of a [`Stage`] reach its root.
@@ -45,6 +49,10 @@ pub enum Install {
     /// of the build root and are unpacked into the root with
     /// [`Builder::build_into`].
     Packages,
+    /// Every build runs in [`Mode::Store`] on the host, with a build view
+    /// of the build-side store, and its packages enter the store, where the
+    /// builds after it find them. Such a stage has no root.
+    Store,
 }
 
 /// A bootstrap stage, read from a stage file with [`Stage::load`].
@@ -86,6 +94,8 @@ pub enum Work {
         script: String,
         /// The extra environment variables.
         env: BTreeMap<String, String>,
+        /// For [`Place::View`], the packages of the view it runs in.
+        view: Vec<PkgRef>,
     },
 }
 
@@ -100,8 +110,11 @@ impl Stage {
     /// neither of `packages` and `script`, a stage name that does not start
     /// with a lowercase letter or digit followed by lowercase letters,
     /// digits and dashes, a step name used twice, a search
-    /// directory that is not a plain relative path, or a recipe repository
-    /// that does not exist.
+    /// directory that is not a plain relative path, a recipe repository
+    /// that does not exist, a step of an [`Install::Store`] stage inside
+    /// the root, a search directory of such a stage, a [`Place::View`] step
+    /// that is not a script of such a stage or has an empty view, or a view
+    /// on a step that does not run in one.
     pub fn load(file: &Path) -> Result<Self, Error> {
         let problem = |message: String| Error::Problems(vec![Problem::new("R060", message)]);
         let file = fs::canonicalize(file)
@@ -161,6 +174,12 @@ impl Stage {
             }
             path.push(PathBuf::from(dir));
         }
+        let store = stage.install == Install::Store;
+        if store && !path.is_empty() {
+            return Err(problem(format!(
+                "stage {name}: a stage that installs into the store has no root to search"
+            )));
+        }
         let mut names = BTreeSet::new();
         let mut steps = Vec::new();
         for step in stage.steps {
@@ -175,6 +194,7 @@ impl Stage {
                 (true, Some(script)) => Work::Script {
                     script,
                     env: step.env,
+                    view: step.view.clone(),
                 },
                 _ => {
                     return Err(problem(format!(
@@ -183,6 +203,22 @@ impl Stage {
                     )));
                 }
             };
+            let script = matches!(work, Work::Script { .. });
+            let wrong = match step.place {
+                Place::Root if store => Some("runs inside the root of a stage that has none"),
+                Place::View if !store => {
+                    Some("runs in a view, which only a stage that installs into the store has")
+                }
+                Place::View if !script => Some("builds packages in a view"),
+                Place::View if step.view.is_empty() => Some("runs in a view without packages"),
+                Place::Host | Place::Root if !step.view.is_empty() => {
+                    Some("names a view but does not run in one")
+                }
+                _ => None,
+            };
+            if let Some(wrong) = wrong {
+                return Err(problem(format!("stage {name}: step {} {wrong}", step.name)));
+            }
             steps.push(Step {
                 name: step.name,
                 place: step.place,
@@ -202,8 +238,11 @@ impl Stage {
 /// How [`run_stage`] runs a stage.
 #[derive(Debug, Clone)]
 pub struct StageOptions {
-    /// The root the packages are installed into and `root` steps run in.
-    pub root: PathBuf,
+    /// The root the packages are installed into and `root` steps run in,
+    /// which every stage needs except one of [`Install::Store`].
+    pub root: Option<PathBuf>,
+    /// Whether the check phases of [`Install::Store`] builds run.
+    pub check: bool,
     /// The number of parallel jobs inside one build.
     pub jobs: u32,
     /// The longest one phase or script may run.
@@ -281,8 +320,13 @@ const INSIDE_RECIPES: &str = "laft-recipes";
 const INSIDE_LAFT_BUILD: &str = "laft-build";
 
 /// Where steps record that they ran, relative to the root: one record per
-/// step, `<stage>/<step>`, that holds the key of the step.
+/// step, `<stage>/<step>`, that holds the key of the step. A stage without
+/// a root keeps them in [`STORE_STEPS_RUN`] of the build root instead.
 const STEPS_RUN: &str = "var/lib/laft-build/stages";
+
+/// Where the steps of an [`Install::Store`] stage record that they ran,
+/// relative to the build root, laid out like [`STEPS_RUN`].
+const STORE_STEPS_RUN: &str = "stages";
 
 /// The top-level links of Laft's merged `/usr`.
 const ROOT_LINKS: [(&str, &str); 4] = [
@@ -306,13 +350,24 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// root and the recipe repository bound below `/run`, after the host
 /// fetched the sources.
 ///
-/// A script runs with POSIX `sh` and `ROOT`, `HOME`, `TMPDIR`, `LANG`,
-/// `LC_ALL` and `TZ` besides its own variables: on the host in a scratch
-/// directory with the stage's search path, inside the root in `/` with
-/// `PATH=/usr/bin`.
+/// A stage of [`Install::Store`] has no root. Each of its packages is built
+/// with [`Builder::build`] in [`Mode::Store`], with the check phase when
+/// [`StageOptions::check`] says so, its packages enter the build-side store
+/// and the build database records it, so every later build of the stage
+/// sees it in its build view, in place of a seed of the same origin.
+///
+/// A script runs with POSIX `sh` and `HOME`, `TMPDIR`, `LANG`, `LC_ALL`
+/// and `TZ` besides its own variables, and with `ROOT` when the stage has
+/// a root: on the host in a scratch directory with the stage's search
+/// path, inside the root in `/` with `PATH=/usr/bin`, and in a view in a
+/// sandbox like a build's, whose `/usr` is a view of the build-side store
+/// with the step's packages and their runtime dependencies, with a
+/// scratch directory as `/build` and `PATH=/usr/bin`. The log of a script
+/// in a view starts with the packages of the view and their store ids.
 ///
 /// Every step has a key that covers where it runs, on the host together
-/// with the stage's search directories, its script and environment or the
+/// with the stage's search directories and in a view with its packages,
+/// its script and environment or the
 /// build keys of its packages and whether they are made into packages, and
 /// the key of the step before it, so it covers every earlier step too.
 /// Once a step succeeded, its key is recorded in the root. A step whose
@@ -332,12 +387,14 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 ///
 /// # Errors
 ///
-/// Fails like [`Builder::install`] or [`Builder::build_into`], with
-/// `B040` for a script or a build
+/// Fails like [`Builder::install`], [`Builder::build_into`] or
+/// [`Builder::build`], with `B040` for a script or a build
 /// inside the root that fails, with `B030` for a script that runs longer
-/// than [`StageOptions::timeout`], and with `B042` when the root's top-level
+/// than [`StageOptions::timeout`], with `B042` when the root's top-level
 /// entries differ from Laft's layout or when `laft-build` is not static
-/// but a step builds inside the root.
+/// but a step builds inside the root, with `B050` when the store cannot
+/// satisfy the view of a script, and with `R060` when an
+/// [`Install::Store`] stage is given a root or another stage none.
 pub fn run_stage(
     stage: &Stage,
     repos: &Repos,
@@ -346,9 +403,29 @@ pub fn run_stage(
     options: &StageOptions,
     progress: &mut dyn FnMut(StageEvent<'_>),
 ) -> Result<(), BuildError> {
-    let root = &options.root;
+    let store = stage.install == Install::Store;
+    match (&options.root, store) {
+        (Some(_), true) => {
+            return Err(BuildError::problem(
+                "R060",
+                format!(
+                    "stage {} installs into the store and has no root",
+                    stage.name
+                ),
+            ));
+        }
+        (None, false) => {
+            return Err(BuildError::problem(
+                "R060",
+                format!("stage {} needs a root", stage.name),
+            ));
+        }
+        _ => {}
+    }
     if !options.dry_run {
-        layout(root)?;
+        if let Some(root) = &options.root {
+            layout(root)?;
+        }
         if stage
             .steps
             .iter()
@@ -369,13 +446,18 @@ fn run_steps(
     options: &StageOptions,
     progress: &mut dyn FnMut(StageEvent<'_>),
 ) -> Result<(), BuildError> {
-    let root = &options.root;
-    let mut builder = Builder::new(repos, cache, build_root, Mode::Bootstrap("/".into()));
-    builder.check = false;
+    let mode = match stage.install {
+        Install::Store => Mode::Store,
+        Install::Direct | Install::Packages => Mode::Bootstrap("/".into()),
+    };
+    let mut builder = Builder::new(repos, cache, build_root, mode);
+    builder.check = options.check && stage.install == Install::Store;
     builder.jobs = options.jobs;
     builder.timeout = options.timeout;
     builder.mirrors = options.mirrors.clone();
-    builder.search = stage.path.iter().map(|p| root.join(p)).collect();
+    if let Some(root) = &options.root {
+        builder.search = stage.path.iter().map(|p| root.join(p)).collect();
+    }
     let logs = build_root.logs().join("stage").join(&stage.name);
     let runner = StageRun {
         stage,
@@ -395,9 +477,7 @@ fn run_steps(
                 }
                 runner.packages(step, &tag, &found, previous, progress)?
             }
-            Work::Script { script, env } => {
-                runner.script(step, &tag, script, env, previous, progress)?
-            }
+            Work::Script { .. } => runner.script(step, &tag, previous, progress)?,
         };
         previous = Some(key);
     }
@@ -406,7 +486,8 @@ fn run_steps(
 
 /// The key of `step`, whose own work is `work`, after the step whose key is
 /// `previous`. A step on the host also covers `path`, the stage's search
-/// directories, which decide the programs it finds.
+/// directories, which decide the programs it finds, and a step in a view
+/// the packages of its view.
 fn step_key(
     step: &Step,
     previous: Option<Blake3Hash>,
@@ -418,9 +499,18 @@ fn step_key(
         "place": "root",
         "work": work,
     });
-    if step.place == Place::Host {
-        value["place"] = "host".into();
-        value["path"] = path.iter().map(|p| p.to_string_lossy()).collect();
+    match step.place {
+        Place::Host => {
+            value["place"] = "host".into();
+            value["path"] = path.iter().map(|p| p.to_string_lossy()).collect();
+        }
+        Place::View => {
+            value["place"] = "view".into();
+            if let Work::Script { view, .. } = &step.work {
+                value["view"] = view.iter().map(ToString::to_string).collect();
+            }
+        }
+        Place::Root => {}
     }
     let bytes = laft_core::to_canonical_json(&value)
         .map_err(|e| BuildError::problem("B023", format!("step {}: {e}", step.name)))?;
@@ -521,13 +611,22 @@ struct StageRun<'a> {
 }
 
 impl StageRun<'_> {
-    /// The record of `step` in the root.
+    /// The record of `step`, in the root or, for a stage without one, in
+    /// the build root.
     fn record(&self, step: &Step) -> PathBuf {
-        self.options
-            .root
-            .join(STEPS_RUN)
-            .join(&self.stage.name)
-            .join(&step.name)
+        let dir = match &self.options.root {
+            Some(root) => root.join(STEPS_RUN),
+            None => self.build_root.path().join(STORE_STEPS_RUN),
+        };
+        dir.join(&self.stage.name).join(&step.name)
+    }
+
+    /// The root, which [`run_stage`] checked every stage but one of
+    /// [`Install::Store`] has.
+    fn root(&self) -> Result<&Path, BuildError> {
+        self.options.root.as_deref().ok_or_else(|| {
+            BuildError::problem("R060", format!("stage {} needs a root", self.stage.name))
+        })
     }
 
     /// What becomes of `step` with the key `key` instead of running: up to
@@ -561,6 +660,7 @@ impl StageRun<'_> {
         let work = |keys: &[String]| match self.stage.install {
             Install::Direct => serde_json::json!({ "packages": keys }),
             Install::Packages => serde_json::json!({ "packages": keys, "install": "packages" }),
+            Install::Store => serde_json::json!({ "packages": keys, "install": "store" }),
         };
         let key = step_key(step, previous, &self.stage.path, work(&keys))?;
         if !self.options.rebuild && read_key(&self.record(step))? == Some(key) {
@@ -620,7 +720,6 @@ impl StageRun<'_> {
         inputs: &KeyInputs,
         progress: &mut dyn FnMut(StageEvent<'_>),
     ) -> Result<(), BuildError> {
-        let root = &self.options.root;
         let item = Item::of(recipe);
         let what = item.to_string();
         if recipe.operations.ci.runner == Runner::Big {
@@ -633,13 +732,24 @@ impl StageRun<'_> {
         let started = Instant::now();
         match step.place {
             Place::Host => match self.stage.install {
-                Install::Direct => self.builder.install(recipe, inputs, root)?,
+                Install::Direct => self.builder.install(recipe, inputs, self.root()?)?,
                 Install::Packages => {
-                    let outcome = self.builder.build_into(recipe, inputs, root)?;
+                    let outcome = self.builder.build_into(recipe, inputs, self.root()?)?;
+                    self.build_root.db().record(&outcome.stored)?;
+                }
+                Install::Store => {
+                    let outcome = self.builder.build(recipe, inputs)?;
                     self.build_root.db().record(&outcome.stored)?;
                 }
             },
+            Place::View => {
+                return Err(BuildError::problem(
+                    "R060",
+                    format!("step {} builds packages in a view", step.name),
+                ));
+            }
             Place::Root => {
+                let root = self.root()?;
                 // The build inside skips a package whose record shows its
                 // key, so the record goes first to make it build again.
                 forget_key(&installed_record(root, &item))?;
@@ -682,7 +792,7 @@ impl StageRun<'_> {
             "/",
             match self.stage.install {
                 Install::Direct => "--install",
-                Install::Packages => "--unpack",
+                Install::Packages | Install::Store => "--unpack",
             },
             "/",
             "--jobs",
@@ -693,7 +803,7 @@ impl StageRun<'_> {
         ]
         .map(String::from);
         let command = self
-            .sandbox()
+            .sandbox()?
             .bind(&self.options.laft_build, INSIDE_LAFT_BUILD, false)
             .command(run(INSIDE_LAFT_BUILD))
             .args(args)
@@ -701,10 +811,10 @@ impl StageRun<'_> {
         self.run_logged(command, log, package, None)
     }
 
-    fn sandbox(&self) -> RootSandbox {
-        RootSandbox::new(&self.options.root)
+    fn sandbox(&self) -> Result<RootSandbox, BuildError> {
+        Ok(RootSandbox::new(self.root()?)
             .bind(self.build_root.path(), INSIDE_BUILD_ROOT, true)
-            .bind(&self.stage.recipes, INSIDE_RECIPES, false)
+            .bind(&self.stage.recipes, INSIDE_RECIPES, false))
     }
 
     /// Runs `command` with its output in `log`, killing it after `timeout`
@@ -752,11 +862,15 @@ impl StageRun<'_> {
         &self,
         step: &Step,
         tag: &str,
-        script: &str,
-        env: &BTreeMap<String, String>,
         previous: Option<Blake3Hash>,
         progress: &mut dyn FnMut(StageEvent<'_>),
     ) -> Result<Blake3Hash, BuildError> {
+        let Work::Script { script, env, view } = &step.work else {
+            return Err(BuildError::problem(
+                "R060",
+                format!("step {} runs no script", step.name),
+            ));
+        };
         let root = &self.options.root;
         let key = step_key(
             step,
@@ -790,7 +904,9 @@ impl StageRun<'_> {
                     let path = scratch.join(dir);
                     fs::create_dir_all(&path).map_err(io(&path))?;
                 }
-                vars.insert("ROOT".to_owned(), root.display().to_string());
+                if let Some(root) = root {
+                    vars.insert("ROOT".to_owned(), root.display().to_string());
+                }
                 vars.insert(
                     "HOME".to_owned(),
                     scratch.join("home").display().to_string(),
@@ -800,7 +916,8 @@ impl StageRun<'_> {
                     scratch.join("tmp").display().to_string(),
                 );
                 vars.extend(env.clone());
-                Executor::direct("/", &scratch, root, self.logs)
+                let out = root.clone().unwrap_or_else(|| scratch.join("out"));
+                Executor::direct("/", &scratch, &out, self.logs)
                     .search_first(self.builder.search.clone())
                     .timeout(self.options.timeout)
                     .run(tag, script, &vars)?;
@@ -812,13 +929,19 @@ impl StageRun<'_> {
                 vars.insert("TMPDIR".to_owned(), "/tmp".to_owned());
                 vars.extend(env.clone());
                 let command = vars.iter().fold(
-                    self.sandbox()
+                    self.sandbox()?
                         .command("/bin/sh")
                         .args(["-c", script, &step.name]),
                     |c, (k, v)| c.env(k, v),
                 );
                 let log = self.logs.join(format!("{tag}.log"));
                 self.run_logged(command, &log, &step.name, Some(self.options.timeout))?;
+            }
+            Place::View => {
+                vars.insert("HOME".to_owned(), "/build/home".to_owned());
+                vars.insert("TMPDIR".to_owned(), "/build/tmp".to_owned());
+                vars.extend(env.clone());
+                self.in_view(step, tag, script, view, &vars)?;
             }
         }
         write_key(&self.record(step), &key)?;
@@ -829,6 +952,52 @@ impl StageRun<'_> {
             started.elapsed(),
         ));
         Ok(key)
+    }
+
+    /// Runs `script` for `step` in a sandbox whose `/usr` is a view of the
+    /// build-side store with the packages `view` and their runtime
+    /// dependencies, with the environment `vars`. Its scratch directory,
+    /// which holds the view and the sandbox's `/build` and `/out`, is
+    /// removed after a success and kept after a failure.
+    fn in_view(
+        &self,
+        step: &Step,
+        tag: &str,
+        script: &str,
+        view: &[PkgRef],
+        vars: &BTreeMap<String, String>,
+    ) -> Result<(), BuildError> {
+        let scratch = self
+            .build_root
+            .work()
+            .join(format!("stage-{}-{}", self.stage.name, step.name));
+        fsx::remove_tree(&scratch)?;
+        let (build, out, tree) = (
+            scratch.join("build"),
+            scratch.join("out"),
+            scratch.join("tree"),
+        );
+        for dir in [build.join("home"), build.join("tmp"), out.clone()] {
+            fs::create_dir_all(&dir).map_err(io(&dir))?;
+        }
+        let packages = crate::view::assemble_view(
+            &self.builder.store,
+            &self.builder.seeds()?,
+            view,
+            &format!("view of step {}", step.name),
+            &tree,
+        )?;
+        fs::create_dir_all(self.logs).map_err(io(self.logs))?;
+        let log = self.logs.join(format!("{tag}.log"));
+        let mut header = String::from("the view holds:\n");
+        for p in &packages {
+            header.push_str(&format!("  {} {}-r{} {}\n", p.name, p.version, p.rev, p.id));
+        }
+        fs::write(&log, header).map_err(io(&log))?;
+        Executor::sandboxed(tree.join("usr"), &build, &out, self.logs)
+            .timeout(self.options.timeout)
+            .run(tag, script, vars)?;
+        fsx::remove_tree(&scratch)
     }
 
     fn wait_for_memory(&self, progress: &mut dyn FnMut(StageEvent<'_>)) -> Result<(), BuildError> {
