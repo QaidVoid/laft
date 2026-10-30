@@ -75,7 +75,10 @@ pub use error::{ConfigError, Conflict, ConflictKind, Error, Result, Setting, War
 pub use esp::{BootInstall, check_esp, install_boot};
 pub use etc::{EtcReport, OnConflict, check_etc, reconcile_etc, reset_etc};
 pub use initramfs::{BootRecord, Host, InitrdPackage, initrd_packages};
-pub use live::{LIVE_STEPS, LiveActivation, Mounts, Services, activate_live, resume_live};
+pub use live::{
+    InitialNamespace, LIVE_STEPS, LiveActivation, Services, activate_live, reconcile_services,
+    resume_live,
+};
 pub use privileged::{PRIVILEGED_FILE, PrivilegedFile, PrivilegedRecord, ViewPrivileges};
 pub use render::{EtcTree, Node, render};
 pub use trial::{mark_booted_good, mark_good, record_event, start_trial};

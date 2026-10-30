@@ -20,6 +20,10 @@
 //!    `laft-boot`, runit, the services and a getty on the serial console.
 //!    The test logs in, checks the booted system and powers it off, then
 //!    boots it a second time to check that the boot was recorded as good.
+//! 5. A copy of the disk boots a third time. The test adds a service and
+//!    changes the hostname in the configuration, runs `laft apply` and
+//!    checks, without a reboot, that the service runs and the hostname
+//!    changed.
 //!
 //! With `--self-built DIR`, the installed system is instead the base system
 //! that the bootstrap of the recipe repository built, taken from the package
@@ -177,6 +181,7 @@ fn test(keep: bool, system: &System) -> Result<()> {
     qemu::prepare_vars(&vars)?;
     first_boot(&paths, accel, &disk, &vars, system)?;
     second_boot(&paths, accel, &disk, &vars)?;
+    third_boot(&paths, accel, &disk, &vars)?;
     if !keep {
         for file in [disk, vars] {
             let _ = fs::remove_file(file);
@@ -379,4 +384,55 @@ fn second_boot(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<
     check("generation 1 is still good", &state, "\"good\":[1]")?;
     check("nothing is bad", &state, "\"bad\":[]")?;
     power_off(&mut machine)
+}
+
+/// Boots a copy of `disk` and `vars`, so that the kept image stays as it
+/// was installed, and checks [`apply_live`] on it. The copy is removed
+/// afterwards.
+fn third_boot(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<()> {
+    let copies = [
+        paths.work.join("apply.img"),
+        paths.work.join("apply-vars.fd"),
+    ];
+    let copy = |from: &Path, to: &Path| {
+        let _ = fs::remove_file(to);
+        fs::copy(from, to).map_err(|e| fail(format!("copying {}: {e}", from.display())))
+    };
+    let result = copy(disk, &copies[0])
+        .and_then(|_| copy(vars, &copies[1]))
+        .and_then(|_| {
+            let mut machine = start(paths, accel, &copies[0], &copies[1], "boot-3.log")?;
+            login(&mut machine)?;
+            apply_live(&mut machine)?;
+            power_off(&mut machine)
+        });
+    for file in copies {
+        let _ = fs::remove_file(file);
+    }
+    result
+}
+
+/// Adds a service and changes the hostname in the configuration, applies
+/// it on the running system and checks, without a reboot, that the
+/// service runs and the hostname changed.
+fn apply_live(machine: &mut Machine) -> Result<()> {
+    shell(
+        machine,
+        "sed -i -e 's/\"laft-vm\"/\"laft-vm2\"/' -e '$d' /etc/laft/system.stav && \
+         printf '%s\\n' '  service hello {' \
+         '    exec = [\"/usr/bin/sh\", \"-c\", \"exec sleep 2147483647\"]' '  }' '}' \
+         >> /etc/laft/system.stav",
+    )?;
+    let applied = shell(machine, "laft apply --yes; echo \"apply-status=$?\"")?;
+    check("laft apply succeeds", &applied, "apply-status=0")?;
+    let links = shell(machine, "readlink /run/laft/system")?;
+    check("generation 2 is active", &links, "mounts/2")?;
+    let name = shell(machine, "uname -n")?;
+    check("the new hostname is set", &name, "laft-vm2")?;
+    let status = shell(machine, "sv status /run/runit/service/hello")?;
+    check(
+        "the new service runs",
+        &status,
+        "run: /run/runit/service/hello",
+    )
 }

@@ -48,6 +48,7 @@ The first run downloads and builds its packages. Later runs find them up to date
 3. **Install.** A GPT disk image gets an empty FAT32 EFI system partition and an empty ext4 root. An installer machine boots the kernel directly, mounts both filesystems, runs `laft hardware --write` to describe them, and runs `laft install` with the configuration in `tests/vm/system.stav`.
 4. **Boot.** The disk boots through the UEFI firmware, Limine and `laft-boot` into runit. The harness watches the serial console for every stage, logs in as root, and checks that every early service succeeded, that `/run/laft/system` points at generation 1, and that `/laft` is mounted read-only, `nosuid` and `nodev`.
 5. **Boot again.** A second boot checks that the first one was recorded as good in `/laft/state/boot.json`.
+6. **Apply live.** A third boot, from a copy of the disk, adds a service and changes the host name in `/etc/laft/system.stav`, runs `laft apply`, and checks without a reboot that the service runs and that `uname -n` prints the new name. The copy is removed afterwards, so the kept image is the system as it was installed.
 
 Everything lives in `~/.cache/laft-vm`. The disk image, the firmware variables and the console log of each machine are in `~/.cache/laft-vm/work`:
 
@@ -56,7 +57,7 @@ Everything lives in `~/.cache/laft-vm`. The disk image, the firmware variables a
 | `disk.img` | The installed system, kept by `--keep` |
 | `vars.fd` | The UEFI variables of the machine, kept by `--keep` |
 | `install.log` | The console of the installer, with the output of `laft install` |
-| `boot-1.log`, `boot-2.log` | The consoles of the two boots |
+| `boot-1.log`, `boot-2.log`, `boot-3.log` | The consoles of the three boots |
 
 ## Boot it yourself
 
@@ -168,11 +169,11 @@ The configuration is in `/etc/laft/system.stav`, and busybox `vi` can edit it. A
   }
 ```
 
-The test system's repository was served by the installer and is not reachable from the installed system, so pass `--offline`. Laft then works from the index it already accepted and the packages already in the store, which is all this change needs.
+The repository that the installer served is not reachable from the installed system, but this change needs no new package. Laft works from the index it accepted at installation and from the packages already in the store. When that index is more than an hour old, `laft apply` first tries to sync it, warns that the sync failed, and goes on with the accepted one.
 
 ```console
-# laft plan --offline
-evaluating  /etc/laft/system.stav  2 files  72 ms
+# laft plan
+evaluating  /etc/laft/system.stav  2 files  10 ms
 resolving   system
 generation 2 (from 1)
   system            = unchanged
@@ -180,8 +181,8 @@ generation 2 (from 1)
     + hello
 
   download 0 B - store +0 B - 0 packages
-# laft apply --offline --diff -m "add the hello service"
-evaluating  /etc/laft/system.stav  2 files  25 ms
+# laft apply --diff -m "add the hello service"
+evaluating  /etc/laft/system.stav  2 files  5 ms
 resolving   system
 generation 2 (from 1)
   system            = unchanged
@@ -193,33 +194,52 @@ generation 2 (from 1)
 proceed? [Y/n] y
 warning: privileged "/usr/bin/doas" is inactive: the generation has no regular file at that path
 ...
-assembling  generation 2  621 ms
+assembling  generation 2  103 ms
 --- /etc/hostname
 +++ /etc/hostname
 @@ -1,1 +1,1 @@
 -laft-vm
 +laft-demo
-...
+--- /etc/hosts
++++ /etc/hosts
+@@ -1,3 +1,3 @@
+ 127.0.0.1 localhost
+ ::1 localhost
+-127.0.1.1 laft-vm
++127.0.1.1 laft-demo
+boot        entry 2 installed
 activating  ok mount ok switch ok views ok etc ok accounts ok services ok unmount
 done        generation 2 is active and default
 ```
 
 The warnings come from the base part, which declares privileged programs such as `doas` and `passwd` that this minimal system does not contain. Generation 2 reuses every store entry of generation 1. Only its `/etc`, its services and its configuration differ, which `laft gens diff 1 2` lists.
 
-::: warning A known gap in live switching
-On this test system, `laft apply` switches to generation 2 but does not start the new `hello` service. It warns that it could not add the service and exits with status 3, which means the generation is active but a service did not become ready. The service runs after a reboot. Live switching is implemented and covered by unit tests, but its tests on a booted machine are still being written. Booting into a new generation is the path that is tested end to end today.
-:::
+The running system uses generation 2 at once, without a reboot. The new service runs, and the `hostname` step ran again because `/etc/hostname` changed:
 
-Reboot into the new generation with `runit-init 6`, and `hello` is up with the new host name. Then go back:
+```console
+# laft svc status hello
+SERVICE  STATE  READY  PID  UPTIME
+hello    up     yes    174  0 ms
+# uname -n
+laft-demo
+# laft svc log hello
+2026-10-30_18:01:42.08238 hello
+```
+
+Go back the same way:
 
 ```console
 # laft rollback
 activating  ok mount ok switch ok views ok etc ok accounts ok services ok unmount
 done        generation 1 is active and default
+# uname -n
+laft-vm
+# laft svc status hello
+error: no service hello is enabled
 # laft gens list
 GEN  FLAGS  CREATED           PKGS  KERNEL    MESSAGE
-2           2026-10-30 17:16  5     7.2.13_1  add the hello service
-1    * b d  2026-10-30 17:13  5     7.2.13_1
+2           2026-10-30 18:01  5     7.2.13_1  add the hello service
+1    * b d  2026-10-30 18:00  5     7.2.13_1
 ```
 
 Generation 2 is still there, and `laft switch 2` returns to it. Both generations are in the boot menu, and `laft boot list` shows which one boots by default.

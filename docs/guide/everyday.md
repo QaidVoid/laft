@@ -44,14 +44,26 @@ Useful options of `apply`:
 | `--build-only` | Build the generation and do nothing else. |
 | `--dry-run` | Only show the plan, like `laft plan`. |
 | `--adopt <path>` | Move an unmanaged file in `/etc` aside instead of failing when the new generation manages that path. |
-| `--offline` | Never use the network. Work from the accepted indexes and the store. |
+| `--offline` | Never use the network. Indexes and packages come only from `file://` repositories and from what was downloaded before. |
 | `-y` | Do not ask. |
 
 `laft upgrade` applies with the newest versions of the named packages, or of every package when none is named. Plain `laft apply` keeps installed versions as long as they still satisfy everything.
 
-::: warning Live switching is early
-Activating a generation on the running system is implemented, but its tests on a booted machine are still being written. On the test machine, a service added by `laft apply` did not start until the next boot. Installing a generation and booting it is the path that is tested end to end today.
-:::
+The new generation takes effect on the running system at once. Services that it adds start, services that it removes stop, and changed services restart or run again as their `on_change` says. The early steps that read a changed file in `/etc`, such as `hostname`, run again too. Check the result without a reboot:
+
+```console
+# laft apply -m "add the hello service"
+...
+activating  ok mount ok switch ok views ok etc ok accounts ok services ok unmount
+done        generation 2 is active and default
+# laft svc status hello
+SERVICE  STATE  READY  PID  UPTIME
+hello    up     yes    174  0 ms
+# uname -n
+laft-demo
+```
+
+A change that only a reboot can apply, such as one to an early longrun, is listed as `services    <name> changes on the next boot`. `laft apply --boot` builds the generation and makes it the default for the next boot without touching the running system.
 
 ## Generations
 
@@ -86,7 +98,10 @@ generation 1 -> 2
     ~ hosts
   services
     + hello
+    ~ hostname
   config hostname: "laft-vm" -> "laft-demo"
+  config services.hello.after: - -> []
+  config services.hello.cwd: - -> "/"
   config services.hello.description: - -> "Say hello once a minute"
   ...
 ```

@@ -23,6 +23,22 @@ pub const BOOT_COMPLETE: &str = "boot-complete";
 /// enabled.
 pub const TURNSTILED: &str = "turnstiled";
 
+/// The files and directories below a generation's `etc` that standard early
+/// oneshots read, by service name, for the oneshots that can safely run
+/// again on a live system. A directory stands for every file directly in
+/// it. Their content is not part of a spec, so reconciliation compares
+/// them between generations with
+/// [`etc_changed`](crate::reconcile::etc_changed) to tell whether such a
+/// service changed. `mount-fs` and `swap` also read `fstab`, but are left
+/// out, because running `mount-fs` again first unmounts filesystems that
+/// may be in use. A changed `fstab` takes effect at the next boot.
+pub const ETC_INPUTS: &[(&str, &[&str])] = &[
+    ("console", &["vconsole.conf"]),
+    ("hostname", &["hostname"]),
+    ("kmod", &["modprobe.d", "modules-load.d"]),
+    ("sysctl", &["sysctl.d/laft.conf"]),
+];
+
 /// The prefix of the services generated from [`Getty::ttys`](crate::Getty::ttys).
 pub const GETTY_PREFIX: &str = "getty-";
 

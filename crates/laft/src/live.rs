@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use laft_activate::{LiveActivation, Mounts, Services};
+use laft_activate::{InitialNamespace, LiveActivation, Services};
 use laft_store::{Activation as Journaled, Lock};
 
 use crate::activate::Activation;
@@ -12,7 +12,8 @@ use crate::env::Env;
 use crate::failure::Failure;
 use crate::worker::{self, Request};
 
-/// The generation mounts of the running system, made by the coordinator.
+/// The steps of a live activation that the coordinator carries out in the
+/// initial mount namespace.
 pub(crate) struct Coordinator<'e> {
     env: &'e Env,
 }
@@ -23,9 +24,11 @@ impl<'e> Coordinator<'e> {
     }
 }
 
-impl Mounts for Coordinator<'_> {
+impl InitialNamespace for Coordinator<'_> {
     fn mount(&mut self, number: u64) -> Result<(), String> {
-        worker::request(self.env, &Request::Mount { generation: number }).map_err(|f| f.message)
+        worker::request(self.env, &Request::Mount { generation: number })
+            .map(drop)
+            .map_err(|f| f.message)
     }
 
     fn unmount(&mut self, keep: &[u64]) -> Result<(), String> {
@@ -35,7 +38,18 @@ impl Mounts for Coordinator<'_> {
                 keep: keep.to_vec(),
             },
         )
+        .map(drop)
         .map_err(|f| f.message)
+    }
+
+    fn services(&mut self, previous: Option<u64>, number: u64) -> Result<Services, String> {
+        let request = Request::Services {
+            previous,
+            generation: number,
+        };
+        worker::request(self.env, &request)
+            .map_err(|f| f.message)?
+            .ok_or_else(|| "the coordinator did not report on the services".to_owned())
     }
 }
 

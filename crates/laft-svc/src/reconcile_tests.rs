@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 
-use super::{Class, Plan, Start, plan};
+use super::{Class, Plan, Start, etc_changed, plan};
 use crate::runit::{Unit, render};
 use crate::test_support::{config, dbus, example, myapp, valid};
 use crate::{Log, OnChange, Ready, Service, ServiceConfig};
@@ -10,7 +11,7 @@ fn units(config: &ServiceConfig) -> BTreeMap<String, Unit> {
 }
 
 fn reconcile(old: &ServiceConfig, new: &ServiceConfig) -> Plan {
-    plan(&units(old), &units(new))
+    plan(&units(old), &units(new), &BTreeSet::new())
 }
 
 fn changed(class: Class, plan: &Plan) -> Vec<&str> {
@@ -99,6 +100,32 @@ fn changed_early_oneshot_is_rerun_without_a_reboot() {
     assert!(plan.stop.is_empty());
     assert_eq!(plan.start, [Start::Rerun("hostname".into())]);
     assert!(plan.add.is_empty() && plan.reboot.is_empty());
+}
+
+#[test]
+fn an_early_oneshot_whose_etc_input_changed_is_rerun() {
+    let units = units(&example());
+    let plan = plan(&units, &units, &BTreeSet::from(["hostname".to_owned()]));
+    assert_eq!(plan.classes["hostname"], Class::Changed(OnChange::Rerun));
+    assert_eq!(plan.start, [Start::Rerun("hostname".into())]);
+    assert!(plan.stop.is_empty() && plan.reboot.is_empty());
+}
+
+#[test]
+fn etc_inputs_that_differ_name_their_services() {
+    let dir = laft_test::tempdir();
+    let (old, new) = (dir.path().join("old"), dir.path().join("new"));
+    for (etc, name) in [(&old, "forge\n"), (&new, "anvil\n")] {
+        fs::create_dir_all(etc.join("sysctl.d")).expect("writable");
+        fs::write(etc.join("hostname"), name).expect("writable");
+        fs::write(etc.join("sysctl.d/laft.conf"), "").expect("writable");
+    }
+    fs::write(new.join("vconsole.conf"), "KEYMAP=de\n").expect("writable");
+    fs::create_dir_all(new.join("modules-load.d")).expect("writable");
+    fs::write(new.join("modules-load.d/custom.conf"), "kvm\n").expect("writable");
+    let changed: Vec<String> = etc_changed(&old, &new).into_iter().collect();
+    assert_eq!(changed, ["console", "hostname", "kmod"]);
+    assert!(etc_changed(&old, &old).is_empty());
 }
 
 #[test]

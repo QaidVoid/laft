@@ -7,7 +7,10 @@
 //! starts the store worker, `laft internal worker -- <the same arguments>`.
 //! The worker moves into a private mount namespace, makes `/laft` writable
 //! there, and runs the command. Whenever it needs a mount in the initial
-//! namespace, it asks the coordinator over a Unix socket. Requests and
+//! namespace, it asks the coordinator over a Unix socket. The coordinator
+//! also reconciles the services for it, because the supervisor and the
+//! programs that reconciliation starts belong to the initial namespace,
+//! and only there does the new generation's mount appear. Requests and
 //! responses are JSON documents, each preceded by its length as a
 //! little-endian `u32`.
 //!
@@ -28,6 +31,8 @@ use std::time::Duration;
 
 use rustix::mount::{MountFlags, UnmountFlags};
 use serde::{Deserialize, Serialize};
+
+use laft_activate::Services;
 
 use crate::cli::{BootCommand, Command, EtcCommand, GensCommand, RepoCommand, ViewCommand};
 use crate::env::Env;
@@ -58,6 +63,14 @@ pub(crate) enum Request {
         /// The generations to keep mounted.
         keep: Vec<u64>,
     },
+    /// Bring the running services in line with generation `generation`
+    /// after a switch from `previous`.
+    Services {
+        /// The generation the system switched from.
+        previous: Option<u64>,
+        /// The generation the system switched to.
+        generation: u64,
+    },
 }
 
 /// The coordinator's answer.
@@ -66,6 +79,9 @@ pub(crate) enum Request {
 pub(crate) struct Response {
     /// Why the request failed, or `None` when it succeeded.
     pub(crate) error: Option<String>,
+    /// What reconciling the services did, for a services request.
+    #[serde(default)]
+    pub(crate) services: Option<Services>,
 }
 
 /// Whether `command` writes to the system and so must run in the worker
@@ -155,8 +171,17 @@ pub(crate) fn coordinate(env: &Env) -> Result<u8, Failure> {
     let _ = fs::remove_file(&path);
     if let Some(mut stream) = accepted {
         while let Ok(Some(request)) = framed_read::<Request>(&mut stream) {
-            let error = serve(env, &request).err().map(|f| f.message);
-            if framed_write(&mut stream, &Response { error }).is_err() {
+            let response = match serve(env, &request) {
+                Ok(services) => Response {
+                    error: None,
+                    services,
+                },
+                Err(f) => Response {
+                    error: Some(f.message),
+                    services: None,
+                },
+            };
+            if framed_write(&mut stream, &response).is_err() {
                 break;
             }
         }
@@ -190,11 +215,18 @@ fn accept(listener: &UnixListener, child: &mut Child) -> Option<UnixStream> {
     }
 }
 
-/// Carries out `request` in this process's mount namespace.
-pub(crate) fn serve(env: &Env, request: &Request) -> Result<(), Failure> {
+/// Carries out `request` in this process's mount namespace, and returns
+/// what reconciling the services did for a services request.
+pub(crate) fn serve(env: &Env, request: &Request) -> Result<Option<Services>, Failure> {
     match request {
-        Request::Mount { generation } => mount(env, *generation),
-        Request::Unmount { keep } => unmount(env, keep),
+        Request::Mount { generation } => mount(env, *generation).map(|()| None),
+        Request::Unmount { keep } => unmount(env, keep).map(|()| None),
+        Request::Services {
+            previous,
+            generation,
+        } => laft_activate::reconcile_services(&env.root, *previous, *generation)
+            .map(Some)
+            .map_err(Failure::general),
     }
 }
 
@@ -258,8 +290,9 @@ fn unmount(env: &Env, keep: &[u64]) -> Result<(), Failure> {
 }
 
 /// Sends `request` to the coordinator when this process is the worker, and
-/// otherwise carries it out here, in the initial namespace.
-pub(crate) fn request(env: &Env, request: &Request) -> Result<(), Failure> {
+/// otherwise carries it out here, in the initial namespace. Returns what
+/// reconciling the services did for a services request.
+pub(crate) fn request(env: &Env, request: &Request) -> Result<Option<Services>, Failure> {
     let Some(channel) = CHANNEL.get() else {
         return serve(env, request);
     };
@@ -270,7 +303,7 @@ pub(crate) fn request(env: &Env, request: &Request) -> Result<(), Failure> {
     let response: Response =
         framed_read(&mut stream)?.ok_or_else(|| Failure::general("the coordinator went away"))?;
     match response.error {
-        None => Ok(()),
+        None => Ok(response.services),
         Some(error) => Err(Failure::general(error)),
     }
 }

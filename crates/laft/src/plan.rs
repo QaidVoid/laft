@@ -340,7 +340,9 @@ fn service_plan(inputs: &Inputs<'_, '_>, generation: u64) -> Result<ServicePlan,
         None => BTreeMap::new(),
     };
     let mut plan = ServicePlan::default();
-    for (name, class) in reconcile::plan(&old, new.units()).classes {
+    // The new /etc exists only once the generation is assembled, so the
+    // reruns that a changed /etc input causes are not planned here.
+    for (name, class) in reconcile::plan(&old, new.units(), &BTreeSet::new()).classes {
         match class {
             Class::Added => plan.added.push(name),
             Class::Removed => plan.removed.push(name),

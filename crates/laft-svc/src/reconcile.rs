@@ -12,8 +12,10 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
+
 use crate::runit::Unit;
-use crate::{Launcher, OnChange, ServiceKind, graph};
+use crate::{ETC_INPUTS, Launcher, OnChange, ServiceKind, graph};
 
 /// How long a new service directory may take until its supervisor
 /// accepts commands. runsvdir scans its directory every five seconds.
@@ -31,7 +33,8 @@ pub enum Class {
     Removed,
     /// Its backend files differ, so it is redefined.
     Restructured,
-    /// Only its spec differs, and it follows this policy.
+    /// Only its spec or the `/etc` files it reads differ, and it follows
+    /// this policy.
     Changed(OnChange),
     /// Nothing differs.
     Unchanged,
@@ -84,13 +87,47 @@ pub struct Plan {
     pub reboot: Vec<String>,
 }
 
+/// The services of [`ETC_INPUTS`] whose inputs differ between the `etc`
+/// trees `old` and `new` of two generations. An input that one tree lacks
+/// differs from any input in the other.
+pub fn etc_changed(old: &Path, new: &Path) -> BTreeSet<String> {
+    ETC_INPUTS
+        .iter()
+        .filter(|(_, inputs)| {
+            inputs
+                .iter()
+                .any(|input| content(&old.join(input)) != content(&new.join(input)))
+        })
+        .map(|(name, _)| (*name).to_owned())
+        .collect()
+}
+
+/// The content of the file `path`, or of every file directly in the
+/// directory `path` by name, or `None` when it cannot be read.
+fn content(path: &Path) -> Option<BTreeMap<String, Vec<u8>>> {
+    if !path.is_dir() {
+        return fs::read(path)
+            .ok()
+            .map(|bytes| BTreeMap::from([(String::new(), bytes)]));
+    }
+    fs::read_dir(path)
+        .ok()?
+        .map(|item| {
+            let item = item.ok()?;
+            let name = item.file_name().to_string_lossy().into_owned();
+            Some((name, fs::read(item.path()).ok()?))
+        })
+        .collect()
+}
+
 /// Plans how the running services of the `old` generation follow a switch
-/// to the `new` one.
+/// to the `new` one. `etc_changed` names the services whose `/etc` input
+/// files changed, as [`etc_changed`] finds them.
 ///
 /// A service whose backend files changed is stopped, redefined and started,
 /// except an early service whose policy is to ignore changes, which is only
-/// redefined. A service whose spec alone changed follows its `on_change`
-/// policy. Stops happen in reverse dependency order of the old generation,
+/// redefined. A service whose spec alone changed, or whose input files
+/// alone changed, follows its `on_change` policy. Stops happen in reverse dependency order of the old generation,
 /// starts in dependency order of the new one.
 ///
 /// Services of the early boot graph are never stopped or started, because
@@ -110,11 +147,15 @@ pub struct Plan {
 /// config.services.insert(TURNSTILED.into(), Service::longrun(&["/usr/bin/turnstiled"]));
 /// let set = ServiceSet::new(&config).expect("the services are valid");
 /// let units = runit::render(&set, 1)?.units().clone();
-/// let plan = reconcile::plan(&units, &units);
+/// let plan = reconcile::plan(&units, &units, &Default::default());
 /// assert!(plan.stop.is_empty() && plan.start.is_empty());
 /// # Ok::<(), laft_svc::Error>(())
 /// ```
-pub fn plan(old: &BTreeMap<String, Unit>, new: &BTreeMap<String, Unit>) -> Plan {
+pub fn plan(
+    old: &BTreeMap<String, Unit>,
+    new: &BTreeMap<String, Unit>,
+    etc_changed: &BTreeSet<String>,
+) -> Plan {
     let mut plan = Plan::default();
     let mut stop = BTreeSet::new();
     let mut start = BTreeMap::new();
@@ -124,7 +165,9 @@ pub fn plan(old: &BTreeMap<String, Unit>, new: &BTreeMap<String, Unit>) -> Plan 
             (None, Some(_)) => Class::Added,
             (Some(_), None) => Class::Removed,
             (Some(o), Some(n)) if o.unit_hash != n.unit_hash => Class::Restructured,
-            (Some(o), Some(n)) if o.spec_hash != n.spec_hash => Class::Changed(n.spec.on_change),
+            (Some(o), Some(n)) if o.spec_hash != n.spec_hash || etc_changed.contains(name) => {
+                Class::Changed(n.spec.on_change)
+            }
             _ => Class::Unchanged,
         };
         let supervised =
@@ -184,7 +227,7 @@ pub fn plan(old: &BTreeMap<String, Unit>, new: &BTreeMap<String, Unit>) -> Plan 
 }
 
 /// What applying a plan to runit did.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Applied {
     /// Services that did not become ready before their timeout.
     pub not_ready: Vec<String>,

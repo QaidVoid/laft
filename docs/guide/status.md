@@ -6,7 +6,7 @@
 
 <span class="works">works</span> **Installing and booting.** `laft install` installs onto an empty ext4 root and a FAT32 EFI system partition. The machine boots under UEFI through Limine and `laft-boot` into runit, with every early service, a getty and the configured services. The [virtual machine test](./try-it) does this on every run, then boots a second time and checks that the first boot was recorded as good.
 
-<span class="works">works</span> **Generations.** `laft apply`, `rollback`, `switch`, `gens`, `boot` and `gc` build, list, compare, switch and collect generations. Their integration tests run against temporary roots with a signed `file://` repository and real package files. On the test machine, a second generation built with `laft apply --offline`, `rollback` and `switch` worked as this guide shows, and booting into the new generation brought up its new service and host name.
+<span class="works">works</span> **Generations.** `laft apply`, `rollback`, `switch`, `gens`, `boot` and `gc` build, list, compare, switch and collect generations. Their integration tests run against temporary roots with a signed `file://` repository and real package files. The [virtual machine test](./try-it) applies a configuration with a new service and a new host name on the running machine, and checks without a reboot that the service runs and the host name changed.
 
 <span class="works">works</span> **Boot counting and fallback.** New boot defaults are on trial, failed attempts are counted, and `laft-boot` falls back to the last good generation. The decisions are unit tested, including a power loss after every step of the fallback.
 
@@ -22,7 +22,6 @@
 
 These exist and have unit or namespace tests, but have not yet been tested on a booted machine. The plan for those tests is in `tests/vm/README`.
 
-- **Live switching.** Activating a generation on the running system. On the test machine, a service added by `laft apply` did not start until the next boot, and `apply` exited with status 3.
 - **Declared views and `laft-enter`.** Additional `/usr` trees and the setuid helper that enters them.
 - **Rescue.** `laft rescue` and `laft chroot` from a rescue system.
 - **LUKS, xfs, btrfs and f2fs roots** in `laft-boot`, and the emergency shell paths.

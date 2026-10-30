@@ -6,7 +6,9 @@ use std::collections::BTreeSet;
 
 use laft_config::RundirOwner;
 use laft_core::{system_gid, system_uid};
-use laft_svc::{ACTIVATE, BOOT_COMPLETE, EARLY, ServiceKind, ServiceSet, TURNSTILED};
+use laft_svc::{
+    ACTIVATE, BOOT_COMPLETE, EARLY, ETC_INPUTS, OnChange, ServiceKind, ServiceSet, TURNSTILED,
+};
 use support::{codes, config_dir, load, load_body};
 
 #[test]
@@ -36,6 +38,20 @@ fn the_base_part_declares_an_early_graph_that_starts_with_activation() {
             seen.contains(ACTIVATE),
             "{name} does not wait for {ACTIVATE}"
         );
+    }
+}
+
+#[test]
+fn every_service_with_etc_inputs_is_an_early_oneshot_that_reruns() {
+    let loaded = load_body("").expect("an empty system is valid");
+    let services = &loaded.config.services.services;
+    for (name, _) in ETC_INPUTS {
+        let service = &services[*name];
+        assert!(
+            service.early && service.kind == ServiceKind::Oneshot,
+            "{name}"
+        );
+        assert_eq!(service.on_change, Some(OnChange::Rerun), "{name}");
     }
 }
 

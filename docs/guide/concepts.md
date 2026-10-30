@@ -139,7 +139,7 @@ A service is a `longrun`, which runit supervises, or a `oneshot`, which runs an 
 
 Every system includes a base part with the **early boot graph**: oneshots that reconcile `/etc` with the booted generation (`laft-activate`), mount the kernel filesystems (`kernel-fs`), load modules (`kmod`), start udev, set the clock and host name, check and mount filesystems (`mount-fs`), enable swap, carry the random seed across boots and apply sysctl settings. They end in the oneshot `early`, which every other service implicitly waits for. Several of these steps are built into `laft` itself and run as `laft svc builtin <step> up`.
 
-When the system switches generations, Laft compares the old and new service sets. It stops services that were removed, starts new ones and, for services whose spec changed, does what `on_change` says: `restart`, `rerun`, `ignore` or `reboot`.
+When the system switches generations, Laft compares the old and new service sets. It stops services that were removed, starts new ones and, for services whose spec changed, does what `on_change` says: `restart`, `rerun`, `ignore` or `reboot`. The early steps `hostname`, `console`, `kmod` and `sysctl` read files in `/etc`, so they also count as changed when those files change, and they run again. A changed `/etc/fstab` takes effect at the next boot, because running `mount-fs` again would first unmount filesystems that may be in use.
 
 ## Boot
 

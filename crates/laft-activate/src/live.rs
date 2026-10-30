@@ -8,6 +8,7 @@ use std::path::Path;
 
 use laft_store::{Activation, Lock, Root};
 use laft_svc::reconcile::{self, Applied};
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result, io};
 use crate::etc::{OnConflict, reconcile_etc};
@@ -26,9 +27,12 @@ pub const LIVE_STEPS: &[&str] = &[
 /// undone.
 const SWITCH: usize = 1;
 
-/// The mounts of a running system, which live activation needs but cannot
-/// make itself, because they belong to the initial mount namespace.
-pub trait Mounts {
+/// The steps of a live activation that act in the initial mount namespace
+/// of a running system, which the process that runs the activation may not
+/// be in: the generation mounts, and the services, which must see the new
+/// generation mounted and whose programs must not inherit a private
+/// namespace.
+pub trait InitialNamespace {
     /// Mounts generation `number` at `run/laft/mounts/<number>`. A
     /// generation that is mounted already stays as it is.
     ///
@@ -43,10 +47,22 @@ pub trait Mounts {
     ///
     /// Returns why a mount could not be detached.
     fn unmount(&mut self, keep: &[u64]) -> std::result::Result<(), String>;
+
+    /// Brings the running services in line with generation `number`, after
+    /// a switch from generation `previous`, as [`reconcile_services`] does.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the services could not be reconciled.
+    fn services(
+        &mut self,
+        previous: Option<u64>,
+        number: u64,
+    ) -> std::result::Result<Services, String>;
 }
 
 /// What happened to the services during a live activation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Services {
     /// The running init is not the generation's, so nothing changed and
     /// the new services take effect at the next boot.
@@ -110,17 +126,20 @@ impl LiveActivation {
 /// ```no_run
 /// use std::collections::BTreeSet;
 ///
-/// use laft_activate::{LIVE_STEPS, Mounts, activate_live};
+/// use laft_activate::{InitialNamespace, LIVE_STEPS, Services, activate_live, reconcile_services};
 /// use laft_store::Root;
 ///
 /// struct Coordinator;
 ///
-/// impl Mounts for Coordinator {
+/// impl InitialNamespace for Coordinator {
 ///     fn mount(&mut self, number: u64) -> Result<(), String> {
 ///         Ok(())
 ///     }
 ///     fn unmount(&mut self, keep: &[u64]) -> Result<(), String> {
 ///         Ok(())
+///     }
+///     fn services(&mut self, previous: Option<u64>, number: u64) -> Result<Services, String> {
+///         reconcile_services(&Root::default(), previous, number)
 ///     }
 /// }
 ///
@@ -140,9 +159,9 @@ pub fn activate_live(
     lock: &Lock,
     activation: Activation<'_>,
     adopt: &BTreeSet<String>,
-    mounts: &mut dyn Mounts,
+    namespace: &mut dyn InitialNamespace,
 ) -> Result<LiveActivation> {
-    run(lock, activation, adopt, OnConflict::Stop, mounts)
+    run(lock, activation, adopt, OnConflict::Stop, namespace)
 }
 
 /// Finishes or undoes the live activation that was interrupted during the
@@ -160,7 +179,10 @@ pub fn activate_live(
 ///
 /// Fails when the journal cannot be read or written, and with
 /// [`Error::Live`] when the activation's steps are not [`LIVE_STEPS`].
-pub fn resume_live(lock: &Lock, mounts: &mut dyn Mounts) -> Result<Option<LiveActivation>> {
+pub fn resume_live(
+    lock: &Lock,
+    namespace: &mut dyn InitialNamespace,
+) -> Result<Option<LiveActivation>> {
     let Some(mut activation) = lock.interrupted_activation()? else {
         return Ok(None);
     };
@@ -168,13 +190,20 @@ pub fn resume_live(lock: &Lock, mounts: &mut dyn Mounts) -> Result<Option<LiveAc
     let number = activation.generation();
     let switched = activation.finished() > SWITCH || active(lock.root()) == Some(number);
     if !switched {
-        rollback(lock.root(), activation, mounts)?;
+        rollback(lock.root(), activation, namespace)?;
         return Ok(Some(LiveActivation::new(number)));
     }
     while activation.finished() <= SWITCH {
         activation.step_finished()?;
     }
-    run(lock, activation, &BTreeSet::new(), OnConflict::Skip, mounts).map(Some)
+    run(
+        lock,
+        activation,
+        &BTreeSet::new(),
+        OnConflict::Skip,
+        namespace,
+    )
+    .map(Some)
 }
 
 fn check_steps(activation: &Activation<'_>) -> Result<()> {
@@ -195,7 +224,7 @@ fn run(
     mut activation: Activation<'_>,
     adopt: &BTreeSet<String>,
     on_conflict: OnConflict,
-    mounts: &mut dyn Mounts,
+    namespace: &mut dyn InitialNamespace,
 ) -> Result<LiveActivation> {
     check_steps(&activation)?;
     let root = lock.root();
@@ -204,7 +233,7 @@ fn run(
     report.active = activation.finished() > SWITCH;
     while let Some(&step) = LIVE_STEPS.get(activation.finished()) {
         let result = match step {
-            "mount" => mounts.mount(number),
+            "mount" => namespace.mount(number),
             "switch" => replace_link(
                 &root.path().join("run/laft/system"),
                 &format!("mounts/{number}"),
@@ -217,17 +246,18 @@ fn run(
             "accounts" => apply_accounts(lock, number)
                 .map(|accounts| report.warnings.extend(accounts.warnings))
                 .map_err(|e| e.to_string()),
-            "services" => services(root, activation.previous(), number)
+            "services" => namespace
+                .services(activation.previous(), number)
                 .map(|services| report.services = Some(services)),
             _ => {
                 let keep: Vec<u64> = std::iter::once(number).chain(booted(root)).collect();
-                mounts.unmount(&keep)
+                namespace.unmount(&keep)
             }
         };
         match result {
             Ok(()) => report.done.push(step),
             Err(reason) if activation.finished() <= SWITCH => {
-                rollback(root, activation, mounts)?;
+                rollback(root, activation, namespace)?;
                 return Err(Error::Live { step, reason });
             }
             Err(reason) => report.failed.push((step, reason)),
@@ -256,7 +286,11 @@ fn step_point(step: &str) -> &'static str {
 /// Undoes an activation that has not switched: points `run/laft/system`
 /// back at the generation it used when it was moved, detaches every mount
 /// the running system does not use, and ends the journal.
-fn rollback(root: &Root, activation: Activation<'_>, mounts: &mut dyn Mounts) -> Result<()> {
+fn rollback(
+    root: &Root,
+    activation: Activation<'_>,
+    namespace: &mut dyn InitialNamespace,
+) -> Result<()> {
     let number = activation.generation();
     if active(root) == Some(number)
         && let Some(previous) = activation.previous()
@@ -268,7 +302,7 @@ fn rollback(root: &Root, activation: Activation<'_>, mounts: &mut dyn Mounts) ->
         .map_err(io(&root.path().join("run/laft/system")))?;
     }
     let keep: Vec<u64> = active(root).into_iter().chain(booted(root)).collect();
-    let unmounted = mounts.unmount(&keep);
+    let unmounted = namespace.unmount(&keep);
     activation.abandon()?;
     unmounted.map_err(|reason| Error::Live {
         step: "rollback",
@@ -297,9 +331,22 @@ fn views(root: &Root, number: u64) -> std::result::Result<(), String> {
     }
 }
 
-/// Brings the running services in line with generation `number`, when the
-/// running init is the generation's.
-fn services(
+/// Brings the running services below `root` in line with generation
+/// `number` after a switch from generation `previous`, when the running
+/// init is the generation's.
+///
+/// It must run in the initial mount namespace once `run/laft/system`
+/// points at the mounted generation, because the supervisor's commands
+/// and the new service directories are found through it, and the early
+/// oneshots it reruns act on the running system. A standard early
+/// oneshot also reruns when the `/etc` files it reads changed between the
+/// generations.
+///
+/// # Errors
+///
+/// Fails when a generation record or the services of either generation
+/// cannot be read.
+pub fn reconcile_services(
     root: &Root,
     previous: Option<u64>,
     number: u64,
@@ -318,7 +365,11 @@ fn services(
             .map_err(|e| e.to_string())
     };
     let old = previous.map_or_else(|| Ok(Default::default()), units)?;
-    let plan = reconcile::plan(&old, &units(number)?);
+    let etc = |n: u64| root.path().join(format!("laft/gens/{n}/etc"));
+    let etc_changed = previous
+        .map(|p| reconcile::etc_changed(&etc(p), &etc(number)))
+        .unwrap_or_default();
+    let plan = reconcile::plan(&old, &units(number)?, &etc_changed);
     let applied = reconcile::apply(
         &plan,
         root.path(),

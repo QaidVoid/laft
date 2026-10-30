@@ -396,7 +396,11 @@ pub(crate) fn diff(env: &Env, a: u64, b: Option<u64>, etc_diffs: bool) -> Result
             Failure::general(format!("the services of generation {}: {e}", g.generation))
         })
     };
-    let classes = laft_svc::reconcile::plan(&units(&old)?, &units(&new)?).classes;
+    let etc_changed = laft_svc::reconcile::etc_changed(
+        &gen_dir(env, old.generation).join("etc"),
+        &gen_dir(env, new.generation).join("etc"),
+    );
+    let classes = laft_svc::reconcile::plan(&units(&old)?, &units(&new)?, &etc_changed).classes;
     let mut services = serde_json::Map::new();
     let mut lines = String::new();
     for (name, class) in classes {

@@ -7,14 +7,18 @@ use super::*;
 use crate::test_support::{Env, build_generation, config_with, link};
 use crate::{activate_boot, fault};
 
-/// Generation mounts kept in memory.
-#[derive(Default)]
+/// Generation mounts kept in memory, and services reconciled below the
+/// root.
 struct FakeMounts {
+    root: Root,
     mounted: BTreeSet<u64>,
     refuse: bool,
+    /// The switches whose services were reconciled, as the generations
+    /// before and after.
+    reconciled: Vec<(Option<u64>, u64)>,
 }
 
-impl Mounts for FakeMounts {
+impl InitialNamespace for FakeMounts {
     fn mount(&mut self, number: u64) -> std::result::Result<(), String> {
         if self.refuse {
             return Err("no such device".into());
@@ -26,6 +30,15 @@ impl Mounts for FakeMounts {
     fn unmount(&mut self, keep: &[u64]) -> std::result::Result<(), String> {
         self.mounted.retain(|n| keep.contains(n));
         Ok(())
+    }
+
+    fn services(
+        &mut self,
+        previous: Option<u64>,
+        number: u64,
+    ) -> std::result::Result<Services, String> {
+        self.reconciled.push((previous, number));
+        reconcile_services(&self.root, previous, number)
     }
 }
 
@@ -50,8 +63,10 @@ fn running(env: &Env) -> (Lock, FakeMounts) {
     symlink("mounts/1", env.path("run/laft/booted")).expect("links");
     lock.set_default(1).expect("generation 1 exists");
     let mounts = FakeMounts {
+        root: env.root.clone(),
         mounted: BTreeSet::from([1]),
         refuse: false,
+        reconciled: Vec::new(),
     };
     (lock, mounts)
 }
@@ -88,7 +103,7 @@ fn assert_on(env: &Env, lock: &Lock, mounts: &FakeMounts, generation: u64) {
 }
 
 #[test]
-fn a_live_switch_runs_every_step_and_makes_the_generation_the_default() {
+fn a_live_switch_runs_every_step_and_reconciles_services_through_the_initial_namespace() {
     let env = Env::new();
     let (lock, mut mounts) = running(&env);
     let done = switch(&lock, &mut mounts).expect("switches");
@@ -101,6 +116,7 @@ fn a_live_switch_runs_every_step_and_makes_the_generation_the_default() {
             backend: "runit".into()
         })
     );
+    assert_eq!(mounts.reconciled, [(Some(1), 2)]);
     assert_on(&env, &lock, &mounts, 2);
 }
 
