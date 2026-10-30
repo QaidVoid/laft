@@ -338,6 +338,12 @@ fn first_boot(
         &machine.transcript(),
         "generation 1 booted completely",
     )?;
+    let config = shell(&mut machine, "grep -c @REPO_KEY@ /etc/laft/system.stav")?;
+    check(
+        "the installed configuration keeps its comment",
+        &config,
+        "1\r\n",
+    )?;
     let state = shell(&mut machine, "cat /laft/state/boot.json")?;
     check(
         "generation 1 is the last good one",

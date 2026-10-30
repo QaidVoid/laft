@@ -67,7 +67,9 @@ poweroff -f
 /// returns their paths. The initramfs carries busybox and the modules from
 /// the packages, `laft`, the published repository at `/repo` and the
 /// configuration of `system` with `key` as the repository key. The kernel
-/// is the one the installed system boots.
+/// is the one the installed system boots. Only the quoted value
+/// `"@REPO_KEY@"` is replaced, so the comments of the configuration stay
+/// as they are.
 ///
 /// # Errors
 ///
@@ -123,7 +125,7 @@ pub(crate) fn prepare(paths: &Paths, key: &str, system: &System) -> Result<(Path
     archive.add("modules", 0o644, Kind::File(list.into_bytes()));
     let config = fs::read_to_string(paths.source.join(system.config()))
         .map_err(|e| fail(format!("{}: {e}", system.config())))?
-        .replace("@REPO_KEY@", key);
+        .replace("\"@REPO_KEY@\"", &format!("\"{key}\""));
     archive.add("system.stav", 0o644, Kind::File(config.into_bytes()));
     add_tree(&mut archive, &paths.www(), "repo")?;
 

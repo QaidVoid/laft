@@ -1,6 +1,7 @@
 #!/bin/sh
 # Builds the static Laft binaries and runs the virtual machine test. Extra
-# arguments go to laft-vmtest, for example --keep to keep the disk image.
+# arguments go to laft-vmtest, for example --keep to keep the disk image
+# and the UEFI variables.
 set -eu
 cd "$(dirname "$0")/../.."
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"

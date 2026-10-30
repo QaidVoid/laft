@@ -13,7 +13,9 @@ harness in src/. It needs qemu-system-x86_64 with the edk2 firmware in
 /usr/share/qemu, x86_64-linux-musl-gcc, sfdisk, mkfs.vfat, mkfs.ext4 and
 1.5 GiB of free memory, and uses KVM when /dev/kvm is usable. Nothing runs
 as root. Downloads, builds, images and console logs live in
-~/.cache/laft-vm, and --keep keeps the disk image after a successful run.
+~/.cache/laft-vm, and --keep keeps the disk image and the UEFI variables
+of the machine, disk.img and vars.fd in ~/.cache/laft-vm/work, after a
+successful run.
 
 laft-build builds busybox, runit, the kernel and Limine in bootstrap mode
 from the recipes in recipes/, which pin every source by URL and SHA-256.

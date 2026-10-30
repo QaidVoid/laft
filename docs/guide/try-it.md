@@ -1,6 +1,6 @@
 # Try it in QEMU
 
-<p class="lead">The repository carries an end-to-end test that builds a few packages, publishes them as a signed repository, installs a Laft system onto a disk image and boots it under UEFI. Run it once with <code>--keep</code>, and the disk image stays behind for you to boot and explore.</p>
+<p class="lead">The repository carries an end-to-end test that builds a few packages, publishes them as a signed repository, installs a Laft system onto a disk image and boots it under UEFI. Run it once with <code>--keep</code>, and the disk image and the machine's firmware variables stay behind for you to boot and explore.</p>
 
 ## What you need
 

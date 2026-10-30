@@ -6,7 +6,7 @@ The file is written in [Stav](https://github.com/QaidVoid/stav), a typed configu
 
 ## A real configuration, explained
 
-This is `tests/vm/system.stav` from the repository, the configuration of the machine in [Try it in QEMU](./try-it). The installer replaces `@REPO_KEY@` with the public key of the test repository.
+This is `tests/vm/system.stav` from the repository, the configuration of the machine in [Try it in QEMU](./try-it). The installer replaces the value `"@REPO_KEY@"` with the public key of the test repository and leaves the rest of the file, comments included, as it is.
 
 ```stav
 system {
