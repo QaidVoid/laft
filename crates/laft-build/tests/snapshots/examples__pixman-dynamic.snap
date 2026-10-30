@@ -1,14 +1,14 @@
 ---
 source: crates/laft-build/tests/examples.rs
-assertion_line: 34
+assertion_line: 43
 expression: scripts(&recipe)
 ---
 ### configure
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
-meson setup "$BUILDDIR" "$SRC/" \
+cd "$SRC"
+meson setup "$BUILDDIR" "$SRC" \
   --prefix=/usr --libexecdir=lib --sbindir=bin --sysconfdir=/etc --localstatedir=/var \
   --buildtype=plain --wrap-mode=nodownload --auto-features=disabled \
   -Db_pie=true -Db_lto=false -Dpython.bytecompile=1 \
@@ -18,17 +18,17 @@ meson setup "$BUILDDIR" "$SRC/" \
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
+cd "$SRC"
 meson compile -C "$BUILDDIR" -j "$JOBS"
 ### check
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
+cd "$SRC"
 meson test -C "$BUILDDIR" --print-errorlogs --num-processes "$JOBS"
 ### install
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
+cd "$SRC"
 meson install -C "$BUILDDIR" --destdir "$DESTDIR" --no-rebuild

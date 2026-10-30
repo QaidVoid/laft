@@ -1,13 +1,13 @@
 ---
 source: crates/laft-build/tests/examples.rs
-assertion_line: 34
+assertion_line: 43
 expression: scripts(&recipe)
 ---
 ### prepare
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
+cd "$SRC"
 mkdir -p "$CARGO_HOME"
 cat > "$CARGO_HOME/config.toml" <<'EOF'
 [source.crates-io]
@@ -21,26 +21,26 @@ EOF
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
+cd "$SRC"
 cargo build --frozen --release --target "$CARGO_TARGET" \
   --features 'pcre2'
 ### check
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
+cd "$SRC"
 cargo test --frozen --release --target "$CARGO_TARGET" --features 'pcre2'
 ### install
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
+cd "$SRC"
 for b in 'rg'; do install -Dm755 "$CARGO_OUT/$b" "$DESTDIR/usr/bin/$b"; done
 ### post_install
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
+cd "$SRC"
 install -d "$DESTDIR/usr/share/man/man1" \
            "$DESTDIR/usr/share/bash-completion/completions" \
            "$DESTDIR/usr/share/zsh/site-functions" \

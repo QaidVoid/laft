@@ -119,15 +119,14 @@ build meson {
 check = false
 ```
 
-`laft-build eval <package>` prints the evaluated recipe with the environment and every rendered phase script. For gzip, the `configure` style renders this:
+`laft-build eval <package>` prints the evaluated recipe with the environment and every rendered phase script. For gzip, which builds in its source tree, the `configure` style renders this. With `out_of_tree = true`, the `configure`, `build`, `check` and `install` phases of the style also change to `$BUILDDIR` with `cd "$BUILDDIR"` before their command, while `prepare` stays in the source tree:
 
 ```sh
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
-if false; then cd "$BUILDDIR"; fi
-"$SRC//configure" --prefix=/usr --sysconfdir=/etc --localstatedir=/var --bindir=/usr/bin --sbindir=/usr/bin --libdir=/usr/lib --libexecdir=/usr/lib --mandir=/usr/share/man --infodir=/usr/share/info --build=$CBUILD --host=$CHOST --disable-static --enable-shared
+cd "$SRC"
+"$SRC/configure" --prefix=/usr --sysconfdir=/etc --localstatedir=/var --bindir=/usr/bin --sbindir=/usr/bin --libdir=/usr/lib --libexecdir=/usr/lib --mandir=/usr/share/man --infodir=/usr/share/info --build=$CBUILD --host=$CHOST --disable-static --enable-shared
 ```
 
 Laft has a merged `/usr`. Programs go to `usr/bin`, libraries to `usr/lib`, and nothing goes to `usr/sbin`, `usr/lib64` or `usr/local`. The styles pass the right paths, and post-processing moves stray files into place.

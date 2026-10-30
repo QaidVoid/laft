@@ -107,7 +107,7 @@ fn cmake_and_meson_cross_compile_static_builds() {
     assert_eq!(
         cmake.configure.as_deref(),
         Some(
-            "cmake -S \"$SRC/\" -B \"$BUILDDIR\" -G \"Unix Makefiles\" \\\n  \
+            "cmake -S \"$SRC\" -B \"$BUILDDIR\" -G \"Unix Makefiles\" \\\n  \
              -DCMAKE_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=/usr \\\n  \
              -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_SBINDIR=bin -DCMAKE_INSTALL_LIBEXECDIR=lib \\\n  \
              -DCMAKE_INSTALL_SYSCONFDIR=/etc -DBUILD_TESTING=true \\\n  \
@@ -147,7 +147,7 @@ fn configure_passes_the_standard_arguments_of_the_variant() {
     assert_eq!(
         dynamic.configure.as_deref(),
         Some(
-            "if true; then cd \"$BUILDDIR\"; fi\n\"$SRC//configure\" --prefix=/usr --sysconfdir=/etc \
+            "cd \"$BUILDDIR\"\n\"$SRC/configure\" --prefix=/usr --sysconfdir=/etc \
              --localstatedir=/var --bindir=/usr/bin --sbindir=/usr/bin --libdir=/usr/lib \
              --libexecdir=/usr/lib --mandir=/usr/share/man --infodir=/usr/share/info \
              --build=$CBUILD --host=$CHOST --disable-static --enable-shared '--with-x'"
@@ -266,6 +266,41 @@ fn python_and_kernel_styles_render_their_defaults() {
 }
 
 #[test]
+fn rendered_scripts_have_no_dead_branches_or_empty_path_segments() {
+    let build = Build::Configure {
+        args: vec![],
+        standard_args: false,
+        autoreconf: false,
+        out_of_tree: false,
+        make_args: vec![],
+        check_target: "check".into(),
+        install_args: vec![],
+    };
+    let style = scripts(&build, &input(Variant::Dynamic));
+    assert_eq!(style.configure.as_deref(), Some("\"$SRC/configure\""));
+    assert_eq!(style.build.as_deref(), Some("make"));
+    let rendered = phases(style, &no_phases(), "", Shell::Sh);
+    assert_eq!(
+        rendered.build.as_deref(),
+        Some("#!/bin/sh\nset -eu\numask 022\ncd \"$SRC\"\nmake\n")
+    );
+    let style = scripts(
+        &build,
+        &StyleInput {
+            subdir: "unix",
+            ..input(Variant::Dynamic)
+        },
+    );
+    assert_eq!(style.configure.as_deref(), Some("\"$SRC/unix/configure\""));
+    let rendered = phases(style, &no_phases(), "unix", Shell::Sh);
+    assert!(
+        rendered
+            .configure
+            .is_some_and(|s| s.contains("cd \"$SRC/unix\"\n\"$SRC/unix/configure\"\n"))
+    );
+}
+
+#[test]
 fn a_bash_recipe_gets_the_bash_header() {
     let recipe = RecipePhases {
         build: Some("make".into()),
@@ -279,7 +314,7 @@ fn a_bash_recipe_gets_the_bash_header() {
     );
     assert_eq!(
         phases.build.as_deref(),
-        Some("#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC/\"\nmake\n")
+        Some("#!/usr/bin/bash\nset -euo pipefail\numask 022\ncd \"$SRC\"\nmake\n")
     );
 }
 

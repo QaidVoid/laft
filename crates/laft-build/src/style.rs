@@ -50,6 +50,16 @@ fn dq(text: &str) -> String {
     out
 }
 
+/// Returns the source directory `$SRC/<subdir>`, or `$SRC` without a
+/// subdirectory, for use inside a double quoted shell word.
+fn src_dir(subdir: &str) -> String {
+    if subdir.is_empty() {
+        "$SRC".to_owned()
+    } else {
+        format!("$SRC/{}", dq(subdir))
+    }
+}
+
 /// Returns every item as a single quoted word.
 fn words(items: &[String]) -> Vec<String> {
     items.iter().map(|s| quote(s)).collect()
@@ -80,7 +90,7 @@ fn boolean(value: bool) -> &'static str {
 /// Returns the scripts of the style `build`.
 pub(crate) fn scripts(build: &Build, input: &StyleInput<'_>) -> Scripts {
     let dynamic = input.variant == Variant::Dynamic;
-    let subdir = dq(input.subdir);
+    let src = src_dir(input.subdir);
     match build {
         Build::Custom => Scripts::default(),
         Build::Configure {
@@ -92,17 +102,18 @@ pub(crate) fn scripts(build: &Build, input: &StyleInput<'_>) -> Scripts {
             check_target,
             install_args,
         } => {
-            let enter = format!(
-                "if {}; then cd \"$BUILDDIR\"; fi\n",
-                boolean(*out_of_tree)
-            );
+            let enter = if *out_of_tree {
+                "cd \"$BUILDDIR\"\n"
+            } else {
+                ""
+            };
             let standard = match (*standard_args, dynamic) {
                 (false, _) => "",
                 (true, true) => STANDARD_ARGS_DYNAMIC,
                 (true, false) => STANDARD_ARGS_STATIC,
             };
             let configure = line(
-                [format!("\"$SRC/{subdir}/configure\""), standard.into()]
+                [format!("\"{src}/configure\""), standard.into()]
                     .into_iter()
                     .chain(words(args)),
             );
@@ -160,7 +171,7 @@ pub(crate) fn scripts(build: &Build, input: &StyleInput<'_>) -> Scripts {
             };
             Scripts {
                 configure: Some(command([
-                    format!("meson setup \"$BUILDDIR\" \"$SRC/{subdir}\""),
+                    format!("meson setup \"$BUILDDIR\" \"{src}\""),
                     "--prefix=/usr --libexecdir=lib --sbindir=bin --sysconfdir=/etc --localstatedir=/var".into(),
                     format!("--buildtype=plain --wrap-mode=nodownload --auto-features={features}"),
                     format!("-Db_pie=true -Db_lto={} -Dpython.bytecompile=1", boolean(input.lto)),
@@ -190,7 +201,7 @@ pub(crate) fn scripts(build: &Build, input: &StyleInput<'_>) -> Scripts {
             };
             Scripts {
                 configure: Some(command([
-                    format!("cmake -S \"$SRC/{subdir}\" -B \"$BUILDDIR\" -G {generator}"),
+                    format!("cmake -S \"{src}\" -B \"$BUILDDIR\" -G {generator}"),
                     "-DCMAKE_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=/usr".into(),
                     "-DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_SBINDIR=bin -DCMAKE_INSTALL_LIBEXECDIR=lib".into(),
                     format!(
@@ -279,7 +290,7 @@ pub(crate) fn scripts(build: &Build, input: &StyleInput<'_>) -> Scripts {
             ]);
             let packages = words(packages).join(" ");
             Scripts {
-                prepare: Some(format!("cp -a /build/vendor/go \"$SRC/{subdir}/vendor\"")),
+                prepare: Some(format!("cp -a /build/vendor/go \"{src}/vendor\"")),
                 build: Some(format!(
                     "mkdir -p \"$BUILDDIR/bin\"\n{}",
                     command([
@@ -299,7 +310,7 @@ pub(crate) fn scripts(build: &Build, input: &StyleInput<'_>) -> Scripts {
         Build::PythonPep517 { check_cmd } => Scripts {
             build: Some(command([
                 "python3 -m build --wheel --no-isolation --skip-dependency-check".to_owned(),
-                format!("--outdir \"$BUILDDIR/dist\" \"$SRC/{subdir}\""),
+                format!("--outdir \"$BUILDDIR/dist\" \"{src}\""),
             ])),
             check: check_cmd.clone(),
             install: Some(
@@ -378,7 +389,7 @@ pub(crate) fn phases(
     subdir: &str,
     shell: Shell,
 ) -> Phases {
-    let header = format!("{}umask 022\ncd \"$SRC/{}\"\n", shell.header(), dq(subdir));
+    let header = format!("{}umask 022\ncd \"{}\"\n", shell.header(), src_dir(subdir));
     let render = |pre: Option<&String>, script: Option<String>, post: Option<&String>| {
         let parts: Vec<&str> = [
             pre.map(String::as_str),

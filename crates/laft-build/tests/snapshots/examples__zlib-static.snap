@@ -1,32 +1,29 @@
 ---
 source: crates/laft-build/tests/examples.rs
+assertion_line: 43
 expression: scripts(&recipe)
 ---
 ### configure
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
-if false; then cd "$BUILDDIR"; fi
-"$SRC//configure" '--prefix=/usr' '--libdir=/usr/lib' '--static'
+cd "$SRC"
+"$SRC/configure" '--prefix=/usr' '--libdir=/usr/lib' '--static'
 ### build
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
-if false; then cd "$BUILDDIR"; fi
+cd "$SRC"
 make
 ### check
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
-if false; then cd "$BUILDDIR"; fi
+cd "$SRC"
 make 'check'
 ### install
 #!/bin/sh
 set -eu
 umask 022
-cd "$SRC/"
-if false; then cd "$BUILDDIR"; fi
+cd "$SRC"
 make DESTDIR="$DESTDIR" install
