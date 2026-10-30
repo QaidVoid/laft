@@ -39,6 +39,7 @@ pub struct ReproReport {
     /// package file in both builds.
     pub reproducible: bool,
     /// The package files that differ byte for byte, by file name.
+    #[serde(default)]
     pub differing_packages: Vec<String>,
     /// The paths that differ, by package and path.
     pub differing_files: Vec<DifferingFile>,
