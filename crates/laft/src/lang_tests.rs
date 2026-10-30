@@ -2,15 +2,7 @@ use super::*;
 
 #[test]
 fn options_reach_nested_structs_with_their_paths() {
-    let dir = laft_test::tempdir();
-    fs::write(
-        dir.path().join("system.stav"),
-        "system { hostname = \"forge\" }\n",
-    )
-    .expect("writable");
-    let evaluation =
-        laft_config::evaluate(dir.path(), &dir.path().join("system.stav")).expect("evaluates");
-    let options = options_of(&evaluation.checked.schema());
+    let options = options_of(&laft_config::schema().expect("the prelude checks"));
     let paths: Vec<&str> = options.iter().map(|o| o.path.as_str()).collect();
     assert!(paths.contains(&"hostname"), "{paths:?}");
     assert!(paths.contains(&"gc.keep_generations"), "{paths:?}");
@@ -24,6 +16,19 @@ fn options_reach_nested_structs_with_their_paths() {
         .find(|o| o.path == "gc.keep_days")
         .expect("listed");
     assert!(gc.ty.starts_with("Int"), "{}", gc.ty);
+}
+
+#[test]
+fn a_reference_to_a_struct_is_an_option_of_its_own() {
+    let options = options_of(&laft_config::schema().expect("the prelude checks"));
+    let paths: Vec<&str> = options.iter().map(|o| o.path.as_str()).collect();
+    assert!(paths.contains(&"users.accounts.<name>.group"), "{paths:?}");
+    assert!(
+        !paths
+            .iter()
+            .any(|p| p.starts_with("users.accounts.<name>.group.")),
+        "{paths:?}"
+    );
 }
 
 #[test]

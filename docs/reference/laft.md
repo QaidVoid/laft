@@ -187,7 +187,7 @@ The rendered runit scripts call hidden subcommands of `laft svc` (`exec`, `up`, 
 |---|---|
 | `laft check [FILE] [--refresh]` | Check the configuration, resolving its packages, or type check one file on its own without resolving packages. |
 | `laft eval [ATTR] [--file <FILE>] [-o json\|toml\|yaml]` | Print the evaluated configuration, or the value at an attribute path such as `services.sshd.exec`. |
-| `laft options [PREFIX] [--all]` | List configuration options, optionally only those below a path. `--all` prints whole doc comments. |
+| `laft options [PREFIX] [--all]` | List configuration options, optionally only those below a path. The list comes from the schema alone, so no configuration is needed. A `Ref<...>` field names a declared item and is listed as one option. `--all` prints whole doc comments. |
 | `laft fmt [PATHS]... [--check] [--stdin]` | Format configuration files, every `.stav` file of the configuration by default. `--check` changes nothing and fails when a file would change. `--stdin` formats standard input to standard output. |
 | `laft explain <CODE>` | Explain a diagnostic code, such as `C0901` or `S001`. |
 | `laft completions <SHELL>` | Print a shell completion script for `bash`, `zsh` or `fish`. |

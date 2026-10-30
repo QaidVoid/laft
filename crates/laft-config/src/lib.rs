@@ -311,6 +311,30 @@ fn system_json(evaluated: &stav::Evaluated) -> Vec<u8> {
         .expect("a checked configuration has a system value, by its default")
 }
 
+/// The schema of the system configuration: the types of the prelude,
+/// checked without any configuration file, so that tools which describe
+/// the options need no configuration.
+///
+/// # Errors
+///
+/// Returns a [`Report`] when the prelude or the base part does not type
+/// check.
+///
+/// # Examples
+///
+/// ```
+/// let schema = laft_config::schema().expect("the prelude checks");
+/// assert!(schema.structs.iter().any(|s| s.name == "System"));
+/// ```
+pub fn schema() -> Result<stav::SchemaIndex, Report> {
+    let root = stav::RootSpec {
+        root_struct: "Root".to_owned(),
+        entries: Vec::new(),
+        import_roots: Vec::new(),
+    };
+    Ok(stav::check(&host::host(Path::new("/")), &root)?.schema())
+}
+
 /// Type checks and evaluates the file `entry` of the configuration
 /// directory `root_dir`, with the prelude, the base part and the std
 /// catalog, as [`load`] does, but resolves no package and applies none of

@@ -213,6 +213,28 @@ struct ConfigOption {
     doc: Option<String>,
 }
 
+/// The struct that the values of type `ty` are, or contain as elements,
+/// when it is one of `schema`'s. A reference to a struct, `Ref<...>`, is a
+/// name and so names no struct.
+fn struct_of<'s>(schema: &'s SchemaIndex, ty: &str) -> Option<&'s str> {
+    let words: Vec<&str> = ty
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    words
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|&(i, _)| i == 0 || words[i - 1] != "Ref")
+        .find_map(|(_, word)| {
+            schema
+                .structs
+                .iter()
+                .find(|s| s.name == *word)
+                .map(|s| s.name.as_str())
+        })
+}
+
 /// Every option reachable from the `System` struct, depth first.
 fn options_of(schema: &SchemaIndex) -> Vec<ConfigOption> {
     fn walk(
@@ -235,11 +257,7 @@ fn options_of(schema: &SchemaIndex) -> Vec<ConfigOption> {
                 ty: field.ty.clone(),
                 doc: field.doc.clone(),
             });
-            let inner = field
-                .ty
-                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                .rfind(|word| schema.structs.iter().any(|s| s.name == *word));
-            if let Some(inner) = inner {
+            if let Some(inner) = struct_of(schema, &field.ty) {
                 let label = if field.ty.starts_with("Map<") {
                     format!("{path}.<name>.")
                 } else {
@@ -257,9 +275,7 @@ fn options_of(schema: &SchemaIndex) -> Vec<ConfigOption> {
 
 /// `laft options`.
 pub(crate) fn options(env: &Env, prefix: Option<&str>, all: bool) -> Result<u8, Failure> {
-    let evaluation =
-        laft_config::evaluate(&env.config_dir(), &env.config).map_err(Failure::config)?;
-    let schema = evaluation.checked.schema();
+    let schema = laft_config::schema().map_err(Failure::config)?;
     let options: Vec<ConfigOption> = options_of(&schema)
         .into_iter()
         .filter(|o| prefix.is_none_or(|p| o.path.starts_with(p)))

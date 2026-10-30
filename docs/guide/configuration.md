@@ -291,6 +291,24 @@ laft fmt                   # format every .stav file of the configuration
 laft plan                  # show what laft apply would change
 ```
 
+`laft options` reads only the schema, so it works on any machine, with or without a configuration. A field such as `group`, whose type is `Ref<Group>`, names a declared group and has no options of its own:
+
+```console
+$ laft options users.accounts
+users.accounts                       Map<Str, User>                                            Users. Block label: the user name.
+users.accounts.<name>.uid            Option<Int where 0..=65534>                               Allocated when none.
+users.accounts.<name>.group          Option<Ref<Group>>                                        The primary group. none: a group with the user's name, created when
+users.accounts.<name>.groups         Set<Ref<Group>>                                           Supplementary groups.
+users.accounts.<name>.description    Str                                                       The comment field of /etc/passwd.
+users.accounts.<name>.home           Option<Str where matches(r"/.*")>                         none: /home/<name>, or /var/empty for system accounts.
+users.accounts.<name>.create_home    Option<Bool>                                              none: true for regular accounts, false for system accounts.
+users.accounts.<name>.shell          Option<Str where matches(r"/.*")>                         none: /usr/bin/bash, or /usr/bin/nologin for system accounts.
+users.accounts.<name>.system         Bool                                                      System accounts take their ids from the system range.
+users.accounts.<name>.password_hash  Option<Str where matches(r"!|\*|!?\$(y|gy|6|5|2b)\$.+")>  A crypt(3) hash, or "!" to lock the account.
+users.accounts.<name>.password_file  Option<Str where matches(r"/.*")>                         The absolute path of a file holding the hash, read at activation.
+users.accounts.<name>.ssh_keys       List<Str>                                                 OpenSSH public keys that may log in as the user.
+```
+
 Errors carry a code and point at the source:
 
 ```text
