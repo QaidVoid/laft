@@ -287,6 +287,12 @@ impl Machine {
         }
     }
 
+    /// The position in [`Self::transcript`] just after the text the last
+    /// wait matched.
+    pub(crate) fn position(&self) -> usize {
+        self.seen
+    }
+
     /// Types `text` on the console.
     ///
     /// # Errors
@@ -326,6 +332,13 @@ impl Machine {
             }
             thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    /// What the console printed between the positions `start` and `end`.
+    pub(crate) fn printed(&self, start: usize, end: usize) -> String {
+        let (lock, _) = &*self.console;
+        let console = lock.lock().unwrap_or_else(|e| e.into_inner());
+        String::from_utf8_lossy(&console.text[start..end]).into_owned()
     }
 
     /// Everything the console printed.

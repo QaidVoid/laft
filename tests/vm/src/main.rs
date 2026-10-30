@@ -247,13 +247,10 @@ fn shell(machine: &mut Machine, command: &str) -> Result<String> {
     // The quotes keep the echo of the typed line from matching the marker.
     machine.send(&format!("echo @@be''gin; {command}; echo @@e''nd\r"))?;
     machine.expect(&format!("the output of `{command}`"), "@@begin")?;
-    let before = machine.transcript().len();
+    let start = machine.position();
     machine.expect(&format!("the end of `{command}`"), "@@end")?;
-    let text = machine.transcript();
-    let end = text[before..]
-        .find("@@end")
-        .map_or(text.len(), |i| before + i);
-    Ok(text[before..end].to_owned())
+    let end = machine.position() - "@@end".len();
+    Ok(machine.printed(start, end))
 }
 
 /// Powers the machine off from the root shell and waits until it is off.
