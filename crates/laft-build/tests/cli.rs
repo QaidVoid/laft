@@ -46,6 +46,18 @@ fn stdout(output: &Output) -> String {
 }
 
 #[test]
+fn help_describes_the_command_line() {
+    let dir = laft_test::tempdir();
+    let output = without_recipes(dir.path(), &["--help"]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        stdout(&output).starts_with("Builds Laft packages from recipes\n"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
 fn eval_prints_the_static_plan_as_json() {
     let dir = laft_test::tempdir();
     let output = laft_build(dir.path(), &["--json", "eval", "zlib:static"]);

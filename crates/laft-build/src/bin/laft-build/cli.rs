@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand};
 
 /// Builds Laft packages from recipes.
 #[derive(Debug, Parser)]
-#[command(name = "laft-build", version, about)]
+#[command(name = "laft-build", version)]
 pub(crate) struct Cli {
     /// The build root. Defaults to `$LAFT_BUILD_ROOT`, then to
     /// `$XDG_DATA_HOME/laft-build` or `~/.local/share/laft-build`.
