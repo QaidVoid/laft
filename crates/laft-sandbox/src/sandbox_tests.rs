@@ -559,3 +559,15 @@ fn a_command_has_shared_memory_of_its_own() {
     };
     assert_eq!(stdout(&output), "shared\n", "{output:?}");
 }
+
+#[test]
+fn a_command_leads_a_session_of_its_own_without_a_terminal() {
+    let fixture = Fixture::new();
+    let Some(output) = fixture.run(
+        "read -r stat < /proc/self/stat; set -- ${stat#*) }; echo \"$4\"; \
+         (exec 3< /dev/tty) 2>/dev/null && echo terminal || echo none",
+    ) else {
+        return;
+    };
+    assert_eq!(stdout(&output), "1\nnone\n", "{output:?}");
+}

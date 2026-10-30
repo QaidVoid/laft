@@ -276,6 +276,12 @@ impl Command {
     /// the caller ignores, so the command can wait for its own children and
     /// is interrupted like any program.
     ///
+    /// A command whose standard input was set leads a session of its own,
+    /// without a controlling terminal, so that what it sees does not depend
+    /// on the terminal of its caller. A command that inherits standard
+    /// input, such as an interactive shell, stays in the caller's session
+    /// and keeps its terminal.
+    ///
     /// # Errors
     ///
     /// Fails when a directory of the sandbox does not exist, when a step of
@@ -284,9 +290,14 @@ impl Command {
     /// names the step.
     pub fn spawn(self) -> Result<Child, Error> {
         let Self {
-            layout, mut inner, ..
+            layout,
+            mut inner,
+            stdin_set,
         } = self;
-        let setup = Setup::new(&layout)?;
+        let setup = Setup {
+            new_session: stdin_set,
+            ..Setup::new(&layout)?
+        };
         let (reader, writer) =
             rustix::pipe::pipe_with(PipeFlags::CLOEXEC).map_err(|e| Error::new(Step::Pipe, e))?;
         let hook = move || setup.run(writer.as_fd());
@@ -348,6 +359,9 @@ struct Setup {
     id_maps: Option<(Vec<u8>, Vec<u8>)>,
     open_files: u64,
     root: RootSetup,
+    /// Whether the command leads a session of its own, without a
+    /// controlling terminal.
+    new_session: bool,
 }
 
 /// How the child builds its root.
@@ -423,6 +437,7 @@ impl Setup {
             id_maps,
             open_files: hard.map_or(MAX_OPEN_FILES, |hard| hard.min(MAX_OPEN_FILES)),
             root,
+            new_session: false,
         })
     }
 
@@ -469,6 +484,9 @@ impl Setup {
             Fork::Parent(init) => wait_for(init),
             Fork::Child => {
                 prepare_init()?;
+                if self.new_session {
+                    rustix::process::setsid().map_err(fail(Step::Session))?;
+                }
                 match &self.root {
                     RootSetup::Build(root) => root.build(),
                     RootSetup::Fixed(root) => root.build(),

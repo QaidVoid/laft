@@ -66,6 +66,7 @@ steps! {
     ReadIds => "reading the process ids",
     InvalidBindName => "expecting a plain file name below /run, got",
     Loopback => "bringing up the loopback interface",
+    Session => "starting a session",
 }
 
 impl Step {
