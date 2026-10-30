@@ -169,7 +169,7 @@ fn host_paths_are_invisible() {
     assert_eq!(
         stdout(&output),
         "/bin /build /dev /etc /lib /lib64 /out /proc /sbin /tmp /usr\n\
-         /dev/fd /dev/full /dev/null /dev/ptmx /dev/pts /dev/random /dev/stderr /dev/stdin /dev/stdout /dev/tty /dev/urandom /dev/zero\n\
+         /dev/fd /dev/full /dev/null /dev/ptmx /dev/pts /dev/random /dev/shm /dev/stderr /dev/stdin /dev/stdout /dev/tty /dev/urandom /dev/zero\n\
          /build\n"
     );
 }
@@ -549,4 +549,13 @@ fn signals_the_caller_ignores_have_their_default_disposition() {
         return;
     };
     assert_eq!(stdout(&output), "0000000000000000\n", "{output:?}");
+}
+
+#[test]
+fn a_command_has_shared_memory_of_its_own() {
+    let fixture = Fixture::new();
+    let Some(output) = fixture.run("echo shared > /dev/shm/probe && cat /dev/shm/probe") else {
+        return;
+    };
+    assert_eq!(stdout(&output), "shared\n", "{output:?}");
 }

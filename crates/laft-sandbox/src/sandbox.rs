@@ -120,7 +120,7 @@ pub enum Network {
 /// | `/build` | the build directory, writable, the working directory |
 /// | `/out` | the output directory, writable |
 /// | `/proc` | a new procfs that shows only the sandbox's processes |
-/// | `/dev` | a read-only tmpfs with `null`, `zero`, `full`, `random`, `urandom` and `tty` bound from the host, `fd`, `stdin`, `stdout`, `stderr` links, and a private pseudo-terminal filesystem at `pts` with `ptmx` linking to its multiplexer |
+/// | `/dev` | a read-only tmpfs with `null`, `zero`, `full`, `random`, `urandom` and `tty` bound from the host, `fd`, `stdin`, `stdout`, `stderr` links, a private pseudo-terminal filesystem at `pts` with `ptmx` linking to its multiplexer, and a private tmpfs at `shm` |
 /// | `/tmp` | a private tmpfs |
 /// | `/etc` | read-only, with `passwd` and `group` naming `root` and `nobody`, and `hosts` and `nsswitch.conf` naming the loopback interface `localhost` or, with [`Network::Host`], the host's name resolution files |
 ///
@@ -579,12 +579,13 @@ pub(crate) fn switch_root(root: &OwnedFd) -> Result<(), Failure> {
     rustix::system::setdomainname(HOSTNAME.as_bytes()).map_err(fail(Step::Hostname))
 }
 
-/// Mounts the sandbox's `/dev` in `root`, with a private instance of the
-/// pseudo-terminal filesystem at `/dev/pts` and `/dev/ptmx` linking to its
-/// multiplexer when `ptys` is set. Test suites that drive programs through
-/// a terminal need one, and a private instance shows none of the host's
-/// terminals.
-pub(crate) fn mount_dev(root: &OwnedFd, ptys: bool) -> Result<(), Failure> {
+/// Mounts the sandbox's `/dev` in `root`. When `private` is set, it also
+/// gets a private instance of the pseudo-terminal filesystem at `/dev/pts`,
+/// with `/dev/ptmx` linking to its multiplexer, and a private tmpfs at
+/// `/dev/shm`. Test suites drive programs through terminals and open POSIX
+/// shared memory and semaphores there, and private instances show nothing
+/// of the host.
+pub(crate) fn mount_dev(root: &OwnedFd, private: bool) -> Result<(), Failure> {
     let dev = fresh_mount(
         c"tmpfs",
         Some(c"0755"),
@@ -611,7 +612,18 @@ pub(crate) fn mount_dev(root: &OwnedFd, ptys: bool) -> Result<(), Failure> {
     for (link, target) in DEVICE_LINKS {
         rustix::fs::symlinkat(target, &dev, link).map_err(fail(Step::MountDev))?;
     }
-    if ptys {
+    if private {
+        rustix::fs::mkdirat(&dev, c"shm", Mode::from_raw_mode(0o755))
+            .map_err(fail(Step::MountDev))?;
+        let shm = fresh_mount(
+            c"tmpfs",
+            Some(c"1777"),
+            MountAttrFlags::MOUNT_ATTR_NOSUID
+                | MountAttrFlags::MOUNT_ATTR_NODEV
+                | MountAttrFlags::MOUNT_ATTR_NOEXEC,
+        )
+        .map_err(fail(Step::MountDev))?;
+        attach(&shm, &dev, c"shm")?;
         rustix::fs::mkdirat(&dev, c"pts", Mode::from_raw_mode(0o755))
             .map_err(fail(Step::MountDev))?;
         let pts = (|| {
