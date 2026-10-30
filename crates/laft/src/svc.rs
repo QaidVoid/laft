@@ -245,7 +245,7 @@ fn show(env: &Env, name: &str) -> Result<u8, Failure> {
         SpecReady::Check { cmd, .. } => format!("when `{}` succeeds", cmd.join(" ")),
     };
     let _ = writeln!(out, "ready       {ready}");
-    let _ = writeln!(out, "restart     {:?}", spec.restart);
+    let _ = writeln!(out, "restart     {}", spec.restart.as_str());
     let log = match &spec.log {
         SpecLog::Logged { dir, .. } => dir.clone(),
         SpecLog::Discard => "discarded".into(),

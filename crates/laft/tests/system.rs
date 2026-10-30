@@ -95,6 +95,11 @@ fn services_are_described_from_the_active_generation() {
         "{}",
         show.stdout
     );
+    assert!(
+        show.stdout.contains("restart     always\n"),
+        "{}",
+        show.stdout
+    );
     fx.laft(&["svc", "show", "nothing"]).expect(2);
     fx.laft(&["svc", "start", "turnstiled"]).expect(1);
 

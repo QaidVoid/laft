@@ -140,6 +140,17 @@ pub enum Restart {
     Never,
 }
 
+impl Restart {
+    /// The policy as the configuration spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Always => "always",
+            Self::OnFailure => "on-failure",
+            Self::Never => "never",
+        }
+    }
+}
+
 /// The signal that asks a service to stop.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]

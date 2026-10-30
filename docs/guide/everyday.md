@@ -159,19 +159,18 @@ The configuration's `gc` block sets how many generations to keep and for how man
 ## Services
 
 ```console
-# laft svc status hello vmtest-marker
-SERVICE        STATE  READY  PID  UPTIME
-hello          up     yes    112  2.0s
-vmtest-marker  up     yes    114  2.0s
-# laft svc show vmtest-marker
-service     vmtest-marker
+# laft svc status hello
+SERVICE  STATE  READY  PID  UPTIME
+hello    up     yes    174  0 ms
+# laft svc show hello
+service     hello
 kind        longrun
-exec        /usr/bin/sh -c echo 'laft-vmtest: marker service is running'; exec sleep 2147483647
+exec        /usr/bin/sh -c while true; do echo hello; sleep 60; done
 user        root
 after       early
 ready       immediately
-restart     Always
-log         console
+restart     always
+log         /var/log/hello
 generation  /run/laft/system/services/spec
 ```
 
