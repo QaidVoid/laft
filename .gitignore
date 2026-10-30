@@ -3,4 +3,7 @@
 /fuzz/corpus
 /fuzz/artifacts
 /fuzz/coverage
+/docs/node_modules
+/docs/.vitepress/cache
+/docs/.vitepress/dist
 /fuzz/*.log

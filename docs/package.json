@@ -1,0 +1,17 @@
+{
+  "name": "laft-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "@fontsource-variable/martian-mono": "5.3.0",
+    "@fontsource-variable/public-sans": "5.3.0",
+    "@fontsource-variable/schibsted-grotesk": "5.3.0",
+    "vitepress": "1.6.4",
+    "vue": "3.5.44"
+  }
+}

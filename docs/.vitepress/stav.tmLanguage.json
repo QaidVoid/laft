@@ -1,0 +1,581 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "stav",
+  "scopeName": "source.stav",
+  "fileTypes": [
+    "stav"
+  ],
+  "patterns": [
+    {
+      "include": "#items"
+    }
+  ],
+  "repository": {
+    "items": {
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#declarations"
+        },
+        {
+          "include": "#block-headers"
+        },
+        {
+          "include": "#attribute-path"
+        },
+        {
+          "include": "#expressions"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.stav",
+          "match": "##(?= |$).*$",
+          "captures": {
+            "0": {
+              "patterns": [
+                {
+                  "include": "#doc-code"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "comment.line.number-sign.stav",
+          "match": "#(?!\\{).*$"
+        }
+      ]
+    },
+    "doc-code": {
+      "patterns": [
+        {
+          "name": "markup.inline.raw.stav",
+          "match": "`[^`]*`"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(import)\\b",
+          "name": "keyword.control.import.stav"
+        },
+        {
+          "match": "\\b(as)\\s+([A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.stav"
+            },
+            "2": {
+              "name": "entity.name.namespace.stav"
+            }
+          }
+        },
+        {
+          "match": "\\b(struct|type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.$1.stav"
+            },
+            "2": {
+              "name": "entity.name.type.declaration.stav"
+            }
+          }
+        },
+        {
+          "match": "\\b(fn)\\s+([a-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*)\\s*(?=\\()",
+          "captures": {
+            "1": {
+              "name": "storage.type.function.stav"
+            },
+            "2": {
+              "name": "entity.name.function.declaration.stav"
+            }
+          }
+        },
+        {
+          "match": "\\b(let)\\s+([A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.let.stav"
+            },
+            "2": {
+              "name": "variable.other.declaration.stav"
+            }
+          }
+        },
+        {
+          "match": "\\b(block)\\s+([A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.block.stav"
+            },
+            "2": {
+              "name": "entity.name.tag.block.stav"
+            }
+          }
+        },
+        {
+          "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*)\\s*(:)(?=\\s)",
+          "captures": {
+            "1": {
+              "name": "variable.other.member.declaration.stav"
+            },
+            "2": {
+              "name": "punctuation.separator.type.stav"
+            }
+          }
+        }
+      ]
+    },
+    "block-headers": {
+      "patterns": [
+        {
+          "match": "(?:^|(?<=\\{))\\s*(?!(?:let|fn|struct|type|match|if|else|for|in|import|include|as|part|self|true|false|none|where|block)\\b)([a-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*)\\s+(?!(?:in)\\b)([A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+|\\.[0-9]+)*)\\s*(?=\\{)",
+          "captures": {
+            "1": {
+              "name": "entity.name.tag.block.stav"
+            },
+            "2": {
+              "name": "entity.name.label.stav"
+            }
+          }
+        },
+        {
+          "match": "(?:^|(?<=\\{))\\s*(?!(?:let|fn|struct|type|match|if|else|for|in|import|include|as|part|self|true|false|none|where|block)\\b)([a-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*)(?=\\s+(?:r?\"|\\{))",
+          "captures": {
+            "1": {
+              "name": "entity.name.tag.block.stav"
+            }
+          }
+        }
+      ]
+    },
+    "attribute-path": {
+      "patterns": [
+        {
+          "match": "^\\s*((?:[A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*|\"[^\"]*\")(?:\\.(?:[A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*|\"[^\"]*\"))*)\\s*(?==(?![=>]))",
+          "captures": {
+            "1": {
+              "patterns": [
+                {
+                  "include": "#strings"
+                },
+                {
+                  "include": "#property-name"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "property-name": {
+      "patterns": [
+        {
+          "name": "variable.language.self.stav",
+          "match": "\\bself\\b"
+        },
+        {
+          "name": "variable.other.property.stav",
+          "match": "[A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*"
+        },
+        {
+          "name": "punctuation.accessor.stav",
+          "match": "\\."
+        }
+      ]
+    },
+    "expressions": {
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#paths"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "include": "#symbols"
+        },
+        {
+          "include": "#keywords"
+        },
+        {
+          "include": "#types"
+        },
+        {
+          "include": "#calls"
+        },
+        {
+          "include": "#fields"
+        },
+        {
+          "include": "#operators"
+        },
+        {
+          "include": "#punctuation"
+        },
+        {
+          "include": "#identifiers"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.stav",
+          "match": "\\b(if|else|match|for|in)\\b"
+        },
+        {
+          "name": "keyword.other.stav",
+          "match": "\\b(let|fn|struct|type|import|include|as|part|where|block)\\b"
+        },
+        {
+          "name": "variable.language.self.stav",
+          "match": "\\bself\\b"
+        },
+        {
+          "name": "constant.language.boolean.stav",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.none.stav",
+          "match": "\\bnone\\b"
+        },
+        {
+          "name": "variable.language.wildcard.stav",
+          "match": "\\b_\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.builtin.stav",
+          "match": "\\b(Bool|Int|Float|Str|Path|Data|List|Set|Map|Option|Ref|Part|Fn)\\b(?!-[0-9A-Za-z]|\\.[0-9])"
+        },
+        {
+          "name": "entity.name.type.stav",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b(?!-[0-9A-Za-z]|\\.[0-9])"
+        }
+      ]
+    },
+    "calls": {
+      "patterns": [
+        {
+          "name": "keyword.other.priority.stav",
+          "match": "\\b(default|force)\\b(?=\\()"
+        },
+        {
+          "name": "support.function.builtin.stav",
+          "match": "\\b(fail|toStr|toFloat|toInt|parseInt|len|nonEmpty|join|split|replace|trim|lower|upper|startsWith|endsWith|contains|matches|lines|indent|map|filter|fold|flatten|sort|unique|reverse|range|any|all|first|last|get|toList|toSet|keys|values|hasKey|mapValues|filterMap|union|min|max|abs)\\b(?=\\()"
+        },
+        {
+          "name": "support.function.builtin.stav",
+          "match": "(?<=where\\s|&&\\s)(nonEmpty)\\b"
+        },
+        {
+          "name": "entity.name.function.call.stav",
+          "match": "\\b[a-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*(?=\\()"
+        }
+      ]
+    },
+    "fields": {
+      "patterns": [
+        {
+          "match": "(\\??\\.)([a-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*)",
+          "captures": {
+            "1": {
+              "name": "punctuation.accessor.stav"
+            },
+            "2": {
+              "name": "variable.other.property.stav"
+            }
+          }
+        },
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*)\\s*(?==(?![=>]))",
+          "captures": {
+            "1": {
+              "name": "variable.other.property.stav"
+            }
+          }
+        },
+        {
+          "match": "\\b([a-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*)\\s*(:)(?=\\s)",
+          "captures": {
+            "1": {
+              "name": "variable.other.member.declaration.stav"
+            },
+            "2": {
+              "name": "punctuation.separator.type.stav"
+            }
+          }
+        }
+      ]
+    },
+    "symbols": {
+      "patterns": [
+        {
+          "name": "constant.other.symbol.stav",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+|\\.[0-9]+)*(?:@[A-Za-z0-9._~]+(?::[a-z][a-z0-9_]*)?|:[a-z][a-z0-9_]*)"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.stav",
+          "match": "\\b0x[0-9A-Fa-f][0-9A-Fa-f_]*\\b"
+        },
+        {
+          "name": "constant.numeric.octal.stav",
+          "match": "\\b0o[0-7][0-7_]*\\b"
+        },
+        {
+          "name": "constant.numeric.binary.stav",
+          "match": "\\b0b[01][01_]*\\b"
+        },
+        {
+          "name": "constant.numeric.float.stav",
+          "match": "\\b[0-9][0-9_]*(?:\\.[0-9][0-9_]*(?:[eE][+-]?[0-9][0-9_]*)?|[eE][+-]?[0-9][0-9_]*)\\b"
+        },
+        {
+          "name": "constant.numeric.integer.stav",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "paths": {
+      "patterns": [
+        {
+          "name": "string.unquoted.path.stav",
+          "match": "(?<![A-Za-z0-9_.)\\]])\\.\\.?/[A-Za-z0-9._\\-+@=,/]*"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.raw.stav",
+          "begin": "r\"\"\"",
+          "end": "\"\"\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.stav"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.stav"
+            }
+          }
+        },
+        {
+          "name": "string.quoted.double.raw.stav",
+          "begin": "r\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.stav"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.stav"
+            }
+          }
+        },
+        {
+          "name": "string.quoted.triple.stav",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.stav"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.stav"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.stav",
+              "match": "\\\\#"
+            },
+            {
+              "include": "#interpolation"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.stav",
+          "begin": "\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.stav"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.stav"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.stav",
+              "match": "\\\\(?:[\\\\\"ntr0#]|u\\{[0-9A-Fa-f]{1,6}\\})"
+            },
+            {
+              "name": "invalid.illegal.escape.stav",
+              "match": "\\\\."
+            },
+            {
+              "include": "#interpolation"
+            }
+          ]
+        }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.interpolation.stav",
+      "begin": "#\\{",
+      "end": "\\}",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.begin.stav"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.end.stav"
+        }
+      },
+      "contentName": "source.stav.embedded",
+      "patterns": [
+        {
+          "include": "#nested-braces"
+        },
+        {
+          "include": "#expressions"
+        }
+      ]
+    },
+    "nested-braces": {
+      "begin": "\\{",
+      "end": "\\}",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.braces.stav"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.braces.stav"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#nested-braces"
+        },
+        {
+          "include": "#expressions"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.stav",
+          "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.range.stav",
+          "match": "\\.\\.=?"
+        },
+        {
+          "name": "keyword.operator.optional.stav",
+          "match": "\\?\\?|\\?\\."
+        },
+        {
+          "name": "keyword.operator.concat.stav",
+          "match": "\\+\\+"
+        },
+        {
+          "name": "keyword.operator.comparison.stav",
+          "match": "==|!=|<=|>="
+        },
+        {
+          "name": "keyword.operator.logical.stav",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.arithmetic.stav",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.assignment.stav",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.alternative.stav",
+          "match": "\\|"
+        },
+        {
+          "name": "punctuation.definition.generic.stav",
+          "match": "[<>]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.comma.stav",
+          "match": ","
+        },
+        {
+          "name": "punctuation.separator.type.stav",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.accessor.stav",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.section.braces.stav",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.section.brackets.stav",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.section.parens.stav",
+          "match": "[()]"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.stav",
+          "match": "\\b[a-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+|\\.[0-9]+)*"
+        }
+      ]
+    }
+  }
+}

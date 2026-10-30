@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Laft">
+  <style>@media (prefers-color-scheme: dark) { .g { fill: #4fd0c6 } .l { fill: #dbe5e8 } }</style>
+  <rect class="g" x="4" y="3" width="10.5" height="5.5" rx="2.75" fill="#12968f"/>
+  <rect class="l" x="4" y="9.75" width="10.5" height="5.5" rx="2.75" fill="#182730"/>
+  <rect class="l" x="4" y="16.5" width="10.5" height="5.5" rx="2.75" fill="#182730"/>
+  <rect class="l" x="4" y="23.25" width="24" height="5.5" rx="2.75" fill="#182730"/>
+</svg>

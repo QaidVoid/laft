@@ -1,0 +1,719 @@
+/*
+ * Laft: courses of logs, locked at the corner. A system is a stack of
+ * immutable generations, and only the top course is live. Light pages are
+ * frost on slate, dark pages are a winter night. Fjord teal is the accent,
+ * and lichen marks whatever is active right now: the current page, the
+ * active generation, the selected tab. Store ids and paths are set in a
+ * monospace face, because they are names a machine gave.
+ */
+
+:root {
+  --lf-frost: #f4f7f6;
+  --lf-frost-2: #eaefee;
+  --lf-frost-3: #dfe6e5;
+  --lf-slate: #142028;
+  --lf-slate-2: #3b4b53;
+  --lf-slate-3: #5d6d75;
+  --lf-fjord: #0b6c67;
+  --lf-fjord-mid: #0f827b;
+  --lf-fjord-bright: #12968f;
+  --lf-lichen: #5c7a08;
+  --lf-lichen-bright: #9cc22a;
+  --lf-log: #1b2a33;
+  --lf-course: rgba(20, 32, 40, 0.045);
+  --lf-focus: #1f5fa8;
+  --lf-table-shadow: rgba(20, 32, 40, 0.18);
+
+  --lf-font-display: 'Schibsted Grotesk Variable', 'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif;
+
+  --vp-font-family-base: 'Public Sans Variable', 'Public Sans', ui-sans-serif, system-ui, sans-serif;
+  --vp-font-family-mono: 'Martian Mono Variable', 'Martian Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --vp-c-bg: var(--lf-frost);
+  --vp-c-bg-alt: var(--lf-frost-2);
+  --vp-c-bg-elv: #fbfcfc;
+  --vp-c-bg-soft: var(--lf-frost-2);
+
+  --vp-c-text-1: var(--lf-slate);
+  --vp-c-text-2: var(--lf-slate-2);
+  --vp-c-text-3: var(--lf-slate-3);
+
+  --vp-c-divider: #d6dfde;
+  --vp-c-border: #c2cecd;
+  --vp-c-gutter: #d6dfde;
+
+  --vp-c-brand-1: var(--lf-fjord);
+  --vp-c-brand-2: var(--lf-fjord-mid);
+  --vp-c-brand-3: var(--lf-fjord-bright);
+  --vp-c-brand-soft: rgba(18, 150, 143, 0.13);
+
+  --vp-c-default-1: #7a8a90;
+  --vp-c-default-2: #c9d3d3;
+  --vp-c-default-3: #d8e0df;
+  --vp-c-default-soft: rgba(122, 138, 144, 0.14);
+
+  --vp-c-tip-1: var(--lf-fjord);
+  --vp-c-tip-2: var(--lf-fjord-mid);
+  --vp-c-tip-3: var(--lf-fjord-bright);
+  --vp-c-tip-soft: rgba(18, 150, 143, 0.09);
+
+  --vp-c-warning-1: #7a5a00;
+  --vp-c-warning-2: #946e00;
+  --vp-c-warning-3: #b98b0c;
+  --vp-c-warning-soft: rgba(185, 139, 12, 0.12);
+
+  --vp-c-danger-1: #a3312a;
+  --vp-c-danger-2: #bb4136;
+  --vp-c-danger-3: #cf5546;
+  --vp-c-danger-soft: rgba(187, 65, 54, 0.1);
+
+  --vp-c-note-1: #2a4d6e;
+  --vp-c-note-soft: rgba(31, 95, 168, 0.07);
+
+  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-hover-text: #ffffff;
+  --vp-button-brand-active-text: #ffffff;
+  --vp-button-brand-bg: var(--lf-fjord);
+  --vp-button-brand-hover-bg: var(--lf-fjord-mid);
+  --vp-button-brand-active-bg: var(--lf-fjord-bright);
+  --vp-button-brand-border: transparent;
+
+  --vp-code-font-size: 0.84em;
+  --vp-code-bg: rgba(18, 150, 143, 0.1);
+  --vp-code-color: #0a5753;
+  --vp-code-block-bg: #eaf0ef;
+  --vp-code-block-color: #1d2a31;
+  --vp-code-block-divider-color: #d3dddc;
+  --vp-code-lang-color: #66767d;
+  --vp-code-line-highlight-color: rgba(156, 194, 42, 0.18);
+  --vp-code-line-number-color: #8a989e;
+  --vp-code-copy-code-bg: #e1e8e7;
+  --vp-code-copy-code-hover-bg: #d6dfde;
+  --vp-code-copy-code-border-color: #c9d3d2;
+  --vp-code-copy-code-hover-border-color: #b2c0bf;
+  --vp-code-copy-code-active-text: var(--lf-slate);
+  --vp-code-copy-copied-text-content: 'Copied';
+  --vp-code-tab-bg: #e3eae9;
+  --vp-code-tab-divider: #d3dddc;
+  --vp-code-tab-text-color: #5d6d75;
+  --vp-code-tab-hover-text-color: var(--lf-slate);
+  --vp-code-tab-active-text-color: var(--lf-slate);
+  --vp-code-tab-active-bar-color: var(--lf-lichen-bright);
+
+  --vp-nav-bg-color: var(--lf-frost);
+  --vp-local-nav-bg-color: var(--lf-frost);
+  --vp-sidebar-bg-color: var(--lf-frost);
+
+  --vp-home-hero-name-color: var(--lf-slate);
+  --vp-layout-max-width: 1380px;
+}
+
+.dark {
+  --lf-fjord: #5fd1c8;
+  --lf-fjord-mid: #3fbcb2;
+  --lf-fjord-bright: #4fd0c6;
+  --lf-lichen: #c3e05b;
+  --lf-lichen-bright: #b5d63c;
+  --lf-log: #dbe5e8;
+  --lf-course: rgba(219, 229, 232, 0.028);
+  --lf-focus: #8fb8ec;
+  --lf-table-shadow: rgba(0, 0, 0, 0.6);
+
+  --vp-c-bg: #0c1317;
+  --vp-c-bg-alt: #091014;
+  --vp-c-bg-elv: #121c21;
+  --vp-c-bg-soft: #121c21;
+
+  --vp-c-text-1: #e2eaed;
+  --vp-c-text-2: #a8b7bd;
+  --vp-c-text-3: #7b8b92;
+
+  --vp-c-divider: #1d292f;
+  --vp-c-border: #2a383f;
+  --vp-c-gutter: #060a0c;
+
+  --vp-c-brand-1: #5fd1c8;
+  --vp-c-brand-2: #3fbcb2;
+  --vp-c-brand-3: #1f958c;
+  --vp-c-brand-soft: rgba(95, 209, 200, 0.14);
+
+  --vp-c-default-1: #6b7a80;
+  --vp-c-default-2: #2a383f;
+  --vp-c-default-3: #202c32;
+  --vp-c-default-soft: rgba(107, 122, 128, 0.18);
+
+  --vp-c-tip-1: #5fd1c8;
+  --vp-c-tip-2: #3fbcb2;
+  --vp-c-tip-3: #1f958c;
+  --vp-c-tip-soft: rgba(95, 209, 200, 0.08);
+
+  --vp-c-warning-1: #e9c46a;
+  --vp-c-warning-2: #d6ab3e;
+  --vp-c-warning-3: #b98b0c;
+  --vp-c-warning-soft: rgba(233, 196, 106, 0.09);
+
+  --vp-c-danger-1: #f29a8a;
+  --vp-c-danger-2: #e3786a;
+  --vp-c-danger-3: #c95c4e;
+  --vp-c-danger-soft: rgba(227, 120, 106, 0.11);
+
+  --vp-c-note-1: #a9c7e6;
+  --vp-c-note-soft: rgba(143, 184, 236, 0.07);
+
+  --vp-button-brand-text: #06201e;
+  --vp-button-brand-hover-text: #06201e;
+  --vp-button-brand-active-text: #06201e;
+  --vp-button-brand-bg: #5fd1c8;
+  --vp-button-brand-hover-bg: #7fdcd4;
+  --vp-button-brand-active-bg: #9fe5df;
+
+  --vp-code-bg: rgba(95, 209, 200, 0.1);
+  --vp-code-color: #8fe0d8;
+  --vp-code-block-bg: #101a1f;
+  --vp-code-block-color: #dce6e9;
+  --vp-code-block-divider-color: #070b0d;
+  --vp-code-lang-color: #7b8b92;
+  --vp-code-line-highlight-color: rgba(195, 224, 91, 0.1);
+  --vp-code-line-number-color: #55656c;
+  --vp-code-copy-code-bg: #172228;
+  --vp-code-copy-code-hover-bg: #1d2a31;
+  --vp-code-copy-code-border-color: #26343b;
+  --vp-code-copy-code-hover-border-color: #344751;
+  --vp-code-copy-code-active-text: #e2eaed;
+  --vp-code-tab-bg: #0d161a;
+  --vp-code-tab-divider: #070b0d;
+  --vp-code-tab-text-color: #7b8b92;
+  --vp-code-tab-hover-text-color: #e2eaed;
+  --vp-code-tab-active-text-color: #e2eaed;
+  --vp-code-tab-active-bar-color: var(--lf-lichen);
+
+  --vp-nav-bg-color: #0c1317;
+  --vp-local-nav-bg-color: #0c1317;
+  --vp-sidebar-bg-color: #0c1317;
+
+  --vp-home-hero-name-color: #e2eaed;
+}
+
+body {
+  background-color: var(--vp-c-bg);
+  font-size: 16px;
+  text-rendering: optimizeLegibility;
+}
+
+/* Courses: faint horizontal joints behind the home page. */
+body:has(.lf-home) {
+  background-image: repeating-linear-gradient(180deg, transparent 0 119px, var(--lf-course) 119px 120px);
+}
+
+::selection {
+  background: rgba(18, 150, 143, 0.26);
+}
+
+:focus-visible {
+  outline: 2px solid var(--lf-focus) !important;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Headings receive focus when a link jumps to them. That focus is not the
+   reader's, so it draws no ring. */
+[tabindex='-1']:focus-visible {
+  outline: none !important;
+}
+
+/* ---------------------------------------------------------------- nav --- */
+
+.VPNavBar .divider-line {
+  background-color: var(--vp-c-divider) !important;
+}
+
+.VPSidebar,
+.VPDocAsideOutline,
+.vp-doc div[class*='language-'] pre {
+  scrollbar-width: thin;
+  scrollbar-color: var(--vp-c-border) transparent;
+}
+
+.VPNavBarTitle .title {
+  font-family: var(--lf-font-display);
+  font-size: 21px;
+  font-weight: 760;
+  letter-spacing: -0.02em;
+}
+
+.VPNavBarTitle .logo {
+  height: 26px;
+  margin-right: 8px;
+}
+
+.VPNavBarMenuLink,
+.VPNavBarMenuGroup .text {
+  font-family: var(--lf-font-display);
+  font-weight: 600;
+  font-size: 14.5px;
+}
+
+.VPNavBarMenuLink.active {
+  box-shadow: inset 0 -3px 0 var(--lf-lichen-bright);
+}
+
+/* ------------------------------------------------------------ sidebar --- */
+
+.VPSidebarItem.level-0 > .item > .text {
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  font-weight: 600;
+  font-stretch: 87.5%;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-3);
+}
+
+.VPSidebarItem.level-0 > .item > .text::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 7px;
+  margin: 0 9px 1px 0;
+  border-radius: 4px;
+  background: var(--vp-c-brand-3);
+  vertical-align: middle;
+}
+
+.VPSidebarItem.level-1 .link .text {
+  font-size: 14.5px;
+}
+
+/* The active page carries the same mark as the active generation in
+   `laft gens list`: a star. */
+.VPSidebarItem.is-active > .item > .indicator {
+  width: 4px;
+  left: -17px;
+  top: 7px;
+  bottom: 7px;
+  border-radius: 2px;
+  background: var(--lf-lichen-bright);
+}
+
+.VPSidebarItem.is-active.level-1 > .item .text {
+  font-weight: 650;
+}
+
+.VPSidebarItem.is-active.level-1 > .item .text::after {
+  content: ' *';
+  font-family: var(--vp-font-family-mono);
+  font-weight: 500;
+  color: var(--lf-lichen);
+}
+
+/* ------------------------------------------------------------ content --- */
+
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3,
+.vp-doc h4 {
+  font-family: var(--lf-font-display);
+}
+
+.vp-doc h1 {
+  font-size: 40px;
+  line-height: 1.1;
+  font-weight: 780;
+  letter-spacing: -0.03em;
+}
+
+/* Under every page title, a short stack of courses: the top one is live. */
+.vp-doc h1::after {
+  content: '';
+  display: block;
+  width: 72px;
+  height: 17px;
+  margin-top: 20px;
+  background:
+    linear-gradient(var(--lf-lichen-bright), var(--lf-lichen-bright)) 0 0 / 30px 5px no-repeat,
+    linear-gradient(var(--vp-c-text-3), var(--vp-c-text-3)) 0 6px / 30px 5px no-repeat,
+    linear-gradient(var(--vp-c-text-3), var(--vp-c-text-3)) 0 12px / 72px 5px no-repeat;
+  opacity: 0.9;
+}
+
+.vp-doc h2 {
+  margin-top: 56px;
+  padding-top: 26px;
+  border-top: 1px solid var(--vp-c-divider);
+  font-size: 26px;
+  font-weight: 720;
+  letter-spacing: -0.02em;
+  position: relative;
+}
+
+.vp-doc h2::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: 0;
+  width: 36px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--vp-c-brand-3);
+}
+
+.vp-doc h3 {
+  font-size: 19.5px;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+}
+
+.vp-doc p,
+.vp-doc li {
+  line-height: 1.75;
+}
+
+.vp-doc .lead {
+  font-size: 19px;
+  line-height: 1.6;
+  color: var(--vp-c-text-2);
+}
+
+.vp-doc a {
+  font-weight: 560;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--vp-c-brand-1) 45%, transparent);
+}
+
+.vp-doc a:hover {
+  text-decoration-thickness: 2px;
+  text-decoration-color: var(--vp-c-brand-1);
+}
+
+.vp-doc .header-anchor {
+  text-decoration: none;
+  font-family: var(--vp-font-family-mono);
+  font-weight: 400;
+}
+
+.vp-doc hr {
+  border: none;
+  border-top: 1px solid var(--vp-c-divider);
+}
+
+.vp-doc :not(pre) > code {
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-stretch: 87.5%;
+}
+
+.vp-doc h1 code,
+.vp-doc h2 code,
+.vp-doc h3 code {
+  padding: 0;
+  background: none;
+  color: inherit;
+  font-size: 0.86em;
+}
+
+.vp-doc a > code {
+  color: var(--vp-c-brand-1);
+}
+
+/* Wide tables scroll inside their own box and never widen the page. Long
+   code values in cells wrap at their spaces, so most tables fit without
+   scrolling. */
+.vp-doc table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 15px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--vp-c-border) transparent;
+  /* Shadows at an edge where more of the table is scrolled out of view. */
+  background:
+    linear-gradient(to right, var(--vp-c-bg) 30%, transparent) left / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--vp-c-bg) 30%, transparent) right / 32px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--lf-table-shadow), transparent) left / 10px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--lf-table-shadow), transparent) right / 10px 100% no-repeat scroll;
+}
+
+.vp-doc td code {
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.vp-doc tr {
+  border-top: none;
+  background: transparent !important;
+}
+
+.vp-doc th,
+.vp-doc td {
+  border: none;
+  border-bottom: 1px solid var(--vp-c-divider);
+  padding: 9px 14px 9px 0;
+  vertical-align: top;
+}
+
+/* The last column usually holds prose. On narrow screens it keeps a
+   readable width, and the table scrolls instead of squeezing it. */
+@media (max-width: 767px) {
+  .vp-doc td:last-child:not(:first-child) {
+    min-width: 15em;
+  }
+}
+
+.vp-doc td:first-child > code:first-child {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.vp-doc th {
+  background: transparent;
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  font-weight: 600;
+  font-stretch: 87.5%;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-3);
+  border-bottom: 2px solid var(--vp-c-text-3);
+}
+
+.vp-doc blockquote {
+  border-left: 4px solid var(--vp-c-brand-3);
+}
+
+/* Code blocks: a panel whose left edge is a log end. */
+.vp-doc div[class*='language-'] {
+  border-radius: 6px;
+  border: 1px solid var(--vp-code-block-divider-color);
+}
+
+.vp-doc div[class*='language-'] code {
+  font-size: 13px;
+  font-weight: 420;
+  font-stretch: 87.5%;
+  line-height: 1.75;
+}
+
+.vp-doc div[class*='language-'] > span.lang {
+  font-family: var(--vp-font-family-mono);
+  font-size: 10.5px;
+  font-stretch: 87.5%;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.vp-doc div[class*='language-'] pre {
+  -webkit-font-smoothing: auto;
+}
+
+/* Terminal sessions and command output get a slate panel in both modes,
+   so they read as a machine's words rather than a file's. */
+.vp-doc div.language-console,
+.vp-doc div.language-text {
+  --vp-code-block-bg: #111c22;
+  --vp-code-block-color: #d4dfe3;
+  --vp-code-lang-color: #7b8b92;
+  --vp-code-copy-code-bg: #172228;
+  --vp-code-copy-code-hover-bg: #1d2a31;
+  --vp-code-copy-code-border-color: #26343b;
+  --vp-code-copy-code-hover-border-color: #344751;
+  --vp-code-copy-code-active-text: #e2eaed;
+  border-color: #0a1013;
+}
+
+.vp-doc div.language-console code,
+.vp-doc div.language-text code {
+  color: #d4dfe3;
+}
+
+html:not(.dark) .vp-doc div.language-console span,
+html:not(.dark) .vp-doc div.language-text span {
+  color: var(--shiki-dark, inherit) !important;
+}
+
+.dark .vp-doc div.language-console,
+.dark .vp-doc div.language-text {
+  --vp-code-block-bg: #081014;
+}
+
+.vp-code-group .tabs {
+  border-radius: 6px 6px 0 0;
+  border: 1px solid var(--vp-code-block-divider-color);
+  border-bottom: none;
+  box-shadow: none !important;
+}
+
+.vp-code-group .tabs label {
+  font-family: var(--vp-font-family-mono);
+  font-stretch: 87.5%;
+  font-size: 12.5px;
+}
+
+.vp-code-group div[class*='language-'] {
+  border-radius: 0 0 6px 6px;
+}
+
+@media (max-width: 639px) {
+  .vp-doc div[class*='language-'],
+  .vp-code-group .tabs {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+}
+
+/* Custom blocks: square on the left, a tinted field. */
+.custom-block {
+  border: none;
+  border-left: 4px solid currentColor;
+  border-radius: 0 6px 6px 0;
+}
+
+.custom-block.tip {
+  color: var(--vp-c-tip-1);
+}
+.custom-block.info {
+  color: var(--vp-c-text-3);
+}
+.custom-block.warning {
+  color: var(--vp-c-warning-1);
+}
+.custom-block.danger {
+  color: var(--vp-c-danger-1);
+}
+.custom-block.details {
+  color: var(--vp-c-text-3);
+}
+
+.custom-block > *:not(.custom-block-title) {
+  color: var(--vp-c-text-1);
+}
+
+.custom-block .custom-block-title {
+  font-family: var(--lf-font-display);
+  font-weight: 700;
+}
+
+.custom-block div[class*='language-'] {
+  border-radius: 4px;
+}
+
+/* A planned feature, as opposed to one that exists. */
+.vp-doc .planned {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px dashed var(--vp-c-text-3);
+  border-radius: 4px;
+  font-family: var(--vp-font-family-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-stretch: 87.5%;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-2);
+  vertical-align: 2px;
+}
+
+.vp-doc .works {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid var(--vp-c-brand-3);
+  border-radius: 4px;
+  background: var(--vp-c-brand-soft);
+  font-family: var(--vp-font-family-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-stretch: 87.5%;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vp-c-brand-1);
+  vertical-align: 2px;
+}
+
+/* --------------------------------------------------------- page chrome --- */
+
+.VPDocAsideOutline .outline-title {
+  font-family: var(--vp-font-family-mono);
+  font-stretch: 87.5%;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--vp-c-text-3);
+}
+
+.VPDocAsideOutline .content {
+  border-left: 1px solid var(--vp-c-divider);
+}
+
+.VPDocAsideOutline .outline-marker {
+  width: 3px;
+  left: -2px;
+  border-radius: 2px;
+  background: var(--lf-lichen-bright);
+}
+
+.VPDocFooter .pager-link {
+  border-radius: 6px;
+  border: 1px solid var(--vp-c-border);
+  transition: border-color 0.2s, transform 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.VPDocFooter .pager-link::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--vp-c-brand-3);
+}
+
+.VPDocFooter .pager-link:hover {
+  border-color: var(--vp-c-brand-2);
+  transform: translateY(-2px);
+}
+
+.VPDocFooter .pager-link .title {
+  font-family: var(--lf-font-display);
+}
+
+.VPDocFooter .pager-link .desc {
+  font-family: var(--vp-font-family-mono);
+  font-stretch: 87.5%;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.VPFooter {
+  border-top: 1px solid var(--vp-c-divider) !important;
+  background: transparent !important;
+}
+
+.VPButton {
+  font-family: var(--lf-font-display);
+  font-weight: 650 !important;
+  border-radius: 6px !important;
+}
+
+.VPLocalSearchBox .shell {
+  border-radius: 8px;
+}
+
+.DocSearch-Button {
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}
