@@ -557,3 +557,23 @@ fn an_installing_build_sees_the_destination_and_no_toolchain() {
         .expect_err("only bootstrap mode installs");
     assert_eq!(error.code(), Some("B041"));
 }
+
+#[test]
+fn the_check_phase_installs_nothing_into_the_packages() {
+    let dir = laft_test::tempdir();
+    if let Some(reason) = unsupported(dir.path()) {
+        println!("skipping: {reason}");
+        return;
+    }
+    let repos = repos_with(
+        dir.path(),
+        "  build make {}\n  phases {\n    check = \"test -z \\\"${DESTDIR:-}\\\"\"\n  }",
+    );
+    let recipe: Recipe = support::evaluate(&repos, "hello").remove(0);
+    let (root, cache) = offline_cache(dir.path());
+    let builder = Builder::new(&repos, &cache, &root, Mode::View("/usr".into()));
+    let inputs = builder.key_inputs(&recipe).unwrap();
+    if let Err(e) = builder.build(&recipe, &inputs) {
+        panic!("the build fails: {e}");
+    }
+}
