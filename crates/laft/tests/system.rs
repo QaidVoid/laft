@@ -103,19 +103,27 @@ fn services_are_described_from_the_active_generation() {
     fx.laft(&["svc", "show", "nothing"]).expect(2);
     fx.laft(&["svc", "start", "turnstiled"]).expect(1);
 
-    let log = fx.root().join("var/log/hello/current");
+    let log = fx.root().join("var/log/turnstiled/current");
     fs::create_dir_all(log.parent().expect("a parent")).expect("writable");
     let label = format!(
         "@{:016x}00000000",
         4_611_686_018_427_387_914u64 + 1_761_652_800
     );
     fs::write(&log, format!("{label} first\n{label} second\n")).expect("writable");
-    let printed = fx.laft(&["svc", "log", "hello", "-n", "1"]).expect(0);
+    let printed = fx.laft(&["svc", "log", "turnstiled", "-n", "1"]).expect(0);
     assert!(printed.stdout.ends_with(" second\n"), "{}", printed.stdout);
     assert!(
         printed.stdout.starts_with("2025-10-2"),
         "{}",
         printed.stdout
+    );
+    let console = fx.laft(&["svc", "log", "hostname"]).expect(1);
+    assert!(
+        console
+            .stderr
+            .contains("service hostname logs to the console, so it has no log file"),
+        "{}",
+        console.stderr
     );
 
     let launcher = fx.laft(&["svc", "exec", "--backend", "runit", "nothing"]);

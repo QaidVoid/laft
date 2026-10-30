@@ -174,7 +174,16 @@ log         /var/log/hello
 generation  /run/laft/system/services/spec
 ```
 
-Without names, `laft svc status` shows every enabled service. `laft svc start`, `stop` and `restart` change services until the next apply or boot. The configuration stays the source of truth, so a service that should stay off gets `enable = false`. `laft svc log <name>` prints the last 50 lines of a service's log from `/var/log/<name>/current`, `-n` changes the count and `-f` follows it. Services with `log = console` have no log file.
+Without names, `laft svc status` shows every enabled service. `laft svc start`, `stop` and `restart` change services until the next apply or boot. The configuration stays the source of truth, so a service that should stay off gets `enable = false`. `laft svc log <name>` prints the last 50 lines of a service's log from `/var/log/<name>/current`, `-n` changes the count and `-f` follows it.
+
+A service with `log = console` has no log file. Its output goes to `/dev/console`, which is the last `console=` device of the kernel command line, the serial port on the test machine. `laft svc log` says so instead of failing on the missing file, and it says the same of a service with `log = discard`, whose output is thrown away:
+
+```console
+# laft svc log hello
+2026-10-30_18:01:42.08238 hello
+# laft svc log boot-complete
+error: service boot-complete logs to the console, so it has no log file: its output goes to /dev/console, which is the last console= device of the kernel command line
+```
 
 ## `/etc`
 

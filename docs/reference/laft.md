@@ -177,7 +177,7 @@ The same as `laft rescue`, with the mounted system given as `DIR`.
 | `laft svc start <NAMES>...` | Start services until the next apply or boot. |
 | `laft svc stop <NAMES>...` | Stop services until the next apply or boot. |
 | `laft svc restart <NAMES>...` | Restart services. |
-| `laft svc log <NAME> [-n <LINES>] [-f]` | Print a service's log, the last 50 lines by default. `-f` keeps printing new lines. |
+| `laft svc log <NAME> [-n <LINES>] [-f]` | Print a service's log, the last 50 lines by default. `-f` keeps printing new lines. A service whose `log` is `console` or `discard` has no log, and the command fails with a message that says so: its output goes to `/dev/console`, or is thrown away. |
 
 The rendered runit scripts call hidden subcommands of `laft svc` (`exec`, `up`, `down`, `builtin`, `finish`, `logger`, `stop-early` and `ready`). They are Laft's service launcher, not commands to run by hand.
 

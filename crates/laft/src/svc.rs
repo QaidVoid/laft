@@ -353,6 +353,10 @@ fn log_line(line: &str) -> String {
 
 /// `laft svc log`.
 fn log(env: &Env, name: &str, lines: usize, follow: bool) -> Result<u8, Failure> {
+    let spec = specs(env, &[name.to_owned()])?.remove(0);
+    if let Some(why) = unlogged(&spec) {
+        return Err(Failure::general(why));
+    }
     let path = env.path("/var/log").join(name).join("current");
     let text = fs::read_to_string(&path)
         .map_err(|e| Failure::general(format!("{}: {e}", path.display())))?;
@@ -364,6 +368,21 @@ fn log(env: &Env, name: &str, lines: usize, follow: bool) -> Result<u8, Failure>
         follow_file(env, &path, text.len() as u64)?;
     }
     Ok(0)
+}
+
+/// Why service `spec` has no log to show, when it is not logged.
+fn unlogged(spec: &Spec) -> Option<String> {
+    let name = &spec.name;
+    match spec.log {
+        SpecLog::Logged { .. } => None,
+        SpecLog::Console => Some(format!(
+            "service {name} logs to the console, so it has no log file: its output goes to \
+             /dev/console, which is the last console= device of the kernel command line"
+        )),
+        SpecLog::Discard => Some(format!(
+            "service {name} discards its output, so it has no log"
+        )),
+    }
 }
 
 /// Prints what is appended to `path` from `offset` on, reopening it when
