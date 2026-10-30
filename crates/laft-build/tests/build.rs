@@ -567,7 +567,7 @@ fn the_check_phase_installs_nothing_into_the_packages() {
     }
     let repos = repos_with(
         dir.path(),
-        "  build make {}\n  phases {\n    check = \"test -z \\\"${DESTDIR:-}\\\"\"\n  }",
+        "  build make {}\n  phases {\n    check = \"test -z \\\"${DESTDIR:-}${OUT:-}\\\"\"\n  }",
     );
     let recipe: Recipe = support::evaluate(&repos, "hello").remove(0);
     let (root, cache) = offline_cache(dir.path());

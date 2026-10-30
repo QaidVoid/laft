@@ -704,7 +704,8 @@ impl<'a> Builder<'a> {
     /// Runs the patches and the phases of `recipe` in `session`, in order,
     /// stopping after the phase named `until` when it is given. The check
     /// phase runs only when the builder and the recipe enable it, never in
-    /// bootstrap mode, and without `DESTDIR`, which only installing needs.
+    /// bootstrap mode, and without `DESTDIR` and `OUT`, which only
+    /// installing needs.
     ///
     /// # Errors
     ///
@@ -737,9 +738,11 @@ impl<'a> Builder<'a> {
             }
         }
         // A test suite that installs into a directory of its own would
-        // otherwise install into the output of the build.
+        // otherwise install into the output of the build, and test scripts
+        // use OUT for files of their own.
         let mut check_env = session.env.clone();
         check_env.remove("DESTDIR");
+        check_env.remove("OUT");
         for (name, script) in steps {
             let env = if name == "check" {
                 &check_env
