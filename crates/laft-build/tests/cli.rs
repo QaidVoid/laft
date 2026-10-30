@@ -509,9 +509,10 @@ fn check_repro_checks_every_built_package_and_names_the_unchecked() {
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     let out = stdout(&output);
     assert!(
-        out.contains("zlib: error[B060]: zlib has no successful build to check"),
+        out.contains("error[B060]: zlib has no successful build to check\n"),
         "{out}"
     );
+    assert!(!out.contains("zlib: error"), "{out}");
     assert!(out.ends_with("0 of 1 reproducible\n"), "{out}");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

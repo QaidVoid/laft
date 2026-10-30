@@ -592,7 +592,7 @@ fn repro(cx: &Context, packages: &[String]) -> Result<(), Failure> {
         let Some(previous) = db.latest(&item)? else {
             if !packages.is_empty() {
                 let error = format!("error[B060]: {item} has no successful build to check");
-                say(format_args!("{item}: {error}"));
+                say(format_args!("{error}"));
                 results.push(json!({ "item": item.to_string(), "error": error }));
                 failed.push(item.to_string());
             }
