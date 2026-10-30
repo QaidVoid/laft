@@ -219,10 +219,10 @@ views        system (2.3.1-r1)
 /usr/bin/sv is owned by runit 2.3.1-r1 (static)
 # laft why runit
 runit 2.3.1-r1 is in view "system" because:
-  requested at /mnt/etc/laft/system.stav:9:31 (runit:static)
+  requested at /etc/laft/system.stav:9:31 (runit:static)
 ```
 
-`laft search <text>` searches names and summaries in the synced indexes. `laft owns` also accepts a bare command name and looks for it in `/usr/bin`. `laft why` explains every view with `--all`, and follows dependencies when a package was not requested directly.
+`laft search <text>` searches names and summaries in the synced indexes. `laft owns` also accepts a bare command name and looks for it in `/usr/bin`. `laft why` explains every view with `--all`, and follows dependencies when a package was not requested directly. It names configuration files as the installed system sees them, also for a generation that `laft install` or `--root` built below a mount point.
 
 ## Checking the system
 

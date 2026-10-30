@@ -130,7 +130,7 @@ Most of these are the early boot graph that every system includes. `vmtest-marke
 ```console
 # laft why runit
 runit 2.3.1-r1 is in view "system" because:
-  requested at /mnt/etc/laft/system.stav:9:31 (runit:static)
+  requested at /etc/laft/system.stav:9:31 (runit:static)
 # laft owns /usr/bin/sv
 /usr/bin/sv is owned by runit 2.3.1-r1 (static)
 # laft doctor
@@ -150,7 +150,7 @@ ok clock
 ok 5 packages
 ```
 
-The path in the `why` output is where the installer read the configuration, with the target mounted at `/mnt`. The [core concepts](./concepts) page walks through `/laft`, the store and `/etc` on this same machine.
+The `why` output names the configuration file as the installed system sees it, even though the installer read it at `/mnt/etc/laft/system.stav`, with the target mounted at `/mnt`. The [core concepts](./concepts) page walks through `/laft`, the store and `/etc` on this same machine.
 
 ## Change something and roll back
 

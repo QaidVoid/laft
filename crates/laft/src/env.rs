@@ -189,10 +189,13 @@ impl Env {
                 format!("{} does not exist", self.config.display()),
             ));
         }
-        let loaded = laft_config::load(&self.config_dir(), packages).map_err(Failure::config)?;
+        let mut loaded =
+            laft_config::load(&self.config_dir(), packages).map_err(Failure::config)?;
         if !loaded.warnings.is_empty() && !self.ui.json {
             crate::report::emit(&self.ui, &loaded.warnings);
         }
+        let root = fs::canonicalize(self.root.path()).unwrap_or_else(|_| self.root.path().into());
+        as_seen_from(&root, &mut loaded);
         Ok(loaded)
     }
 
@@ -445,6 +448,40 @@ fn similar(a: &str, b: &str) -> bool {
         }
     }
     row[b.len()] <= 1
+}
+
+/// Names the configuration files of `loaded`, and the places of its
+/// package requests, as the system mounted at `root` sees them, so that a
+/// generation built below `--root /mnt` records `/etc/laft/system.stav`
+/// rather than `/mnt/etc/laft/system.stav`.
+fn as_seen_from(root: &Path, loaded: &mut Loaded) {
+    let inside = |text: &mut String| {
+        if let Some(rest) = seen_from(root, text) {
+            *text = rest;
+        }
+    };
+    loaded.files.iter_mut().for_each(|f| inside(&mut f.path));
+    let config = &mut loaded.config;
+    let views = config
+        .views
+        .values_mut()
+        .flat_map(|v| v.packages.iter_mut());
+    for request in config.packages.iter_mut().chain(views) {
+        inside(&mut request.origin);
+    }
+}
+
+/// The path `path`, or a location that starts with one, as the system
+/// mounted at `root` sees it, or `None` when it is not below `root` or the
+/// root is `/`.
+fn seen_from(root: &Path, path: &str) -> Option<String> {
+    let root = root.to_string_lossy();
+    if root == "/" {
+        return None;
+    }
+    path.strip_prefix(root.as_ref())
+        .filter(|rest| rest.starts_with('/'))
+        .map(str::to_owned)
 }
 
 /// The number at the end of the target of the symlink `link`, such as

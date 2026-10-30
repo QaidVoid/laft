@@ -44,3 +44,17 @@ fn the_esp_comes_from_the_default_generation_s_configuration() {
     symlink("1", dir.path().join("laft/gens/default")).expect("can link");
     assert_eq!(recorded_esp(&root).as_deref(), Some("/efi"), "the default");
 }
+
+#[test]
+fn only_paths_below_the_root_are_renamed() {
+    let root = Path::new("/mnt");
+    let seen = |path: &str| seen_from(root, path);
+    assert_eq!(
+        seen("/mnt/etc/laft/system.stav:9:31").as_deref(),
+        Some("/etc/laft/system.stav:9:31")
+    );
+    assert_eq!(seen("/mntx/etc/laft/system.stav"), None);
+    assert_eq!(seen("/srv/etc/laft/system.stav"), None);
+    assert_eq!(seen("boot.kernel"), None);
+    assert_eq!(seen_from(Path::new("/"), "/etc/laft/system.stav"), None);
+}

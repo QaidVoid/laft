@@ -99,6 +99,13 @@ fn package_questions_are_answered_from_the_indexes_and_the_generation() {
         "{}",
         why.stdout
     );
+    let why = fx.laft(&["why", "hello"]).expect(0);
+    assert!(
+        why.stdout
+            .contains("requested at /etc/laft/system.stav:3:43 (hello)"),
+        "{}",
+        why.stdout
+    );
 }
 
 #[test]
