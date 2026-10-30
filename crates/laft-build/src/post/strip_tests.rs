@@ -104,3 +104,59 @@ fn a_failed_tool_leaves_the_file_mode_alone() {
     strip(&out, &elves, &options, &exec).expect_err("no tools exist");
     assert_eq!(mode(&out.join("usr/bin/program")), 0o555);
 }
+
+/// The time stamp and owner fields of every member header of the `ar`
+/// archive `bytes`.
+fn member_stamps(bytes: &[u8]) -> Vec<(String, String, String)> {
+    let mut stamps = Vec::new();
+    let mut at = 8;
+    while at + 60 <= bytes.len() {
+        let header = &bytes[at..at + 60];
+        let field =
+            |from: usize, to: usize| String::from_utf8_lossy(&header[from..to]).trim().to_owned();
+        stamps.push((field(16, 28), field(28, 34), field(34, 40)));
+        let size: usize = field(48, 58).parse().unwrap();
+        at += 60 + size + size % 2;
+    }
+    stamps
+}
+
+#[test]
+fn stripped_archives_have_no_time_stamps_or_owners() {
+    if tools_missing() || !Path::new("/usr/bin/ar").exists() {
+        return;
+    }
+    let (dir, _, exec, options) = setup(false);
+    let out = dir.path().join("out");
+    let member = dir.path().join("member.o");
+    fs::write(&member, elf_fixture("program")).unwrap();
+    fs::create_dir_all(out.join("usr/lib")).unwrap();
+    let archive = out.join("usr/lib/libmember.a");
+    let made = std::process::Command::new("/usr/bin/ar")
+        .arg("rcU")
+        .arg(&archive)
+        .arg(&member)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    assert!(
+        member_stamps(&fs::read(&archive).unwrap())
+            .iter()
+            .any(|(time, _, _)| time != "0"),
+        "the archive starts with a time stamp"
+    );
+    // A strip that keeps time stamps and owners unless told otherwise, as
+    // binutils without deterministic archives by default does.
+    let bin = dir.path().join("bin");
+    crate::test_support::write_tree(
+        &bin,
+        &[("strip", b"#!/bin/sh\nexec /usr/bin/strip -U \"$@\"\n")],
+    );
+    fsx::set_mode(&bin.join("strip"), 0o755).unwrap();
+    let exec = exec.search_first(vec![bin]);
+    let elves = crate::post::scan_elf(&out, &mut Vec::new()).unwrap();
+    strip(&out, &elves, &options, &exec).expect("stripping works");
+    for stamp in member_stamps(&fs::read(&archive).unwrap()) {
+        assert_eq!(stamp, ("0".into(), "0".into(), "0".into()));
+    }
+}

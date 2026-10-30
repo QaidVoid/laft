@@ -31,7 +31,9 @@ pub fn debug_path(id: &[u8]) -> Option<String> {
 /// first has its debug info copied to [`debug_path`] and gets a
 /// `.gnu_debuglink` to it. Executables are then stripped with
 /// `--strip-all`, shared objects with `--strip-unneeded`, and object files
-/// and static archives with `--strip-debug`. Files under
+/// and static archives with `--strip-debug`. Archive members get a zero
+/// time stamp, owner and group and the same mode, whatever the default of
+/// the binutils at hand, so that archives are reproducible. Files under
 /// `usr/lib/modules/` and `usr/lib/debug/` are left alone, and each file is
 /// handled once even when the payload links it under several names.
 ///
@@ -61,12 +63,12 @@ pub fn strip(
         if !seen.insert((metadata.dev(), metadata.ino())) {
             continue;
         }
-        let flag = match elves.get(&rel).map(|e| e.kind) {
-            Some(Kind::Executable) => "--strip-all",
-            Some(Kind::SharedObject) => "--strip-unneeded",
-            Some(Kind::Relocatable) => "--strip-debug",
+        let (flag, archive) = match elves.get(&rel).map(|e| e.kind) {
+            Some(Kind::Executable) => ("--strip-all", false),
+            Some(Kind::SharedObject) => ("--strip-unneeded", false),
+            Some(Kind::Relocatable) => ("--strip-debug", false),
             Some(_) => continue,
-            None if is_archive(&path)? => "--strip-debug",
+            None if is_archive(&path)? => ("--strip-debug", true),
             None => continue,
         };
         let mode = metadata.permissions().mode() & 0o7777;
@@ -97,7 +99,12 @@ pub fn strip(
                 )?;
                 fsx::set_mode(&host, 0o444)?;
             }
-            exec.tool("strip", "strip", &[flag.into(), file])
+            let mut args = vec![flag.to_owned()];
+            if archive {
+                args.push("--enable-deterministic-archives".to_owned());
+            }
+            args.push(file);
+            exec.tool("strip", "strip", &args)
         })();
         fsx::set_mode(&path, mode)?;
         stripped?;
