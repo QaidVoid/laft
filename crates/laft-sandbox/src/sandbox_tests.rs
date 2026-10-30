@@ -535,3 +535,18 @@ fn localhost_names_the_loopback_interface() {
         "{output:?}"
     );
 }
+
+#[test]
+fn signals_the_caller_ignores_have_their_default_disposition() {
+    let fixture = Fixture::new();
+    // SAFETY: installing `SIG_IGN` registers no handler code. Only a
+    // terminal sends SIGINT to the test process, and it is restored below.
+    unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
+    let output = fixture.run("sed -n 's/^SigIgn:[[:space:]]*//p' /proc/self/status");
+    // SAFETY: installing `SIG_DFL` registers no handler code.
+    unsafe { libc::signal(libc::SIGINT, libc::SIG_DFL) };
+    let Some(output) = output else {
+        return;
+    };
+    assert_eq!(stdout(&output), "0000000000000000\n", "{output:?}");
+}

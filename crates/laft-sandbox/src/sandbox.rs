@@ -272,8 +272,9 @@ impl Command {
     /// Use piped standard streams to read the command's output while it
     /// runs.
     ///
-    /// `SIGCHLD` has its default disposition in the sandbox, even when the
-    /// caller ignores it, so the command can wait for its own children.
+    /// Every signal has its default disposition in the sandbox, even one
+    /// the caller ignores, so the command can wait for its own children and
+    /// is interrupted like any program.
     ///
     /// # Errors
     ///
@@ -453,11 +454,12 @@ impl Setup {
         rustix::process::setrlimit(Resource::Nofile, open_files).map_err(fail(Step::Limits))?;
         rustix::process::setrlimit(Resource::Core, no_core).map_err(fail(Step::Limits))?;
 
-        // A caller that ignores SIGCHLD makes the kernel reap children on its
-        // own, so `wait_for` could not learn how PID 1 ended. The ignored
-        // disposition would also survive the fork and `exec` into the
-        // command, which then could not wait for its own children.
-        sys::default_signal(libc::SIGCHLD);
+        // An ignored disposition survives the fork and `exec`, so a command
+        // would inherit every signal its caller ignores, for example SIGINT
+        // and SIGQUIT of a job started in the background. An ignored SIGCHLD
+        // would even make the kernel reap children on its own, so that
+        // `wait_for` could not learn how PID 1 ended.
+        crate::process::reset_signal_dispositions();
         // The new PID namespace applies to children only. This process stays
         // outside as the one the caller waits for, and the forked child
         // becomes PID 1 of the sandbox.
