@@ -332,7 +332,7 @@ impl Command {
     /// Fails like [`Command::spawn`], or when reading the output fails.
     pub fn output(mut self) -> Result<Output, Error> {
         if !self.stdin_set {
-            self.inner.stdin(Stdio::null());
+            self = self.stdin(Stdio::null());
         }
         let child = self.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
         child
