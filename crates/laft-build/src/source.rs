@@ -52,8 +52,7 @@ pub enum SourceError {
         /// The underlying error.
         error: io::Error,
     },
-    /// `B024`: an archive that cannot be read, or a source this version
-    /// cannot fetch.
+    /// `B024`: an archive that cannot be read.
     Unsupported {
         /// The source or the archive.
         what: String,
@@ -231,9 +230,7 @@ impl SourceCache {
     ///
     /// # Errors
     ///
-    /// Fails as [`SourceCache::fetch`] does, and with
-    /// [`SourceError::Unsupported`] for a git source, whose tarball this
-    /// version cannot produce.
+    /// Fails as [`SourceCache::fetch`] does.
     pub fn fetch_source(
         &self,
         recipe: &Recipe,
@@ -246,12 +243,6 @@ impl SourceCache {
         );
         match &source.fetch {
             Fetch::Url { urls, sha256, .. } => self.fetch(&what, urls, mirrors, sha256),
-            Fetch::Git { .. } => Err(SourceError::Unsupported {
-                what,
-                reason: "git sources need a tarball made from the checkout, which this version \
-                         cannot produce yet"
-                    .to_owned(),
-            }),
         }
     }
 

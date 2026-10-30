@@ -2,7 +2,6 @@ use laft_fetch::Config;
 use sha2::Digest;
 
 use super::*;
-use crate::test_support::recipe;
 
 fn sha256(bytes: &[u8]) -> Sha256Hash {
     Sha256Hash::from_bytes(Sha256::digest(bytes).into())
@@ -154,26 +153,4 @@ fn local_files_are_added_under_their_hash() {
         b"vendored crates"
     );
     assert!(tarball.exists());
-}
-
-#[test]
-fn git_sources_are_not_fetched_yet() {
-    let dir = laft_test::tempdir();
-    let mut r = recipe("foo");
-    let source = Source {
-        label: "main".into(),
-        fetch: Fetch::Git {
-            url: "https://example.org/foo.git".into(),
-            commit: "3f1c2a9e0d6b4c8a7e5f9d1b2c3a4e5f6a7b8c9d".into(),
-            submodules: false,
-            sha256: None,
-        },
-        dest: String::new(),
-        strip_components: Some(0),
-    };
-    r.sources = vec![source.clone()];
-    let error = cache(dir.path())
-        .fetch_source(&r, &source, &[])
-        .expect_err("unsupported");
-    assert_eq!(error.code(), "B024");
 }

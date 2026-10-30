@@ -33,6 +33,8 @@ These exist and have unit or namespace tests, but have not yet been tested on a 
 
 <span class="planned">planned</span> **Static musl variants.** The `static` variant exists in the package format, the resolver and the builder, and the test system already runs static busybox and runit built against musl. The recipes of the base system build only the dynamic variant against glibc so far.
 
+<span class="planned">planned</span> **Git sources.** The recipe schema has `git`, `commit` and `submodules` for sources fetched from a git repository at one commit, but `laft-build` refuses such a source until it can make a reproducible tarball of the checkout. Recipes use release tarballs meanwhile.
+
 <span class="planned">planned</span> **User views.** Views that users declare and manage for themselves.
 
 <span class="planned">planned</span> **Hosted, signed repositories.** The `core` repository in the base part points at a placeholder URL until an official repository is published. Until then, packages come from repositories you build and serve yourself.

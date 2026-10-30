@@ -116,7 +116,6 @@ pub fn unpack(
     }
     let (name, extract) = match &source.fetch {
         Fetch::Url { file, extract, .. } => (file.as_str(), *extract),
-        Fetch::Git { .. } => ("git.tar", true),
     };
     if !extract {
         let target = dest.join(name);

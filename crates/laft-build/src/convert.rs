@@ -355,24 +355,13 @@ fn sources(cx: &mut Cx<'_>, p: &schema::Package) -> Vec<Source> {
                     extract,
                 }
             }
-            (None, Some(git)) => {
-                if s.file.is_some() || s.extract.is_some() {
-                    cx.error(
-                        &keys,
-                        "R011",
-                        format!("{what} is a git source, but sets `file` or `extract`, which apply to url sources only"),
-                    );
-                }
-                let Some(commit) = s.commit.clone() else {
-                    cx.error(&keys, "R013", format!("{what} has a git URL but no commit"));
-                    continue;
-                };
-                Fetch::Git {
-                    url: git.clone(),
-                    commit,
-                    submodules: s.submodules,
-                    sha256: s.sha256.as_deref().and_then(hash),
-                }
+            (None, Some(_)) => {
+                cx.error(
+                    &[keys[0], keys[1], "git"],
+                    "R009",
+                    format!("{what} is a git source, which this version of laft-build cannot fetch; use a url source of a release tarball"),
+                );
+                continue;
             }
             (Some(_), Some(_)) => {
                 cx.error(&keys, "R011", format!("{what} sets both url and git"));
@@ -383,15 +372,11 @@ fn sources(cx: &mut Cx<'_>, p: &schema::Package) -> Vec<Source> {
                 continue;
             }
         };
-        let strip_components = match fetch {
-            Fetch::Git { .. } => Some(s.strip_components.unwrap_or(0)),
-            Fetch::Url { .. } => s.strip_components,
-        };
         out.push(Source {
             label: label.clone(),
             fetch,
             dest,
-            strip_components,
+            strip_components: s.strip_components,
         });
     }
     out

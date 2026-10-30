@@ -237,7 +237,8 @@ struct Package {
   ci:            Ci = Ci {}
 }
 
-## A source of a package. Exactly one of `url` and `git` is set.
+## A source of a package. Exactly one of `url` and `git` is set. Git
+## sources are planned, and this version refuses them.
 struct Source {
   ## Download locations, tried in order. https:// only.
   url:              Option<List<Str>>

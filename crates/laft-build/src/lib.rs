@@ -62,10 +62,10 @@
 //! | `R003` | a recipe directory, subpackage or alternative group whose name is not a package name |
 //! | `R004` | a repository without exactly one `recipe_repo` block, listed twice, or extending one not listed before it |
 //! | `R006` | a path literal naming a file that cannot be read |
+//! | `R009` | a git source, which this version cannot fetch |
 //! | `R010` | a source URL that is not `https://` |
-//! | `R011` | a source that sets both or neither of `url` and `git`, an empty `url` list, or `file` or `extract` on a git source |
+//! | `R011` | a source that sets both or neither of `url` and `git`, or an empty `url` list |
 //! | `R012` | a URL source without `sha256` |
-//! | `R013` | a git source without `commit` |
 //! | `R014` | a vendor block whose `source` names no source |
 //! | `R015` | a `dest`, `dir`, `subdir`, file name, license file, or `setuid`, `caps` or alternative path that is not a plain relative path |
 //! | `R016` | an empty package with sources or a style other than `custom`, or a package without sources that is not empty |
@@ -94,7 +94,7 @@
 //! | `B021` | an archive entry or link that leads outside its destination |
 //! | `B022` | no URL and no mirror has the file |
 //! | `B023` | a local file that cannot be read or written |
-//! | `B024` | an archive that cannot be read, or a git source, which this version cannot fetch |
+//! | `B024` | an archive that cannot be read |
 //!
 //! Builds report [`BuildError`]s and [`Warning`]s:
 //!

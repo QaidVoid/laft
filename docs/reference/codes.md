@@ -111,10 +111,10 @@ The resolver reports why it could not choose the packages of a view, with the ch
 | `R003` | A recipe directory, subpackage or alternative group whose name is not a package name. |
 | `R004` | A repository without exactly one `recipe_repo` block, listed twice, or extending one not listed before it. |
 | `R006` | A path literal naming a file that cannot be read. |
+| `R009` | A git source, which this version cannot fetch. Git sources are planned. |
 | `R010` | A source URL that is not `https://`. |
-| `R011` | A source that sets both or neither of `url` and `git`, an empty `url` list, or `file` or `extract` on a git source. |
+| `R011` | A source that sets both or neither of `url` and `git`, or an empty `url` list. |
 | `R012` | A URL source without `sha256`. |
-| `R013` | A git source without `commit`. |
 | `R014` | A vendor block whose `source` names no source. |
 | `R015` | A `dest`, `dir`, `subdir`, file name, license file, or `setuid`, `caps` or alternative path that is not a plain relative path. |
 | `R016` | An empty package with sources or a style other than `custom`, or a package without sources that is not empty. |
@@ -145,7 +145,7 @@ Fetching and unpacking sources:
 | `B021` | An archive entry or link that leads outside its destination. |
 | `B022` | No URL and no mirror has the file. |
 | `B023` | A local file that cannot be read or written. |
-| `B024` | An archive that cannot be read, or a git source, which this version cannot fetch. |
+| `B024` | An archive that cannot be read. |
 
 ## Builds
 

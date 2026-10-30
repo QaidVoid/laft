@@ -69,9 +69,7 @@ pub struct Buildinfo {
     pub plan_hash: Blake3Hash,
     /// The recipe repositories that contributed, lowest priority first.
     pub recipe_repos: Vec<RepoState>,
-    /// The hash of every source that declares one, in plan order. A git
-    /// source without a `sha256` is left out, because its hash is known
-    /// only once its tarball has been made.
+    /// The hash of every source, in plan order.
     pub sources: Vec<SourceHash>,
     /// The hash of every vendor tarball.
     pub vendors: Vec<VendorHash>,
@@ -246,11 +244,9 @@ impl Buildinfo {
             sources: recipe
                 .sources
                 .iter()
-                .filter_map(|s| {
-                    s.sha256().map(|sha256| SourceHash {
-                        label: s.label.clone(),
-                        sha256: *sha256,
-                    })
+                .map(|s| SourceHash {
+                    label: s.label.clone(),
+                    sha256: *s.sha256(),
                 })
                 .collect(),
             vendors: recipe

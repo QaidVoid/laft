@@ -102,9 +102,8 @@ fn every_trigger_fires_exactly_when_its_input_changes() {
     );
 
     let mut source = base.clone();
-    if let Fetch::Url { sha256, .. } = &mut source.sources[0].fetch {
-        *sha256 = hash(2);
-    }
+    let Fetch::Url { sha256, .. } = &mut source.sources[0].fetch;
+    *sha256 = hash(2);
     assert_eq!(
         fired(
             &before,

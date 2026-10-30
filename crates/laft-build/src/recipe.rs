@@ -113,10 +113,10 @@ impl Recipe {
         Blake3Hash::of(&json)
     }
 
-    /// The SHA-256 hashes the recipe declares, in plan order: every source
-    /// that declares one, then every vendor tarball.
+    /// The SHA-256 hashes the recipe declares, in plan order: every source,
+    /// then every vendor tarball.
     pub fn source_hashes(&self) -> Vec<Sha256Hash> {
-        let sources = self.sources.iter().filter_map(|s| s.sha256().copied());
+        let sources = self.sources.iter().map(|s| *s.sha256());
         sources
             .chain(self.vendors.iter().map(|v| v.sha256))
             .collect()
@@ -189,12 +189,10 @@ pub struct Source {
 }
 
 impl Source {
-    /// The SHA-256 hash the recipe declares, which is always present for a
-    /// URL source.
-    pub fn sha256(&self) -> Option<&Sha256Hash> {
+    /// The SHA-256 hash the recipe declares.
+    pub fn sha256(&self) -> &Sha256Hash {
         match &self.fetch {
-            Fetch::Url { sha256, .. } => Some(sha256),
-            Fetch::Git { sha256, .. } => sha256.as_ref(),
+            Fetch::Url { sha256, .. } => sha256,
         }
     }
 }
@@ -215,17 +213,6 @@ pub enum Fetch {
         /// Whether the file is an archive that is extracted. Otherwise it
         /// is copied to `$SRC/<dest>/<file>`.
         extract: bool,
-    },
-    /// A normalized tarball of one commit of a git repository.
-    Git {
-        /// The `https://` clone URL.
-        url: String,
-        /// The full 40 character commit hash.
-        commit: String,
-        /// Whether submodules are included at their recorded commits.
-        submodules: bool,
-        /// The hash the tarball must have, when the recipe declares one.
-        sha256: Option<Sha256Hash>,
     },
 }
 

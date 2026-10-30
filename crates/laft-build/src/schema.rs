@@ -88,8 +88,11 @@ pub(crate) struct Package {
 pub(crate) struct Source {
     pub(crate) url: Option<Vec<String>>,
     pub(crate) git: Option<String>,
-    pub(crate) commit: Option<String>,
-    pub(crate) submodules: bool,
+    // A git source is refused, so its other fields are never read.
+    #[serde(rename = "commit")]
+    _commit: Option<String>,
+    #[serde(rename = "submodules")]
+    _submodules: bool,
     pub(crate) sha256: Option<String>,
     pub(crate) file: Option<String>,
     pub(crate) extract: Option<bool>,

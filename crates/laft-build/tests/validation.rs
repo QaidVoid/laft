@@ -99,7 +99,7 @@ fn path_literals_stay_in_the_recipe_directory_and_common() {
 }
 
 #[test]
-fn sources_need_https_a_hash_and_exactly_one_origin() {
+fn sources_need_https_a_hash_and_exactly_one_url_origin() {
     let hash =
         "sha256 = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"";
     let source = |fields: &str| format!("  source main {{\n{fields}\n  }}\n  build custom {{}}");
@@ -118,14 +118,14 @@ fn sources_need_https_a_hash_and_exactly_one_origin() {
         (hash.to_owned(), "R011"),
         ("url = []".to_owned(), "R011"),
         (
-            format!("git = \"https://example.org/a.git\"\n{commit}\nfile = \"a.tar\""),
-            "R011",
-        ),
-        (
             "url = [\"https://example.org/a.tar.gz\"]".to_owned(),
             "R012",
         ),
-        ("git = \"https://example.org/a.git\"".to_owned(), "R013"),
+        (
+            format!("git = \"https://example.org/a.git\"\n{commit}"),
+            "R009",
+        ),
+        ("git = \"https://example.org/a.git\"".to_owned(), "R009"),
         (
             format!("url = [\"https://example.org/a.tar.gz\"]\n{hash}\ndest = \"../up\""),
             "R015",
@@ -141,8 +141,6 @@ fn sources_need_https_a_hash_and_exactly_one_origin() {
     let fine =
         format!("url = [\"https://example.org/download?id=3\"]\n{hash}\nfile = \"a.tar.gz\"");
     assert_eq!(codes("foo", &source(&fine)), Vec::<String>::new());
-    let git = format!("git = \"https://example.org/a.git\"\n{commit}");
-    assert_eq!(codes("foo", &source(&git)), Vec::<String>::new());
 }
 
 #[test]

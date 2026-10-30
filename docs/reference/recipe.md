@@ -115,6 +115,18 @@ The `build` field takes one of these variants, written as a block whose label is
 
 A source of a package. Exactly one of `url` and `git` is set.
 
+::: info Git sources are planned
+The schema already has `git`, `commit` and `submodules`, but this version of `laft-build` cannot fetch a git source. Every command that evaluates a recipe with one refuses it with `R009`, before anything is fetched:
+
+```console
+$ laft-build --recipes . lint
+hello:
+error[R009]: source "main" of hello is a git source, which this version of laft-build cannot fetch; use a url source of a release tarball
+  --> /tmp/laft-demo/recipes/hello/package.stav:7:14
+laft-build: some recipes have errors
+```
+:::
+
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `url` | `Option<List<Str>>` |  | Download locations, tried in order. https:// only. |

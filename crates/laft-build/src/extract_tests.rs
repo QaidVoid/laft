@@ -72,7 +72,6 @@ impl Tree {
     fn unpack(&self, source: &Source, bytes: &[u8]) -> Result<Vec<String>, SourceError> {
         let name = match &source.fetch {
             Fetch::Url { file, .. } => file.clone(),
-            Fetch::Git { .. } => "git.tar".into(),
         };
         let file = self.dir.path().join("files").join(name);
         fs::write(&file, bytes).expect("write");

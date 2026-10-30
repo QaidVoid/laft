@@ -34,9 +34,7 @@ fn an_overlay_changes_the_version_and_every_url_built_from_it() {
     assert_eq!(recipes.len(), 2);
     for recipe in &recipes {
         assert_eq!(recipe.version.as_str(), "14.2.0");
-        let Fetch::Url { urls, sha256, .. } = &recipe.sources[0].fetch else {
-            panic!("ripgrep has a URL source");
-        };
+        let Fetch::Url { urls, sha256, .. } = &recipe.sources[0].fetch;
         assert_eq!(
             urls,
             &["https://github.com/BurntSushi/ripgrep/archive/14.2.0/ripgrep-14.2.0.tar.gz"]
