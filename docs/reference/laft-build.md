@@ -1,6 +1,6 @@
 # The `laft-build` command
 
-<p class="lead"><code>laft-build</code> turns recipes into Laft packages: it evaluates and checks recipes, plans builds, fetches sources, builds in sandboxes, packages the results, checks reproducibility and runs the bootstrap. This page lists every command and option of version 0.1.0. For how they fit together, see <a href="../guide/building">Building packages</a>.</p>
+<p class="lead"><code>laft-build</code> turns recipes into Laft packages: it evaluates and checks recipes, plans builds, fetches sources, builds in sandboxes, packages the results, checks reproducibility and runs the bootstrap. This page lists every command and option of the current development version. For how they fit together, see <a href="../guide/building">Building packages</a>.</p>
 
 ```text
 laft-build [OPTIONS] <COMMAND>

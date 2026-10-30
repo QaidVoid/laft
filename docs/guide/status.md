@@ -1,6 +1,6 @@
 # Status and roadmap
 
-<p class="lead">Laft is pre-release software at version 0.1.0. It installs and boots in a virtual machine, its tools are covered by unit, integration and namespace tests, and its base system bootstraps from source. It is not ready for real hardware or for daily use, and nothing about its formats or commands is stable yet.</p>
+<p class="lead">Laft is pre-release software, and no version of it has been released yet. It installs and boots in a virtual machine, its tools are covered by unit, integration and namespace tests, and its base system bootstraps from source. It is not ready for real hardware or for daily use, and nothing about its formats or commands is stable yet.</p>
 
 ## What works today
 

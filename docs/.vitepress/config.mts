@@ -41,16 +41,10 @@ export default defineConfig({
     logo: { light: '/logo.svg', dark: '/logo-dark.svg', alt: '' },
 
     nav: [
-      { text: 'Guide', link: '/guide/introduction', activeMatch: '^/guide/(?!try-it)' },
+      { text: 'Guide', link: '/guide/introduction', activeMatch: '^/guide/(?!try-it|status)' },
       { text: 'Reference', link: '/reference/laft', activeMatch: '/reference/' },
       { text: 'Try it', link: '/guide/try-it', activeMatch: '^/guide/try-it' },
-      {
-        text: '0.1.0',
-        items: [
-          { text: 'Status and roadmap', link: '/guide/status' },
-          { text: 'Stav, the configuration language', link: 'https://github.com/QaidVoid/stav' },
-        ],
-      },
+      { text: 'pre-release', link: '/guide/status', activeMatch: '^/guide/status' },
     ],
 
     sidebar: {

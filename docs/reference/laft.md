@@ -1,6 +1,6 @@
 # The `laft` command
 
-<p class="lead"><code>laft</code> applies, switches and inspects a Laft system. This page lists every command and option of version 0.1.0, as <code>laft --help</code> and <code>laft &lt;command&gt; --help</code> print them. For how they fit together, see <a href="../guide/everyday">Everyday use</a>.</p>
+<p class="lead"><code>laft</code> applies, switches and inspects a Laft system. This page lists every command and option of the current development version, as <code>laft --help</code> and <code>laft &lt;command&gt; --help</code> print them. For how they fit together, see <a href="../guide/everyday">Everyday use</a>.</p>
 
 ```text
 laft [OPTIONS] <COMMAND>
