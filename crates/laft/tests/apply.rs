@@ -204,7 +204,7 @@ fn exit_statuses_name_what_went_wrong() {
 
     fx.configure(", hello@9", "");
     let resolve = fx.laft(&["plan"]).expect(4);
-    assert!(resolve.stderr.contains("error[R001]"), "{}", resolve.stderr);
+    assert!(resolve.stderr.contains("error[S001]"), "{}", resolve.stderr);
 
     fx.configure(", missing-thing", "");
     let unknown = fx.laft(&["plan"]).expect(11);

@@ -246,7 +246,7 @@ pub(crate) enum Command {
     },
     /// Explain a diagnostic code.
     Explain {
-        /// The code, such as C0901 or R001.
+        /// The code, such as C0901 or S001.
         code: String,
     },
     /// Generate hardware.stav for this machine or the target at --root.

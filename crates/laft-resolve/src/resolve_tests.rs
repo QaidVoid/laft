@@ -138,7 +138,7 @@ fn contradicting_dependency_is_learned_and_resolution_restarts() {
 fn requested_version_cannot_be_overridden_by_a_dependency() {
     let core = constrained_universe();
     let e = resolve_core(&core, &["foo@2", "bar"], &[]).unwrap_err();
-    assert_eq!(e.code(), Some("R005"));
+    assert_eq!(e.code(), Some("S005"));
 }
 
 fn gl_universe(default: Option<&str>) -> Index {
@@ -161,7 +161,7 @@ fn gl_universe(default: Option<&str>) -> Index {
 #[test]
 fn several_providers_without_a_default_are_ambiguous() {
     let core = gl_universe(None);
-    assert_eq!(code(resolve_core(&core, &["app"], &[])), "R004");
+    assert_eq!(code(resolve_core(&core, &["app"], &[])), "S004");
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn requests_are_selected_before_dependencies() {
 #[test]
 fn conflicting_packages_fail() {
     let core = index("core", vec![pkg("a 1").conflicts(&["b"]), pkg("b 1")]);
-    assert_eq!(code(resolve_core(&core, &["a", "b"], &[])), "R006");
+    assert_eq!(code(resolve_core(&core, &["a", "b"], &[])), "S006");
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn equal_priority_repositories_make_a_name_ambiguous() {
     let u = universe(&[(&core, 0), (&extra, 0)]);
     assert_eq!(
         code(u.resolve(&input("system", vec![req("foo")], &[]))),
-        "R008"
+        "S008"
     );
 }
 
@@ -244,14 +244,14 @@ fn static_variant_does_not_provide_a_shared_library() {
     );
     assert_eq!(
         code(resolve_core(&core, &["zlib:static", "py"], &[])),
-        "R007"
+        "S007"
     );
 }
 
 #[test]
 fn requests_for_two_variants_conflict() {
     let core = index("core", vec![pkg("rg 14 static")]);
-    assert_eq!(code(resolve_core(&core, &["rg", "rg:static"], &[])), "R002");
+    assert_eq!(code(resolve_core(&core, &["rg", "rg:static"], &[])), "S002");
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn missing_provider_fails_with_the_chain() {
     let core = index("core", vec![pkg("x 1").depends(&["so:liby.so.1"])]);
     let e = resolve_core(&core, &["x"], &[]).unwrap_err();
     let ErrorKind::Unsatisfied { dep, by, chain, .. } = *e.kind else {
-        panic!("expected R003, got {e}");
+        panic!("expected S003, got {e}");
     };
     assert_eq!(dep.to_string(), "so:liby.so.1");
     assert_eq!(by.to_string(), "x 1-r1");
@@ -298,7 +298,7 @@ fn yanked_installed_version_without_replacement_fails() {
     let yanked = pkg("tool 1.1");
     let mut core = index("core", vec![]);
     core.yanked.push(yank(&yanked, "corrupts its config"));
-    assert_eq!(code(resolve_core(&core, &["tool"], &[&yanked])), "R010");
+    assert_eq!(code(resolve_core(&core, &["tool"], &[&yanked])), "S010");
 }
 
 #[test]
@@ -407,7 +407,7 @@ fn pkg_config_dependency_rejects_a_provide_outside_its_constraints() {
             pkg("app 1").depends(&["pc:zlib>=1.3"]),
         ],
     );
-    assert_eq!(code(resolve_core(&core, &["app"], &[])), "R003");
+    assert_eq!(code(resolve_core(&core, &["app"], &[])), "S003");
 }
 
 #[test]
@@ -470,7 +470,7 @@ fn compatible_prefixes_merge_to_the_longer_one() {
     assert_eq!(r.packages[&name("llvm")].reasons.len(), 3);
     assert_eq!(
         code(resolve_core(&core, &["llvm@19", "llvm@20"], &[])),
-        "R002"
+        "S002"
     );
 }
 
@@ -485,7 +485,7 @@ fn rename_with_several_replacing_packages_fails() {
     );
     let e = resolve_core(&core, &["foo"], &[]).unwrap_err();
     let ErrorKind::NoCandidate { replaced_by, .. } = &*e.kind else {
-        panic!("expected R001, got {e}");
+        panic!("expected S001, got {e}");
     };
     assert_eq!(replaced_by, &[name("bar"), name("baz")]);
 }
@@ -520,7 +520,7 @@ fn conflict_on_a_virtual_matches_other_providers_only() {
         ],
     );
     assert!(resolve_core(&core, &["postfix"], &[]).is_ok());
-    assert_eq!(code(resolve_core(&core, &["postfix", "exim"], &[])), "R006");
+    assert_eq!(code(resolve_core(&core, &["postfix", "exim"], &[])), "S006");
 }
 
 #[test]
@@ -622,7 +622,7 @@ fn requests_of_a_missing_name_fail_with_the_available_versions() {
     let core = index("core", vec![pkg("llvm 20.1.2"), pkg("llvm 19.1.7-r2")]);
     let e = resolve_core(&core, &["llvm@18"], &[]).unwrap_err();
     let ErrorKind::NoCandidate { available, .. } = &*e.kind else {
-        panic!("expected R001, got {e}");
+        panic!("expected S001, got {e}");
     };
     assert_eq!(
         available
@@ -1104,7 +1104,7 @@ fn unresolvable_imposer_conflict_reports_both_constraints() {
         ..
     } = &*e.kind
     else {
-        panic!("expected R005, got {e}");
+        panic!("expected S005, got {e}");
     };
     assert_eq!(n, &name("lib"));
     assert_eq!(
@@ -1159,7 +1159,7 @@ fn prefixed_request_for_a_replaced_name_names_the_replacer() {
     let core = index("core", vec![pkg("bar 2").replaces(&["foo"])]);
     let e = resolve_core(&core, &["foo@1"], &[]).unwrap_err();
     let ErrorKind::NoCandidate { replaced_by, .. } = &*e.kind else {
-        panic!("expected R001, got {e}");
+        panic!("expected S001, got {e}");
     };
     assert_eq!(replaced_by, &[name("bar")]);
 }
@@ -1186,7 +1186,7 @@ fn dependency_on_a_replaced_name_follows_the_rename() {
             pkg("app 1").depends(&["foo>=1"]),
         ],
     );
-    assert_eq!(code(resolve_core(&core, &["app"], &[])), "R003");
+    assert_eq!(code(resolve_core(&core, &["app"], &[])), "S003");
 }
 
 #[test]
@@ -1196,7 +1196,7 @@ fn exhausted_pass_budget_reports_the_first_failure() {
         .collect();
     packages.push(pkg("app 1").depends(&["lib"]));
     let core = index("core", packages);
-    assert_eq!(code(resolve_core(&core, &["app"], &[])), "R003");
+    assert_eq!(code(resolve_core(&core, &["app"], &[])), "S003");
 }
 
 #[test]
@@ -1204,7 +1204,7 @@ fn search_gives_up_after_a_bounded_number_of_passes() {
     let core = one_bound_per_pass_universe();
     let e = resolve_core(&core, &["app"], &[]).unwrap_err();
     let ErrorKind::RestartLimit { passes, learned } = &*e.kind else {
-        panic!("expected R009, got {e}");
+        panic!("expected S009, got {e}");
     };
     assert_eq!(*passes, 1000);
     assert!(!learned.is_empty());
@@ -1218,13 +1218,13 @@ fn yanked_installed_version_outside_the_request_is_not_blamed() {
         vec![pkg("tool 1.0"), pkg("app 1").depends(&["tool>=2"])],
     );
     core.yanked.push(yank(&yanked, "corrupts its config"));
-    assert_eq!(code(resolve_core(&core, &["tool@2"], &[&yanked])), "R001");
+    assert_eq!(code(resolve_core(&core, &["tool@2"], &[&yanked])), "S001");
     assert_eq!(
         code(resolve_core(&core, &["tool:static"], &[&yanked])),
-        "R001"
+        "S001"
     );
-    assert_eq!(code(resolve_core(&core, &["app"], &[&yanked])), "R003");
-    assert_eq!(code(resolve_core(&core, &["tool@1.1"], &[&yanked])), "R010");
+    assert_eq!(code(resolve_core(&core, &["app"], &[&yanked])), "S003");
+    assert_eq!(code(resolve_core(&core, &["tool@1.1"], &[&yanked])), "S010");
 }
 
 #[test]

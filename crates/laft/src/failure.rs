@@ -36,7 +36,7 @@ pub(crate) mod exit {
 pub(crate) struct Failure {
     /// The exit status.
     pub(crate) exit: u8,
-    /// The diagnostic code, such as `R003`.
+    /// The diagnostic code, such as `S003`.
     pub(crate) code: Option<String>,
     /// What went wrong, in one line.
     pub(crate) message: String,

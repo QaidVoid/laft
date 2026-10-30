@@ -193,8 +193,8 @@ fn the_configuration_tools_format_check_and_print_it() {
         "{}",
         options.stdout
     );
-    let explain = fx.laft(&["explain", "R001"]).expect(0);
-    assert!(explain.stdout.starts_with("R001: "), "{}", explain.stdout);
+    let explain = fx.laft(&["explain", "S001"]).expect(0);
+    assert!(explain.stdout.starts_with("S001: "), "{}", explain.stdout);
     fx.laft(&["explain", "X1"]).expect(2);
 
     let part = fx.dir().join("part.stav");

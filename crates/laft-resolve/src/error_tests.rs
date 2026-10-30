@@ -28,7 +28,7 @@ fn r001_lists_the_available_versions() {
             "system",
             vec![req_at("llvm@18", &at(12, 15))]
         ),
-        "error[R001]: view \"system\": no package matches llvm@18\n  \
+        "error[S001]: view \"system\": no package matches llvm@18\n  \
          requested at /etc/laft/system.stav:12:15\n  \
          available: llvm 20.1.2-r1, llvm 19.1.7-r2"
     );
@@ -43,7 +43,7 @@ fn r002_lists_the_conflicting_requests() {
     ];
     assert_eq!(
         message(&[(&core, 0)], "system", requests),
-        "error[R002]: view \"system\": conflicting requests for ripgrep\n  \
+        "error[S002]: view \"system\": conflicting requests for ripgrep\n  \
          ripgrep          at /etc/laft/system.stav:8:22\n  \
          ripgrep:static   at /etc/laft/cli.stav:3:16\n  \
          hint: request one variant"
@@ -66,7 +66,7 @@ fn r003_shows_the_chain_back_to_the_request() {
     );
     assert_eq!(
         message(&[(&core, 0)], "system", vec![req_at("firefox", &at(9, 5))]),
-        "error[R003]: view \"system\": nothing provides so:libicuuc.so.76\n  \
+        "error[S003]: view \"system\": nothing provides so:libicuuc.so.76\n  \
          needed by libxml2 2.14.2-r1\n    \
          needed by gtk3 3.24.49-r1 (so:libxml2.so.2)\n      \
          needed by firefox 144.0-r1 (so:libgtk-3.so.0)\n        \
@@ -87,7 +87,7 @@ fn r004_lists_the_providers() {
     );
     assert_eq!(
         message(&[(&core, 0)], "system", vec![req_at("mpv", &at(4, 5))]),
-        "error[R004]: view \"system\": several packages provide so:libGL.so.1: libglvnd, mesa-amber\n  \
+        "error[S004]: view \"system\": several packages provide so:libGL.so.1: libglvnd, mesa-amber\n  \
          needed by mpv 0.40.0-r1\n    \
          requested at /etc/laft/system.stav:4:5\n  \
          hint: request one of them in packages"
@@ -110,7 +110,7 @@ fn r005_lists_every_constraint_and_its_source() {
             "system",
             vec![req_at("foo@2.1", &at(20, 5)), req_at("baz", &at(21, 5))]
         ),
-        "error[R005]: view \"system\": no version of foo satisfies every constraint\n  \
+        "error[S005]: view \"system\": no version of foo satisfies every constraint\n  \
          foo<2         from baz 1.4-r1\n  \
          foo@2.1       requested at /etc/laft/system.stav:20:5\n  \
          available: foo 2.1.0-r1, foo 1.9.3-r2"
@@ -131,7 +131,7 @@ fn r005_lists_learned_constraints() {
     );
     assert_eq!(
         message(&[(&core, 0)], "system", vec![req_at("app", &at(20, 5))]),
-        "error[R005]: view \"system\": no version of foo satisfies every constraint\n  \
+        "error[S005]: view \"system\": no version of foo satisfies every constraint\n  \
          foo<2         from baz 1.4-r1\n  \
          foo>=2        from bar 3.0-r1\n  \
          available: foo 2.1-r1, foo 1.9-r1"
@@ -156,7 +156,7 @@ fn r006_shows_how_each_package_got_in() {
             "system",
             vec![req_at("curl", &at(7, 5)), req_at("libressl", &at(11, 5))]
         ),
-        "error[R006]: view \"system\": openssl 3.5.0-r1 conflicts with libressl 4.1.0-r1\n  \
+        "error[S006]: view \"system\": openssl 3.5.0-r1 conflicts with libressl 4.1.0-r1\n  \
          openssl  needed by curl 8.16.0-r1 (so:libssl.so.3), requested at /etc/laft/system.stav:7:5\n  \
          libressl requested at /etc/laft/system.stav:11:5"
     );
@@ -171,7 +171,7 @@ fn r006_uses_replaces_wording() {
             "system",
             vec![req_at("bar", &at(1, 5)), req_at("foo", &at(2, 5))]
         ),
-        "error[R006]: view \"system\": bar 2-r1 replaces foo 1-r1\n  \
+        "error[S006]: view \"system\": bar 2-r1 replaces foo 1-r1\n  \
          bar requested at /etc/laft/system.stav:1:5\n  \
          foo requested at /etc/laft/system.stav:2:5\n  \
          hint: bar takes the place of foo, so remove foo from this view"
@@ -197,7 +197,7 @@ fn r007_names_the_variant_that_would_provide() {
                 req_at("python", &at(32, 5))
             ]
         ),
-        "error[R007]: view \"legacy\": so:libz.so.1 is needed by python 3.12.11-r1\n  \
+        "error[S007]: view \"legacy\": so:libz.so.1 is needed by python 3.12.11-r1\n  \
          zlib provides it in the dynamic variant, but zlib:static is selected\n    \
          requested at /etc/laft/system.stav:31:20\n  \
          hint: static library variants do not provide shared libraries; remove zlib:static from this view"
@@ -220,7 +220,7 @@ fn r007_gives_the_static_hint_only_when_the_static_variant_is_selected() {
             "system",
             vec![req_at("foo", &at(3, 5)), req_at("app", &at(4, 5))]
         ),
-        "error[R007]: view \"system\": so:libx.so.1 is needed by app 1-r1\n  \
+        "error[S007]: view \"system\": so:libx.so.1 is needed by app 1-r1\n  \
          foo provides it in the static variant, but foo is selected\n    \
          requested at /etc/laft/system.stav:3:5\n  \
          hint: request foo in a version or variant that provides so:libx.so.1"
@@ -233,7 +233,7 @@ fn r008_names_the_repositories() {
     let mine = index("mine", vec![pkg("mesa 25.1.0")]);
     assert_eq!(
         message(&[(&mine, 0), (&core, 0)], "system", vec![req("mesa")]),
-        "error[R008]: view \"system\": package mesa is in repositories core and mine, both with priority 0\n  \
+        "error[S008]: view \"system\": package mesa is in repositories core and mine, both with priority 0\n  \
          hint: give one repository a higher priority"
     );
 }
@@ -253,7 +253,7 @@ fn r010_gives_the_yank_reason() {
     i.upgrade = Upgrade::None;
     assert_eq!(
         u.resolve(&i).unwrap_err().to_string(),
-        "error[R010]: view \"system\": ripgrep 14.1.1-r1 was yanked and no other version matches ripgrep@14.1.1\n  \
+        "error[S010]: view \"system\": ripgrep 14.1.1-r1 was yanked and no other version matches ripgrep@14.1.1\n  \
          yank reason: crashes on startup with PCRE2 10.46 (2026-10-27)\n  \
          requested at /etc/laft/system.stav:8:22\n  \
          hint: relax the version prefix, or wait for a fixed revision"
@@ -272,7 +272,7 @@ fn initrd_errors_name_the_initrd() {
             "initrd",
             vec![req_at("cryptsetup:static", "boot.initrd.luks")]
         ),
-        "error[R003]: view \"initrd\": nothing provides so:libc.so.6\n  \
+        "error[S003]: view \"initrd\": nothing provides so:libc.so.6\n  \
          needed by cryptsetup:static 2.8-r1\n    \
          requested at boot.initrd.luks\n  \
          hint: the repository is missing a package or is mid-update; run `laft repo sync` later"
@@ -313,7 +313,7 @@ fn r009_lists_only_the_first_learned_constraints() {
     assert_eq!(
         message(&[(&core, 0)], "system", vec![req("app")]),
         format!(
-            "error[R009]: view \"system\": resolution did not settle after 1000 passes\n\
+            "error[S009]: view \"system\": resolution did not settle after 1000 passes\n\
              {shown}  and 990 more\n  \
              hint: request explicit versions of the packages above to narrow the search"
         )

@@ -32,7 +32,7 @@ fn alternatives_errors_are_conflicts_and_other_resolution_errors_are_not() {
     };
     let failure = Failure::from(missing);
     assert_eq!(failure.exit, exit::RESOLVE);
-    assert_eq!(failure.code.as_deref(), Some("R001"));
+    assert_eq!(failure.code.as_deref(), Some("S001"));
 }
 
 #[test]

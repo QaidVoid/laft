@@ -152,7 +152,7 @@ impl<'a> Universe<'a> {
     /// depend on choosing between several provider names. When no
     /// resolution exists, the error is the first failure the search met.
     /// The search makes a bounded number of passes. When they run out, it
-    /// reports the first failure it met, or R009 if it met none.
+    /// reports the first failure it met, or S009 if it met none.
     ///
     /// The result depends only on the universe's contents and on `input`,
     /// never on the order of repositories, index entries or requests.
@@ -193,7 +193,7 @@ impl<'a> Universe<'a> {
     ///     origin: "/etc/laft/system.stav:8:22".into(),
     /// });
     /// let error = universe.resolve(&input).unwrap_err();
-    /// assert_eq!(error.code(), Some("R001"));
+    /// assert_eq!(error.code(), Some("S001"));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn resolve(&self, input: &ResolveInput<'a>) -> Result<Resolution<'a>, Error> {
@@ -775,7 +775,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         })))
     }
 
-    /// R005 for `name`: every constraint the branch requires of it, `extra`,
+    /// S005 for `name`: every constraint the branch requires of it, `extra`,
     /// and the request's prefix.
     fn unsatisfiable(&self, name: &Name, extra: Option<Bound>) -> ErrorKind {
         let mut constraints: Vec<Bound> = self
@@ -1080,7 +1080,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         }
     }
 
-    /// R006 between selected `a` and `b`, avoided by dropping either one.
+    /// S006 between selected `a` and `b`, avoided by dropping either one.
     fn conflict(&self, a: &Name, b: &Name, replaces: bool) -> Stop<'a> {
         let sel = |n: &Name| {
             self.selected

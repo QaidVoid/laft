@@ -5,7 +5,7 @@ fn known_codes_explain_the_problem_and_the_fix_in_any_case() {
     let text = explain("c0901").expect("a configuration code");
     assert!(text.starts_with("C0901: "), "{text}");
     assert!(text.contains("fix: "), "{text}");
-    assert!(explain("R003").is_some());
+    assert!(explain("S003").is_some());
     assert!(explain("KR011").is_some());
     assert!(explain("Z9999").is_none());
 }

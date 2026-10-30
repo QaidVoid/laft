@@ -4,15 +4,18 @@ use laft_core::{Dep, Name, Timestamp, Variant};
 
 use crate::explain::{Chain, Learned, Package, date, list};
 
-/// How many learned constraints an R009 message lists.
+/// How many learned constraints an S009 message lists.
 const LEARNED_SHOWN: usize = 10;
 
 /// A resolution that failed, with everything needed to explain why.
 ///
+/// Its codes start with `S`, from `S001` to `S010`, so that they never
+/// collide with the codes of other Laft tools.
+///
 /// Its [`Display`](fmt::Display) form is the full message, for example:
 ///
 /// ```text
-/// error[R003]: view "system": nothing provides so:libicuuc.so.76
+/// error[S003]: view "system": nothing provides so:libicuuc.so.76
 ///   needed by libxml2 2.14.2-r1
 ///     needed by gtk3 3.24.49-r1 (so:libxml2.so.2)
 ///       requested at /etc/laft/system.stav:9:5
@@ -29,7 +32,7 @@ pub struct Error {
 /// What made a resolution fail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErrorKind {
-    /// R001: no candidate matches a request.
+    /// S001: no candidate matches a request.
     NoCandidate {
         /// The request as written.
         request: String,
@@ -43,7 +46,7 @@ pub enum ErrorKind {
         /// versions need not share.
         replaced_by: Vec<Name>,
     },
-    /// R002: requests for the same name disagree on the variant or on the
+    /// S002: requests for the same name disagree on the variant or on the
     /// version prefix.
     ConflictingRequests {
         /// The requested name.
@@ -53,7 +56,7 @@ pub enum ErrorKind {
         /// Whether the variants differ, rather than the prefixes.
         variants: bool,
     },
-    /// R003: nothing satisfies a dependency.
+    /// S003: nothing satisfies a dependency.
     Unsatisfied {
         /// The dependency.
         dep: Dep,
@@ -65,7 +68,7 @@ pub enum ErrorKind {
         /// package name.
         available: Vec<Package>,
     },
-    /// R004: several packages provide a dependency and nothing says which
+    /// S004: several packages provide a dependency and nothing says which
     /// one to use.
     AmbiguousProvider {
         /// The dependency.
@@ -77,7 +80,7 @@ pub enum ErrorKind {
         /// How that package got into the view.
         chain: Chain,
     },
-    /// R005: the constraints on a name leave no candidate.
+    /// S005: the constraints on a name leave no candidate.
     Unsatisfiable {
         /// The constrained name.
         name: Name,
@@ -86,7 +89,7 @@ pub enum ErrorKind {
         /// Every candidate of the name, best first.
         available: Vec<Package>,
     },
-    /// R006: two selected packages conflict, or one replaces the other.
+    /// S006: two selected packages conflict, or one replaces the other.
     Conflict {
         /// The package that declares the conflict or replacement.
         package: Package,
@@ -100,7 +103,7 @@ pub enum ErrorKind {
         /// it.
         replaces: bool,
     },
-    /// R007: the only packages that provide a dependency are selected in a
+    /// S007: the only packages that provide a dependency are selected in a
     /// version or variant that does not provide it.
     WrongProvider {
         /// The dependency.
@@ -114,7 +117,7 @@ pub enum ErrorKind {
         /// How the selected package got into the view.
         chain: Chain,
     },
-    /// R008: several repositories of the same, highest priority list a name
+    /// S008: several repositories of the same, highest priority list a name
     /// that the resolution needs.
     EqualPriority {
         /// The package name.
@@ -124,7 +127,7 @@ pub enum ErrorKind {
         /// Their priority.
         priority: i64,
     },
-    /// R009: the search gave up after a bounded number of passes without
+    /// S009: the search gave up after a bounded number of passes without
     /// finding a resolution or meeting a failure. The message lists only
     /// the first few learned constraints.
     RestartLimit {
@@ -134,7 +137,7 @@ pub enum ErrorKind {
         /// order they were learned.
         learned: Vec<Learned>,
     },
-    /// R010: the installed package was yanked and no other candidate
+    /// S010: the installed package was yanked and no other candidate
     /// satisfies what needs it.
     Yanked {
         /// The yanked installed package.
@@ -191,19 +194,19 @@ pub enum BoundSource {
 }
 
 impl Error {
-    /// The error code, `R001` to `R010`, or `None` for alternatives errors.
+    /// The error code, `S001` to `S010`, or `None` for alternatives errors.
     pub fn code(&self) -> Option<&'static str> {
         Some(match *self.kind {
-            ErrorKind::NoCandidate { .. } => "R001",
-            ErrorKind::ConflictingRequests { .. } => "R002",
-            ErrorKind::Unsatisfied { .. } => "R003",
-            ErrorKind::AmbiguousProvider { .. } => "R004",
-            ErrorKind::Unsatisfiable { .. } => "R005",
-            ErrorKind::Conflict { .. } => "R006",
-            ErrorKind::WrongProvider { .. } => "R007",
-            ErrorKind::EqualPriority { .. } => "R008",
-            ErrorKind::RestartLimit { .. } => "R009",
-            ErrorKind::Yanked { .. } => "R010",
+            ErrorKind::NoCandidate { .. } => "S001",
+            ErrorKind::ConflictingRequests { .. } => "S002",
+            ErrorKind::Unsatisfied { .. } => "S003",
+            ErrorKind::AmbiguousProvider { .. } => "S004",
+            ErrorKind::Unsatisfiable { .. } => "S005",
+            ErrorKind::Conflict { .. } => "S006",
+            ErrorKind::WrongProvider { .. } => "S007",
+            ErrorKind::EqualPriority { .. } => "S008",
+            ErrorKind::RestartLimit { .. } => "S009",
+            ErrorKind::Yanked { .. } => "S010",
             ErrorKind::AlternativeAbsent { .. } | ErrorKind::AlternativeAmbiguous { .. } => {
                 return None;
             }
