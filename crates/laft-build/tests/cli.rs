@@ -112,7 +112,7 @@ fn bootstrap_dry_run_lists_what_it_would_build() {
         dir.path(),
         &[
             "bootstrap",
-            "--root",
+            "--target",
             "/",
             "--dry-run",
             "zlib:static",
@@ -135,7 +135,7 @@ fn an_installing_dry_run_lists_what_it_would_install() {
         dir.path(),
         &[
             "bootstrap",
-            "--root",
+            "--target",
             "/",
             "--install",
             dest,
@@ -149,7 +149,7 @@ fn an_installing_dry_run_lists_what_it_would_install() {
         dir.path(),
         &[
             "bootstrap",
-            "--root",
+            "--target",
             "/",
             "--path",
             "/a:b",
@@ -169,7 +169,7 @@ fn an_unpacking_dry_run_lists_what_it_would_build_and_unpack() {
         dir.path(),
         &[
             "bootstrap",
-            "--root",
+            "--target",
             "/",
             "--unpack",
             dest,
@@ -183,7 +183,7 @@ fn an_unpacking_dry_run_lists_what_it_would_build_and_unpack() {
         dir.path(),
         &[
             "bootstrap",
-            "--root",
+            "--target",
             "/",
             "--unpack",
             dest,
@@ -221,7 +221,14 @@ fn relative_bootstrap_directories_mean_the_working_directory() {
         .env_remove("LAFT_BUILD_ROOT")
         .current_dir(dir.path())
         .args(["--root", "build", "--recipes", "repo", "bootstrap"])
-        .args(["--root", "host", "--install", "sys", "--path", "tools/bin"])
+        .args([
+            "--target",
+            "host",
+            "--install",
+            "sys",
+            "--path",
+            "tools/bin",
+        ])
         .arg("greet")
         .output()
         .expect("the binary runs");
@@ -273,7 +280,7 @@ fn a_relative_build_root_from_the_environment_means_the_working_directory() {
             .env_remove("XDG_DATA_HOME")
             .env(var, value)
             .current_dir(dir.path())
-            .args(["--recipes", "repo", "bootstrap", "--root", "host"])
+            .args(["--recipes", "repo", "bootstrap", "--target", "host"])
             .args(["--install", &sys, "greet"])
             .output()
             .expect("the binary runs");
@@ -292,7 +299,7 @@ fn a_stage_dry_run_lists_its_steps_without_touching_the_root() {
     let file = stage_file(dir.path(), "zlib");
     let root = dir.path().join("system");
     let root = root.to_str().unwrap();
-    let output = without_recipes(dir.path(), &["stage", &file, "--root", root, "--dry-run"]);
+    let output = without_recipes(dir.path(), &["stage", &file, "--target", root, "--dry-run"]);
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
         stdout(&output),
@@ -325,7 +332,7 @@ fn stage_usage_errors_exit_with_2() {
     let root = dir.path().join("system");
     let root = root.to_str().unwrap();
     let file = stage_file(dir.path(), "zlib");
-    let output = laft_build(dir.path(), &["stage", &file, "--root", root, "--dry-run"]);
+    let output = laft_build(dir.path(), &["stage", &file, "--target", root, "--dry-run"]);
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(String::from_utf8_lossy(&output.stderr).contains("--recipes"));
     let output = without_recipes(
@@ -333,7 +340,7 @@ fn stage_usage_errors_exit_with_2() {
         &[
             "stage",
             &file,
-            "--root",
+            "--target",
             root,
             "--min-free-gib",
             "17179869184",
@@ -341,12 +348,12 @@ fn stage_usage_errors_exit_with_2() {
     );
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let file = stage_file(dir.path(), "nonexistent");
-    let output = without_recipes(dir.path(), &["stage", &file, "--root", root, "--dry-run"]);
+    let output = without_recipes(dir.path(), &["stage", &file, "--target", root, "--dry-run"]);
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let file = stage_file(dir.path(), "zlib");
     let output = without_recipes(dir.path(), &["stage", &file, "--dry-run"]);
     assert_eq!(output.status.code(), Some(2), "{output:?}");
-    assert!(String::from_utf8_lossy(&output.stderr).contains("needs a root"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("needs a target root"));
 }
 
 #[test]
@@ -369,7 +376,13 @@ fn a_store_stage_dry_run_needs_no_root_and_refuses_one() {
     let root = dir.path().join("system");
     let output = without_recipes(
         dir.path(),
-        &["stage", file, "--root", root.to_str().unwrap(), "--dry-run"],
+        &[
+            "stage",
+            file,
+            "--target",
+            root.to_str().unwrap(),
+            "--dry-run",
+        ],
     );
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(!root.exists());

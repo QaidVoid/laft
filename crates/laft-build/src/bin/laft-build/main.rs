@@ -5,10 +5,10 @@
 //! laft-build --recipes ~/src/laft-recipes build zlib --shell-on-failure
 //! laft-build --recipes ~/src/laft-recipes check-repro zlib
 //! laft-build --recipes ~/src/laft-recipes check-repro
-//! laft-build --recipes ~/src/laft-recipes bootstrap --root / zlib bzip2
-//! laft-build --recipes ~/src/stage0 bootstrap --root / --install ~/sys \
+//! laft-build --recipes ~/src/laft-recipes bootstrap --target / zlib bzip2
+//! laft-build --recipes ~/src/stage0 bootstrap --target / --install ~/sys \
 //!     --path ~/sys/tools/bin binutils-pass1 gcc-pass1
-//! laft-build --recipes ~/src/laft-recipes bootstrap --root / --unpack / glibc
+//! laft-build --recipes ~/src/laft-recipes bootstrap --target / --unpack / glibc
 //! laft-build seed ~/bootstrap/out/*.lpkg
 //! ```
 //!
@@ -144,7 +144,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
         Command::Seed { files } => return seed(&root, &files, json),
         Command::Stage {
             file,
-            root: target,
+            target,
             min_free_gib,
             dry_run,
             rebuild,
@@ -215,7 +215,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
         Command::CheckRepro { packages } => repro(&cx, &packages),
         Command::Lint { packages } => lint(&cx, &packages),
         Command::Bootstrap {
-            root,
+            target,
             install,
             unpack,
             search,
@@ -224,7 +224,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
             packages,
         } => bootstrap(
             &cx,
-            &root,
+            &target,
             Target::new(install, unpack)?,
             search,
             dry_run,

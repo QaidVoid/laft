@@ -14,11 +14,11 @@ laft-build [OPTIONS] <COMMAND>
 | `--recipes <DIR>` | A recipe repository, lowest priority first. Repeat for overlays. Defaults to the colon separated list in `$LAFT_RECIPES`. The `stage` command takes its repository from the stage file instead. |
 | `--json` | Print machine readable JSON on standard output, and progress on standard error. |
 
-Global options go before the command. `bootstrap` and `stage` have a `--root` of their own, after the command, which names the system they build rather than the build root:
+Global options go before the command. The system that `bootstrap` and `stage` build is their `--target`, after the command, so `--root` always names the build root:
 
 ```sh
 laft-build --root ~/.cache/laft-bootstrap/build \
-  stage bootstrap/stage0.stav --root ~/.cache/laft-bootstrap/root
+  stage bootstrap/stage0.stav --target ~/.cache/laft-bootstrap/root
 ```
 
 Package arguments are package names, optionally with a variant, such as `zlib` or `busybox:static`.
@@ -82,10 +82,10 @@ Build packages in the given order without sandbox or build-side store, with the 
 
 | Option | Meaning |
 |---|---|
-| `--root <DIR>` | The root of the bootstrap system, whose `usr/bin` provides the tools. Inside a chroot of that system, this is `/`. Required. |
+| `--target <DIR>` | The root of the bootstrap system, whose `usr/bin` provides the tools. Inside a chroot of that system, this is `/`. Required. |
 | `--install <DIR>` | Install every build straight into this directory, a system under construction, instead of making packages. A package is up to date when its build key matches the one installed there. |
 | `--unpack <DIR>` | Make packages as usual, then unpack all but the debug info into this directory, so that later builds there use them. A package is up to date when its build key matches the one unpacked there. |
-| `--path <DIR>` | A directory to search for programs before the root's `usr/bin`, such as the `bin` directory of a cross toolchain. Repeat for more, searched in order. |
+| `--path <DIR>` | A directory to search for programs before the target's `usr/bin`, such as the `bin` directory of a cross toolchain. Repeat for more, searched in order. |
 | `--dry-run` | Print what is up to date and what would be built, without building. |
 
 ### `laft-build stage <FILE>`
@@ -94,7 +94,7 @@ Run a bootstrap stage: build the packages of a [stage file](./recipe#stage-files
 
 | Option | Meaning |
 |---|---|
-| `--root <DIR>` | The root the stage builds. It gets Laft's top-level layout. A stage that installs into the store has none, and every other stage needs one. |
+| `--target <DIR>` | The root the stage builds. It gets Laft's top-level layout. A stage that installs into the store has none, and every other stage needs one. |
 | `--min-free-gib <GIB>` | The available memory, in GiB, that a build of a recipe whose CI runner is `big` waits for. 6 by default. |
 | `--dry-run` | Print what is up to date and what would run, without running. |
 | `--rebuild` | Run every step, even the finished ones. |

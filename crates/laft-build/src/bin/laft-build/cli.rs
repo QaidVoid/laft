@@ -103,9 +103,10 @@ pub(crate) enum Command {
     /// hermetic and must never be published.
     Bootstrap {
         /// The root of the bootstrap system, whose `usr/bin` provides the
-        /// tools. Inside a chroot of that system, this is `/`.
+        /// tools. Inside a chroot of that system, this is `/`. The build
+        /// root is the global `--root`.
         #[arg(long, value_name = "DIR")]
-        root: PathBuf,
+        target: PathBuf,
         /// Install every build straight into this directory, a system
         /// under construction, instead of making packages. A package is up
         /// to date when its build key matches the one installed there.
@@ -118,7 +119,7 @@ pub(crate) enum Command {
         /// again, even when an earlier run made it but failed to unpack it.
         #[arg(long, value_name = "DIR")]
         unpack: Option<PathBuf>,
-        /// A directory to search for programs before the root's
+        /// A directory to search for programs before the target's
         /// `usr/bin`, such as the `bin` directory of a cross toolchain that
         /// the bootstrap builds. Repeat for more, searched in order.
         #[arg(long = "path", value_name = "DIR")]
@@ -143,11 +144,11 @@ pub(crate) enum Command {
     Stage {
         /// The stage file.
         file: PathBuf,
-        /// The root the stage builds. It gets Laft's top-level layout. A
-        /// stage that installs into the store has none, and every other
-        /// stage needs one.
+        /// The root the stage builds, its target. It gets Laft's top-level
+        /// layout. A stage that installs into the store has none, and every
+        /// other stage needs one. The build root is the global `--root`.
         #[arg(long, value_name = "DIR")]
-        root: Option<PathBuf>,
+        target: Option<PathBuf>,
         /// The available memory, in GiB, that a build of a recipe whose CI
         /// runner is `big` waits for, at most 1048576.
         #[arg(

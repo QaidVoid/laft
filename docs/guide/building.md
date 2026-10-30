@@ -75,14 +75,14 @@ Stage 0 builds without root, from any Linux system, with a statically linked `la
 
 ```sh
 laft-build --root ~/.cache/laft-bootstrap/build \
-  stage bootstrap/stage0.stav --root ~/.cache/laft-bootstrap/root --jobs 4
+  stage bootstrap/stage0.stav --target ~/.cache/laft-bootstrap/root --jobs 4
 ```
 
 Stage 1 builds the whole base system from `recipes/` inside that root, with the temporary toolchain. Each build makes real Laft packages, which stay in the build root's output directory and are unpacked into the root, so that each build after it uses them instead of the temporary tools:
 
 ```sh
 laft-build --root ~/.cache/laft-bootstrap/build \
-  stage bootstrap/stage1.stav --root ~/.cache/laft-bootstrap/root --jobs 4
+  stage bootstrap/stage1.stav --target ~/.cache/laft-bootstrap/root --jobs 4
 ```
 
 Its checkpoints check that the new toolchain compiles and runs C and C++ against the new glibc and libstdc++, and that the system has what a Laft machine boots with: dash as `/bin/sh`, the kernel and its modules, Limine, runit and udev.

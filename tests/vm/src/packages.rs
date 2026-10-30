@@ -60,7 +60,7 @@ pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
         .arg("--recipes")
         .arg(paths.source.join("recipes"))
         .arg("bootstrap")
-        .arg("--root")
+        .arg("--target")
         .arg(&bootstrap)
         .args(["--jobs", "4"])
         .args(recipes);

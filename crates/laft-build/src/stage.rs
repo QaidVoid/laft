@@ -416,7 +416,7 @@ pub fn run_stage(
             return Err(BuildError::problem(
                 "R060",
                 format!(
-                    "stage {} installs into the store and has no root",
+                    "stage {} installs into the store and has no target root",
                     stage.name
                 ),
             ));
@@ -424,7 +424,7 @@ pub fn run_stage(
         (None, false) => {
             return Err(BuildError::problem(
                 "R060",
-                format!("stage {} needs a root", stage.name),
+                format!("stage {} needs a target root", stage.name),
             ));
         }
         _ => {}
@@ -632,7 +632,10 @@ impl StageRun<'_> {
     /// [`Install::Store`] has.
     fn root(&self) -> Result<&Path, BuildError> {
         self.options.root.as_deref().ok_or_else(|| {
-            BuildError::problem("R060", format!("stage {} needs a root", self.stage.name))
+            BuildError::problem(
+                "R060",
+                format!("stage {} needs a target root", self.stage.name),
+            )
         })
     }
 
@@ -813,7 +816,7 @@ impl StageRun<'_> {
             "--recipes",
             &run(INSIDE_RECIPES),
             "bootstrap",
-            "--root",
+            "--target",
             "/",
             flag,
             "/",

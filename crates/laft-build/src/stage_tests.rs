@@ -814,7 +814,7 @@ fn a_root_step_of_a_stage_of_packages_unpacks_inside_the_root() {
     assert_eq!(error.code(), Some("B040"), "{error}");
     let arguments = fs::read_to_string(dir.path().join("build/arguments")).unwrap();
     assert!(
-        arguments.contains("bootstrap --root / --unpack / "),
+        arguments.contains("bootstrap --target / --unpack / "),
         "{arguments}"
     );
 }
