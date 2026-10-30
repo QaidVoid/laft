@@ -100,7 +100,6 @@
 //!
 //! | Code | Problem |
 //! |---|---|
-//! | `B023` | a recipe file that changed since evaluation or cannot be read, a license file that is missing or outside the source tree, a build record or reproducibility report that cannot be read or serialized, or an install or stage record that is neither a build key line nor a build key record of a format this version reads |
 //! | `B030` | a phase, or a stage script inside the root, that ran longer than the timeout |
 //! | `B031` | a build root with less than 10 GiB free |
 //! | `B032` | a build root whose lock another run holds |
@@ -108,6 +107,7 @@
 //! | `B041` | an installation or unpacking into a directory outside bootstrap mode |
 //! | `B042` | a stage root whose top-level entries differ from Laft's layout, or a `laft-build` that is not a static ELF executable for a step inside the root |
 //! | `B043` | a payload path that is a directory in a package and something else in the system it is unpacked into, or the other way round |
+//! | `B044` | a recipe file that changed since evaluation or cannot be read, a license file that is missing or outside the source tree, a build record, lock record, stage record or reproducibility report that cannot be read or serialized, an install or stage record that is neither a build key line nor a build key record of a format this version reads, or a `/proc/meminfo` without a `MemAvailable` line |
 //! | `B050` | a build view that the build-side store cannot satisfy |
 //! | `B060` | a reproducibility check of a package without a successful build |
 //! | `B061` | a reproducibility check with a package that differs or could not be checked |

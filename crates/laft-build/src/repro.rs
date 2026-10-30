@@ -201,7 +201,7 @@ pub fn record_repro(db: &Db, item: &Item, report: &ReproReport) -> Result<(), Bu
         .join("repro")
         .join(format!("{}+{variant}.json", item.name));
     let json = laft_core::to_canonical_json(report)
-        .map_err(|e| BuildError::problem("B023", format!("{}: {e}", path.display())))?;
+        .map_err(|e| BuildError::problem("B044", format!("{}: {e}", path.display())))?;
     fsx::write_atomic(&path, &json, 0o644)
 }
 

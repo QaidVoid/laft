@@ -520,7 +520,7 @@ fn step_key(
         Place::Root => {}
     }
     let bytes = laft_core::to_canonical_json(&value)
-        .map_err(|e| BuildError::problem("B023", format!("step {}: {e}", step.name)))?;
+        .map_err(|e| BuildError::problem("B044", format!("step {}: {e}", step.name)))?;
     Ok(Blake3Hash::of(&bytes))
 }
 
@@ -605,7 +605,7 @@ fn available_memory() -> Result<u64, BuildError> {
                 .ok()
         })
         .map(|kib| kib * 1024)
-        .ok_or_else(|| BuildError::problem("B023", "/proc/meminfo has no MemAvailable line"))
+        .ok_or_else(|| BuildError::problem("B044", "/proc/meminfo has no MemAvailable line"))
 }
 
 /// What the steps of one run share.

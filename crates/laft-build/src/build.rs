@@ -686,11 +686,11 @@ impl<'a> Builder<'a> {
             fsx::open_beneath(build, rel)
                 .and_then(|mut f| f.read_to_end(&mut bytes))
                 .map_err(|e| {
-                    BuildError::problem("B023", format!("{} cannot be read: {e}", file.path))
+                    BuildError::problem("B044", format!("{} cannot be read: {e}", file.path))
                 })?;
             if Blake3Hash::of(&bytes) != file.blake3 {
                 return Err(BuildError::problem(
-                    "B023",
+                    "B044",
                     format!("{} changed since the recipe was evaluated", file.path),
                 ));
             }
@@ -907,7 +907,7 @@ pub(crate) fn write_key(path: &Path, key: &Blake3Hash) -> Result<(), BuildError>
         key: key.to_string(),
     };
     let mut bytes = laft_core::to_canonical_json(&record)
-        .map_err(|e| BuildError::problem("B023", format!("{}: {e}", path.display())))?;
+        .map_err(|e| BuildError::problem("B044", format!("{}: {e}", path.display())))?;
     bytes.push(b'\n');
     fsx::write_atomic(path, &bytes, 0o644)
 }
@@ -932,11 +932,11 @@ pub(crate) fn forget_key(path: &Path) -> Result<(), BuildError> {
 ///
 /// # Errors
 ///
-/// Fails with `B023` when the record cannot be read, is neither a build
+/// Fails with `B044` when the record cannot be read, is neither a build
 /// key line nor a build key record, has a format other than the ones this
 /// version reads or holds no build key.
 pub(crate) fn read_key(path: &Path) -> Result<Option<Blake3Hash>, BuildError> {
-    let bad = |why: String| BuildError::problem("B023", format!("{}: {why}", path.display()));
+    let bad = |why: String| BuildError::problem("B044", format!("{}: {why}", path.display()));
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -965,7 +965,7 @@ pub(crate) fn read_key(path: &Path) -> Result<Option<Blake3Hash>, BuildError> {
 ///
 /// # Errors
 ///
-/// Fails with `B023` when the record exists but cannot be read, has a
+/// Fails with `B044` when the record exists but cannot be read, has a
 /// format this version does not read or holds no build key.
 pub fn installed(dest: &Path, item: &Item) -> Result<Option<Blake3Hash>, BuildError> {
     read_key(&installed_record(dest, item))
@@ -1058,7 +1058,7 @@ fn install_licenses(recipe: &Recipe, src: &Path, out: &Path) -> Result<(), Build
             Ok(m) if m.is_dir() => {}
             Ok(_) => {
                 return Err(BuildError::problem(
-                    "B023",
+                    "B044",
                     format!("{} is not a directory", dir.display()),
                 ));
             }
@@ -1071,7 +1071,7 @@ fn install_licenses(recipe: &Recipe, src: &Path, out: &Path) -> Result<(), Build
     for file in files {
         let mut from = fsx::open_beneath(src, &file).map_err(|_| {
             BuildError::problem(
-                "B023",
+                "B044",
                 format!("license file {file} is not a file of the source tree"),
             )
         })?;

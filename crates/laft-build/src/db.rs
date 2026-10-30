@@ -84,7 +84,7 @@ impl Db {
         let file = Self::key_file(&stored.record.key);
         let path = self.dir.join("builds").join(&file);
         let json = laft_core::to_canonical_json(stored)
-            .map_err(|e| BuildError::problem("B023", format!("{}: {e}", path.display())))?;
+            .map_err(|e| BuildError::problem("B044", format!("{}: {e}", path.display())))?;
         fsx::write_atomic(&path, &json, 0o644)?;
         let latest = self.latest_path(&stored.record.item);
         let dir = self.dir.join("latest");
@@ -100,7 +100,7 @@ fn read(path: &Path) -> Result<Option<Stored>, BuildError> {
     match fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map(Some)
-            .map_err(|e| BuildError::problem("B023", format!("{}: {e}", path.display()))),
+            .map_err(|e| BuildError::problem("B044", format!("{}: {e}", path.display()))),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io(path)(e)),
     }

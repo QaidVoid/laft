@@ -37,7 +37,7 @@ fn listed_license_files_must_exist() {
     recipe.meta.license_files = Some(vec!["missing".into()]);
     assert_eq!(
         install_licenses(&recipe, &src, &out).unwrap_err().code(),
-        Some("B023")
+        Some("B044")
     );
 }
 
@@ -77,7 +77,7 @@ fn license_files_outside_the_source_tree_are_refused() {
         recipe.meta.license_files = Some(vec![file.clone()]);
         assert_eq!(
             install_licenses(&recipe, &src, &out).unwrap_err().code(),
-            Some("B023"),
+            Some("B044"),
             "{file}"
         );
     }
@@ -105,7 +105,7 @@ fn license_files_replace_links_the_install_phase_left() {
         install_licenses(&recipe("zlib"), &src, &out)
             .unwrap_err()
             .code(),
-        Some("B023")
+        Some("B044")
     );
     assert!(!dir.path().join("zlib").exists());
 }
@@ -145,7 +145,7 @@ fn an_install_record_of_another_format_is_refused() {
     ] {
         fsx::write_atomic(&record, text.as_bytes(), 0o644).unwrap();
         let error = installed(dir.path(), &item).unwrap_err();
-        assert_eq!(error.code(), Some("B023"), "{text}");
+        assert_eq!(error.code(), Some("B044"), "{text}");
         assert!(error.to_string().contains(says), "{text}: {error}");
     }
 }

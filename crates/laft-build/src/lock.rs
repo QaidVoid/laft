@@ -115,7 +115,7 @@ impl BuildRoot {
             token: token.clone(),
         };
         let bytes = serde_json::to_vec(&holder)
-            .map_err(|e| BuildError::problem("B023", format!("{}: {e}", path.display())))?;
+            .map_err(|e| BuildError::problem("B044", format!("{}: {e}", path.display())))?;
         file.set_len(0)
             .and_then(|()| file.write_all_at(&bytes, 0))
             .map_err(io(&path))?;
