@@ -156,6 +156,25 @@ fn killing_the_child_ends_every_sandbox_process() {
 }
 
 #[test]
+fn the_sandbox_dies_with_the_thread_that_spawned_it() {
+    let fixture = Fixture::new();
+    let command = fixture
+        .shell("sleep 60")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let Some(mut child) = thread::spawn(move || supported(command.spawn()))
+        .join()
+        .unwrap()
+    else {
+        return;
+    };
+    let (done, finished) = mpsc::channel();
+    thread::spawn(move || done.send(child.wait().unwrap().signal()));
+    assert_eq!(finished.recv_timeout(Duration::from_secs(20)), Ok(Some(9)));
+}
+
+#[test]
 fn host_paths_are_invisible() {
     let fixture = Fixture::new();
     let host = fixture.dir.path().display();

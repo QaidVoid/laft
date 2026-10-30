@@ -12,7 +12,7 @@ use rustix::mount::{
     OpenTreeFlags, UnmountFlags,
 };
 use rustix::pipe::PipeFlags;
-use rustix::process::{Resource, Rlimit, Signal, WaitOptions};
+use rustix::process::{Pid, Resource, Rlimit, Signal, WaitOptions};
 use rustix::thread::{CapabilitySet, UnshareFlags};
 
 use crate::error::{Error, Step};
@@ -362,6 +362,8 @@ struct Setup {
     /// Whether the command leads a session of its own, without a
     /// controlling terminal.
     new_session: bool,
+    /// The process that spawns the sandbox.
+    caller: Pid,
 }
 
 /// How the child builds its root.
@@ -438,6 +440,7 @@ impl Setup {
             open_files: hard.map_or(MAX_OPEN_FILES, |hard| hard.min(MAX_OPEN_FILES)),
             root,
             new_session: false,
+            caller: rustix::process::getpid(),
         })
     }
 
@@ -452,6 +455,15 @@ impl Setup {
     }
 
     fn enter(&self) -> Result<(), Failure> {
+        // The sandbox dies with its caller, so that nothing it runs keeps
+        // writing after the caller is gone. The signal follows the thread
+        // that spawned the sandbox, which waits for it. A caller that died
+        // before the signal was set is caught by its parent id.
+        rustix::process::set_parent_process_death_signal(Some(Signal::KILL))
+            .map_err(fail(Step::DeathSignal))?;
+        if rustix::process::getppid() != Some(self.caller) {
+            return Err((Step::DeathSignal, Errno::SRCH));
+        }
         sys::unshare(self.namespaces).map_err(fail(Step::Unshare))?;
         if let Some((uid_map, gid_map)) = &self.id_maps {
             write_proc(c"/proc/self/setgroups", b"deny")?;
@@ -746,7 +758,7 @@ fn write_proc(path: &CStr, data: &[u8]) -> Result<(), Failure> {
 }
 
 /// Waits for PID 1 of the sandbox and ends this process the same way.
-fn wait_for(init: rustix::process::Pid) -> ! {
+fn wait_for(init: Pid) -> ! {
     // SAFETY: this process never returns to the standard library. It only
     // waits and exits, so no descriptor is used after this point. Closing
     // them lets the parent see end of file on the command's pipes and the

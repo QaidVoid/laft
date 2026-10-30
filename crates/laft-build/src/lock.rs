@@ -56,7 +56,8 @@ impl BuildRoot {
     /// A run that holds the lock and starts another `laft-build` on the same
     /// build root, such as a build inside the root of a stage, passes its
     /// [`RootLock::token`] as `inherited`, and that run shares the lock
-    /// instead of waiting for it.
+    /// instead of waiting for it. The shared run holds no lock of its own.
+    /// It runs in a sandbox, which dies with the run that holds the lock.
     ///
     /// # Errors
     ///
