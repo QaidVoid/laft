@@ -49,6 +49,55 @@ installer too. The system boots without busybox, with udev populating
 /dev, and the same checks run, together with one that fsck.vfat checked
 the EFI system partition.
 
+Usable self-built acceptance
+
+    tests/vm/run --self-built /path/to/packages --usable [--keep]
+
+adds the usable tools and service checks with system-usable.stav. The
+--usable flag requires --self-built, in either order. Without --usable,
+the default minimal test and the bootstrap base test stay offline and do
+not require the extra packages. The source/build preparation can still
+download pinned recipe sources on the host. Installation itself always
+uses a file:// repository and a machine without a network device.
+
+The usable package directory must contain the base packages plus the
+runtime closure listed in src/system.rs. Host OpenSSH client tools and
+OpenSSL are required in addition to the usual VM prerequisites. There
+are no new production Rust dependencies. Missing or duplicate package
+names are rejected before installation.
+
+Only the first two installed boots get a virtio network device. QEMU's
+restricted IPv4 user network gives eth0 10.0.2.15/24 and its subnet route.
+It deliberately advertises no gateway or DNS server. Both boots check
+the lease, subnet route and absence of a default route and resolver server
+and authenticate as the synthetic non-root vmtest account over SSH.
+Root SSH authentication must be refused. SSH ingress binds an ephemeral
+port on 127.0.0.1 only. Strict host key checking pins a fresh disposable
+host key. The test uses neither host SSH configuration nor an agent.
+
+The first boot also writes and reopens a file in Vim, commits it with a
+neutral Git identity, and clones the real commit over SSH and HTTPS.
+The HTTPS clone uses Git's dumb HTTP transport to a local copy of the
+same commit. curl checks HTTP, cookie replay, OpenSSL and PSL support,
+HTTPS with a fresh local CA, and rejection of an unrelated CA with exit
+status 60. The same local CA must be rejected with status 60 using
+curl's packaged default trust, rather than failing to load that trust.
+The leaf certificate names the exact fixture IP address. The packaged
+CA bundle must also be present. No public server is used.
+
+Guest forwarding starts a private harness relay per connection to HTTP
+and HTTPS fixtures bound to host loopback. QEMU restrict=on disables
+unforwarded guest egress. The fixtures use 10.0.2.100 ports 80 and 443
+inside the guest. The installer and third, live-apply boot have no NIC.
+Fixture processes use cleared environments without host proxies or
+credentials. Host command labels omit arguments and environment values.
+
+Fixture keys, certificates and host processes are removed on success or
+failure. A kept disk intentionally contains only its disposable guest
+keys and synthetic account, not host credentials. Do not reuse that
+image as a real system. As with failed baseline runs, a failure retains
+the diagnostic image and serial logs for inspection.
+
 laft-boot
 
 The unit tests of crates/laft-boot cover its decisions: the kernel command

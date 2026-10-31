@@ -1,6 +1,4 @@
-//! The two systems the test can install: the minimal one built from the
-//! recipes in `tests/vm/recipes`, and the base system that the bootstrap of
-//! the recipe repository built.
+//! The minimal, self-built base and usable systems the test can install.
 
 use std::path::{Path, PathBuf};
 
@@ -15,6 +13,8 @@ pub(crate) enum System {
     /// The base system that the bootstrap built, from the package files in
     /// this directory, such as the output directory of its build root.
     SelfBuilt(PathBuf),
+    /// The self-built base plus interactive tools and network services.
+    Usable(PathBuf),
 }
 
 /// The packages of the self-built system that the repository publishes:
@@ -53,12 +53,37 @@ pub(crate) const SELF_BUILT_PACKAGES: &[&str] = &[
     "zstd",
 ];
 
+/// Additional runtime packages published only for the usable system.
+pub(crate) const USABLE_PACKAGES: &[&str] = &[
+    "ca-certificates",
+    "curl",
+    "dhcpcd",
+    "diffutils",
+    "elfutils",
+    "findutils",
+    "expat",
+    "gdbm",
+    "gettext",
+    "git",
+    "inetutils",
+    "iproute2",
+    "less",
+    "libidn2",
+    "libpsl",
+    "libunistring",
+    "linux-pam",
+    "openssh",
+    "perl",
+    "vim",
+];
+
 impl System {
     /// The configuration file in `tests/vm` that the installer uses.
     pub(crate) fn config(&self) -> &'static str {
         match self {
             Self::Minimal => "system.stav",
             Self::SelfBuilt(_) => "system-self-built.stav",
+            Self::Usable(_) => "system-usable.stav",
         }
     }
 
@@ -66,7 +91,7 @@ impl System {
     pub(crate) fn kernel_dir(&self, paths: &Paths) -> PathBuf {
         match self {
             Self::Minimal => paths.build_out(),
-            Self::SelfBuilt(dir) => dir.clone(),
+            Self::SelfBuilt(dir) | Self::Usable(dir) => dir.clone(),
         }
     }
 
@@ -74,7 +99,7 @@ impl System {
     pub(crate) fn release(&self) -> &'static str {
         match self {
             Self::Minimal => "7.2.13_1",
-            Self::SelfBuilt(_) => "7.2.13-laft1",
+            Self::SelfBuilt(_) | Self::Usable(_) => "7.2.13-laft1",
         }
     }
 
@@ -99,7 +124,7 @@ impl System {
                 "fs/nls/nls_cp437.ko",
                 "fs/nls/nls_iso8859-1.ko",
             ],
-            Self::SelfBuilt(_) => &[
+            Self::SelfBuilt(_) | Self::Usable(_) => &[
                 "fs/fat/vfat.ko",
                 "fs/nls/nls_cp437.ko",
                 "fs/nls/nls_iso8859-1.ko",
@@ -111,7 +136,7 @@ impl System {
     pub(crate) fn self_built(&self) -> Option<&Path> {
         match self {
             Self::Minimal => None,
-            Self::SelfBuilt(dir) => Some(dir),
+            Self::SelfBuilt(dir) | Self::Usable(dir) => Some(dir),
         }
     }
 }

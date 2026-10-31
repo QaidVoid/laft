@@ -6,9 +6,9 @@
 //! tools. Their sources are pinned there by URL and SHA-256, and
 //! `laft-build` verifies every download before it uses it. The self-built
 //! system needs only busybox from there, for the installer, and publishes
-//! [`SELF_BUILT_PACKAGES`] from the packages the bootstrap made instead. The
-//! Laft binaries are packaged from the static release build of this
-//! workspace.
+//! [`SELF_BUILT_PACKAGES`] from the packages the bootstrap made instead.
+//! Usable mode adds [`USABLE_PACKAGES`]. The Laft binaries are packaged from
+//! the static release build of this workspace.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -20,7 +20,7 @@ use std::process::Command;
 use laft_core::Blake3Hash;
 use laft_pkg::{Arch, Compression, Manifest, Meta, Reader, scan, write_package};
 
-use crate::system::{SELF_BUILT_PACKAGES, System};
+use crate::system::{SELF_BUILT_PACKAGES, System, USABLE_PACKAGES};
 use crate::{Paths, Result, fail, run};
 
 /// The packages `laft-build` makes, in build order.
@@ -51,7 +51,7 @@ pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
     let build_root = paths.cache.join("build-root");
     let recipes: &[&str] = match system {
         System::Minimal => &RECIPES,
-        System::SelfBuilt(_) => &["busybox:static"],
+        System::SelfBuilt(_) | System::Usable(_) => &["busybox:static"],
     };
     let mut command = Command::new(paths.bin.join("laft-build"));
     command
@@ -66,7 +66,7 @@ pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
         .args(recipes);
     run(&mut command)?;
     let published = match system.self_built() {
-        Some(dir) => select(dir, &paths.work.join("self-built"))?,
+        Some(dir) => select(dir, &paths.work.join("self-built"), system)?,
         None => paths.build_out(),
     };
 
@@ -114,16 +114,21 @@ pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
         .ok_or_else(|| fail(format!("{} has no key line", public.display())))
 }
 
-/// Links the package files of [`SELF_BUILT_PACKAGES`] from `dir` into a
-/// new directory `to`, with every buildinfo file of `dir`, which name the
-/// packages they describe, and returns `to`. A file on another filesystem
+/// Links the package files of [`SELF_BUILT_PACKAGES`] and, in usable mode,
+/// [`USABLE_PACKAGES`] from `dir` into a new directory `to`, with every
+/// buildinfo file of `dir`, and returns `to`. A file on another filesystem
 /// is copied instead.
-fn select(dir: &Path, to: &Path) -> Result<PathBuf> {
+fn select(dir: &Path, to: &Path, system: &System) -> Result<PathBuf> {
     let _ = fs::remove_dir_all(to);
     fs::create_dir_all(to).map_err(|e| fail(format!("{}: {e}", to.display())))?;
     let files = package_files(dir)?;
     let mut chosen = Vec::new();
-    for name in SELF_BUILT_PACKAGES {
+    let extra = if matches!(system, System::Usable(_)) {
+        USABLE_PACKAGES
+    } else {
+        &[]
+    };
+    for name in SELF_BUILT_PACKAGES.iter().chain(extra) {
         chosen.push(one(dir, &files, name)?.0.clone());
     }
     for item in fs::read_dir(dir).map_err(|e| fail(format!("{}: {e}", dir.display())))? {

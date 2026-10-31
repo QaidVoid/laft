@@ -174,6 +174,7 @@ impl Machine {
         disk: &Path,
         log: &Path,
         timeout: Duration,
+        fixture: Option<&crate::usable::Fixture>,
     ) -> Result<Self> {
         check_memory()?;
         let mut command = Command::new("qemu-system-x86_64");
@@ -188,7 +189,20 @@ impl Machine {
             Accel::Kvm => command.args(["-accel", "kvm", "-cpu", "host"]),
             Accel::Tcg => command.args(["-accel", "tcg", "-cpu", "max"]),
         };
-        command.args(["-nographic", "-vga", "none", "-nic", "none", "-no-reboot"]);
+        command.args(["-nographic", "-vga", "none", "-no-reboot"]);
+        if let Some(fixture) = fixture {
+            command
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("LC_ALL", "C");
+            // Keep the disk's firmware device path stable on the offline boot.
+            command.arg("-netdev").arg(fixture.netdev()?).args([
+                "-device",
+                "virtio-net-pci,netdev=usable,mac=52:54:00:12:34:56,addr=0x3",
+            ]);
+        } else {
+            command.args(["-nic", "none"]);
+        }
         command.arg("-drive").arg(format!(
             "file={},format=raw,if=virtio,cache=unsafe",
             disk.display()

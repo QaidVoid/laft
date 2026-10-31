@@ -781,6 +781,7 @@ version = "0.1.0"
 dependencies = [
  "laft-core",
  "laft-pkg",
+ "laft-test",
  "serde_json",
 ]
 

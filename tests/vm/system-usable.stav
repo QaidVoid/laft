@@ -1,0 +1,71 @@
+import "std/services" as services
+
+# A disposable usable system. The installer replaces the repository key
+# placeholder @REPO_KEY@ and the SSH public key value with fresh test keys.
+system {
+  include "./hardware.stav"
+
+  hostname = "laft-vm"
+
+  packages = [glibc, dash, bash, coreutils, util-linux, shadow, procps-ng, kmod, kbd,
+              grep, sed, udev, runit, linux, limine, dosfstools, laft, vim, git,
+              curl, ca-certificates, iproute2, inetutils, findutils, diffutils]
+
+  repo core {
+    url = "file:///repo"
+    key = "@REPO_KEY@"
+  }
+
+  include services.dhcpcd()
+  include services.sshd()
+
+  users {
+    group vmtest { gid = 1000 }
+    user vmtest {
+      uid = 1000
+      group = vmtest
+      shell = "/usr/bin/sh"
+      ssh_keys = ["@SSH_KEY@"]
+    }
+    # The password is "laft".
+    user root {
+      # Root refusal must hold even when the client has an authorized key.
+      ssh_keys = ["@SSH_KEY@"]
+      shell         = "/usr/bin/sh"
+      password_hash = "$6$laftvmtest$TYgldH8Nq8IA.rapP6rP8nRPwVxtaogYYeskFhzsWeop1a/jLgduKPbwiJkWJBLTVoytkeuCyuB4NCDPgxLiz."
+    }
+  }
+
+  # The root filesystem is not checked, so the initramfs needs no e2fsck,
+  # and the initramfs has no emergency shell, which would need busybox.
+  fs "/" { fsck = false }
+
+  boot {
+    cmdline   = ["console=ttyS0", "quiet", "laft.debug", "net.ifnames=0"]
+    timeout   = 1
+    microcode = force(off)
+    initrd { shell = false }
+  }
+
+  file "/etc/dhcpcd.conf" {
+    text = """
+      allowinterfaces eth0
+      ipv4only
+      noipv4ll
+      nohook hostname
+      """
+  }
+
+  # This system has no session tracker.
+  service turnstiled { enable = false }
+
+  service boot-complete { log = console }
+
+  service vmtest-marker {
+    description = "Print a marker line on the console"
+    exec        = ["/usr/bin/sh", "-c", "echo 'laft-vmtest: marker service is running'; exec sleep 2147483647"]
+    log         = console
+  }
+
+  getty { ttys = ["ttyS0"] }
+}

@@ -67,14 +67,19 @@ poweroff -f
 /// returns their paths. The initramfs carries busybox and the modules from
 /// the packages, `laft`, the published repository at `/repo` and the
 /// configuration of `system` with `key` as the repository key. The kernel
-/// is the one the installed system boots. Only the quoted value
-/// `"@REPO_KEY@"` is replaced, so the comments of the configuration stay
-/// as they are.
+/// is the one the installed system boots. The quoted values `"@REPO_KEY@"`
+/// and, with a usable fixture, `"@SSH_KEY@"` are replaced. Comments in the
+/// configuration stay as they are.
 ///
 /// # Errors
 ///
 /// Fails when a package cannot be read or a file cannot be written.
-pub(crate) fn prepare(paths: &Paths, key: &str, system: &System) -> Result<(PathBuf, PathBuf)> {
+pub(crate) fn prepare(
+    paths: &Paths,
+    key: &str,
+    system: &System,
+    fixture: Option<&crate::usable::Fixture>,
+) -> Result<(PathBuf, PathBuf)> {
     let unpacked = paths.work.join("unpacked");
     let _ = fs::remove_dir_all(&unpacked);
     let busybox = unpack(&paths.build_out(), "busybox", &unpacked.join("busybox"))?;
@@ -100,7 +105,18 @@ pub(crate) fn prepare(paths: &Paths, key: &str, system: &System) -> Result<(Path
         archive.add(dir, 0o755, Kind::Dir);
     }
     archive.add("dev/console", 0o600, Kind::CharDevice(5, 1));
-    archive.add("init", 0o755, Kind::File(INIT.as_bytes().to_vec()));
+    let init = if fixture.is_some() {
+        INIT.replace(
+            "umount /mnt/boot",
+            &format!("{}\numount /mnt/boot", crate::usable::INSTALL),
+        )
+    } else {
+        INIT.to_owned()
+    };
+    archive.add("init", 0o755, Kind::File(init.into_bytes()));
+    if let Some(fixture) = fixture {
+        fixture.add_archive(&mut archive)?;
+    }
     archive.add(
         "bin/busybox",
         0o755,
@@ -123,9 +139,12 @@ pub(crate) fn prepare(paths: &Paths, key: &str, system: &System) -> Result<(Path
         list.push('\n');
     }
     archive.add("modules", 0o644, Kind::File(list.into_bytes()));
-    let config = fs::read_to_string(paths.source.join(system.config()))
+    let mut config = fs::read_to_string(paths.source.join(system.config()))
         .map_err(|e| fail(format!("{}: {e}", system.config())))?
         .replace("\"@REPO_KEY@\"", &format!("\"{key}\""));
+    if let Some(fixture) = fixture {
+        config = config.replace("\"@SSH_KEY@\"", &format!("\"{}\"", fixture.public_key()?));
+    }
     archive.add("system.stav", 0o644, Kind::File(config.into_bytes()));
     add_tree(&mut archive, &paths.www(), "repo")?;
 

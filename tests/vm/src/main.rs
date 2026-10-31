@@ -31,6 +31,11 @@
 //! kernel boots the installer too, and only busybox for the installer comes
 //! from `tests/vm/recipes`.
 //!
+//! Adding `--usable` installs network services and interactive tools from
+//! the self-built directory and checks them with restricted networking and
+//! local fixtures. Its internal `--fixture-relay` entry point forwards one
+//! QEMU connection to a loopback fixture. See `tests/vm/README`.
+//!
 //! The console of each machine is saved next to the disk image.
 
 #![forbid(unsafe_code)]
@@ -41,6 +46,7 @@ mod installer;
 mod packages;
 mod qemu;
 mod system;
+mod usable;
 
 use std::fs;
 use std::io::Write;
@@ -103,57 +109,83 @@ impl Paths {
     }
 }
 
+fn command_name(command: &Command) -> String {
+    Path::new(command.get_program())
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Runs `command` and fails unless it exits successfully.
 fn run(command: &mut Command) -> Result<()> {
-    eprintln!("laft-vmtest: running {command:?}");
+    eprintln!("laft-vmtest: running {}", command_name(command));
     let status = command
         .status()
-        .map_err(|e| fail(format!("{:?}: {e}", command.get_program())))?;
+        .map_err(|e| fail(format!("{}: {e}", command_name(command))))?;
     if status.success() {
         Ok(())
     } else {
-        Err(fail(format!("{command:?} failed with {status}")))
+        Err(fail(format!(
+            "{} failed with {status}",
+            command_name(command)
+        )))
     }
 }
 
 /// Runs `command` with `input` on its standard input and fails unless it
 /// exits successfully.
 fn run_with_input(command: &mut Command, input: &[u8]) -> Result<()> {
-    eprintln!("laft-vmtest: running {command:?}");
+    eprintln!("laft-vmtest: running {}", command_name(command));
     let mut child = command
         .stdin(Stdio::piped())
         .spawn()
-        .map_err(|e| fail(format!("{:?}: {e}", command.get_program())))?;
+        .map_err(|e| fail(format!("{}: {e}", command_name(command))))?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin
             .write_all(input)
-            .map_err(|e| fail(format!("{:?}: {e}", command.get_program())))?;
+            .map_err(|e| fail(format!("{}: {e}", command_name(command))))?;
     }
     let status = child
         .wait()
-        .map_err(|e| fail(format!("{:?}: {e}", command.get_program())))?;
+        .map_err(|e| fail(format!("{}: {e}", command_name(command))))?;
     if status.success() {
         Ok(())
     } else {
-        Err(fail(format!("{command:?} failed with {status}")))
+        Err(fail(format!(
+            "{} failed with {status}",
+            command_name(command)
+        )))
     }
 }
 
 fn main() -> ExitCode {
-    let mut keep = false;
-    let mut system = System::Minimal;
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        let dir = (arg == "--self-built").then(|| args.next()).flatten();
-        match (arg.as_str(), dir) {
-            ("--keep", _) => keep = true,
-            (_, Some(dir)) => system = System::SelfBuilt(PathBuf::from(dir)),
-            _ => {
-                eprintln!("usage: laft-vmtest [--keep] [--self-built DIR]");
-                return ExitCode::FAILURE;
-            }
-        }
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments.first().is_some_and(|a| a == "--fixture-relay") {
+        return match arguments.as_slice() {
+            [_, port] => match port
+                .parse::<u16>()
+                .map_err(|e| e.to_string())
+                .and_then(usable::relay)
+            {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(message) => {
+                    eprintln!("laft-vmtest: fixture relay failed: {message}");
+                    ExitCode::FAILURE
+                }
+            },
+            _ => ExitCode::FAILURE,
+        };
     }
+    let (keep, system) = match options(arguments) {
+        Ok(options) => options,
+        Err(message) => {
+            eprintln!(
+                "laft-vmtest: {message}\nusage: laft-vmtest [--keep] [--self-built DIR [--usable]]"
+            );
+            return ExitCode::FAILURE;
+        }
+    };
     match test(keep, &system) {
         Ok(()) => {
             eprintln!("laft-vmtest: passed");
@@ -166,6 +198,33 @@ fn main() -> ExitCode {
     }
 }
 
+fn options(arguments: Vec<String>) -> Result<(bool, System)> {
+    let mut keep = false;
+    let mut usable = false;
+    let mut directory = None;
+    let mut args = arguments.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--keep" => keep = true,
+            "--usable" => usable = true,
+            "--self-built" if directory.is_none() => {
+                let dir = args
+                    .next()
+                    .filter(|a| !a.starts_with('-'))
+                    .ok_or_else(|| fail("--self-built requires a directory"))?;
+                directory = Some(PathBuf::from(dir));
+            }
+            _ => return Err(fail("unknown or repeated argument")),
+        }
+    }
+    match (directory, usable) {
+        (Some(dir), true) => Ok((keep, System::Usable(dir))),
+        (Some(dir), false) => Ok((keep, System::SelfBuilt(dir))),
+        (None, false) => Ok((keep, System::Minimal)),
+        (None, true) => Err(fail("--usable requires --self-built DIR")),
+    }
+}
+
 fn test(keep: bool, system: &System) -> Result<()> {
     let paths = Paths::new()?;
     let accel = Accel::detect();
@@ -175,12 +234,17 @@ fn test(keep: bool, system: &System) -> Result<()> {
     let key = packages::build(&paths, system)?;
     let disk = paths.work.join("disk.img");
     disk::create(&disk)?;
-    install(&paths, accel, &key, &disk, system)?;
+    let fixture = if matches!(system, System::Usable(_)) {
+        Some(usable::Fixture::new(&paths)?)
+    } else {
+        None
+    };
+    install(&paths, accel, &key, &disk, system, fixture.as_ref())?;
     let vars = paths.work.join("vars.fd");
     let _ = fs::remove_file(&vars);
     qemu::prepare_vars(&vars)?;
-    first_boot(&paths, accel, &disk, &vars, system)?;
-    second_boot(&paths, accel, &disk, &vars)?;
+    first_boot(&paths, accel, &disk, &vars, system, fixture.as_ref())?;
+    second_boot(&paths, accel, &disk, &vars, fixture.as_ref())?;
     third_boot(&paths, accel, &disk, &vars)?;
     if !keep {
         for file in [disk, vars] {
@@ -191,15 +255,29 @@ fn test(keep: bool, system: &System) -> Result<()> {
 }
 
 /// Installs the system onto `disk` from the installer machine.
-fn install(paths: &Paths, accel: Accel, key: &str, disk: &Path, system: &System) -> Result<()> {
-    let (kernel, initrd) = installer::prepare(paths, key, system)?;
+fn install(
+    paths: &Paths,
+    accel: Accel,
+    key: &str,
+    disk: &Path,
+    system: &System,
+    fixture: Option<&usable::Fixture>,
+) -> Result<()> {
+    let (kernel, initrd) = installer::prepare(paths, key, system, fixture)?;
     let boot = Boot::Kernel {
         kernel,
         initrd: initrd.clone(),
         cmdline: "console=ttyS0 panic=-1 quiet".into(),
     };
     let timeout = Duration::from_secs(300 * u64::from(accel.slowdown()));
-    let mut machine = Machine::start(accel, &boot, disk, &paths.work.join("install.log"), timeout)?;
+    let mut machine = Machine::start(
+        accel,
+        &boot,
+        disk,
+        &paths.work.join("install.log"),
+        timeout,
+        None,
+    )?;
     machine.expect("the installer finishes", installer::DONE)?;
     machine.wait()?;
     let _ = fs::remove_file(initrd);
@@ -220,7 +298,14 @@ fn install(paths: &Paths, accel: Accel, key: &str, disk: &Path, system: &System)
 }
 
 /// Starts the installed system from `disk` through the firmware.
-fn start(paths: &Paths, accel: Accel, disk: &Path, vars: &Path, log: &str) -> Result<Machine> {
+fn start(
+    paths: &Paths,
+    accel: Accel,
+    disk: &Path,
+    vars: &Path,
+    log: &str,
+    fixture: Option<&usable::Fixture>,
+) -> Result<Machine> {
     let timeout = Duration::from_secs(240 * u64::from(accel.slowdown()));
     Machine::start(
         accel,
@@ -230,6 +315,7 @@ fn start(paths: &Paths, accel: Accel, disk: &Path, vars: &Path, log: &str) -> Re
         disk,
         &paths.work.join(log),
         timeout,
+        fixture,
     )
 }
 
@@ -299,8 +385,9 @@ fn first_boot(
     disk: &Path,
     vars: &Path,
     system: &System,
+    fixture: Option<&usable::Fixture>,
 ) -> Result<()> {
-    let mut machine = start(paths, accel, disk, vars, "boot-1.log")?;
+    let mut machine = start(paths, accel, disk, vars, "boot-1.log", fixture)?;
     machine.expect("Limine loads", "Booting automatically")?;
     machine.expect("Limine loads the kernel", "linux: Loading kernel")?;
     machine.expect(
@@ -324,7 +411,7 @@ fn first_boot(
         &machine.transcript(),
         "laft: early service",
     )?;
-    if matches!(system, System::SelfBuilt(_)) {
+    if matches!(system, System::SelfBuilt(_) | System::Usable(_)) {
         check_absent(
             "the EFI system partition is checked",
             &machine.transcript(),
@@ -374,13 +461,23 @@ fn first_boot(
         &mounts,
         " /run/laft/mounts/1 ro,nodev",
     )?;
+    if let Some(fixture) = fixture {
+        fixture.recheck(&mut machine)?;
+        fixture.tools()?;
+    }
     power_off(&mut machine)
 }
 
 /// Boots the system again and checks that the first boot was recorded as
 /// good.
-fn second_boot(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<()> {
-    let mut machine = start(paths, accel, disk, vars, "boot-2.log")?;
+fn second_boot(
+    paths: &Paths,
+    accel: Accel,
+    disk: &Path,
+    vars: &Path,
+    fixture: Option<&usable::Fixture>,
+) -> Result<()> {
+    let mut machine = start(paths, accel, disk, vars, "boot-2.log", fixture)?;
     machine.expect(
         "laft-boot selects the generation again",
         "laft-boot: switching to generation 1",
@@ -389,6 +486,9 @@ fn second_boot(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<
     let state = shell(&mut machine, "cat /laft/state/boot.json")?;
     check("generation 1 is still good", &state, "\"good\":[1]")?;
     check("nothing is bad", &state, "\"bad\":[]")?;
+    if let Some(fixture) = fixture {
+        fixture.recheck(&mut machine)?;
+    }
     power_off(&mut machine)
 }
 
@@ -407,7 +507,7 @@ fn third_boot(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<(
     let result = copy(disk, &copies[0])
         .and_then(|_| copy(vars, &copies[1]))
         .and_then(|_| {
-            let mut machine = start(paths, accel, &copies[0], &copies[1], "boot-3.log")?;
+            let mut machine = start(paths, accel, &copies[0], &copies[1], "boot-3.log", None)?;
             login(&mut machine)?;
             apply_live(&mut machine)?;
             power_off(&mut machine)
@@ -442,3 +542,7 @@ fn apply_live(machine: &mut Machine) -> Result<()> {
         "run: /run/runit/service/hello",
     )
 }
+
+#[cfg(test)]
+#[path = "main_tests.rs"]
+mod tests;
