@@ -106,6 +106,9 @@ Reconcile `/etc` and the accounts with the booted generation. The `laft-activate
 
 Delete generations, views and store entries nothing needs.
 
+When a view version comes into use after the plan was made, nothing is
+deleted and the command fails with a note to run it again.
+
 | Option | Meaning |
 |---|---|
 | `--dry-run` | Show what would be deleted. |
