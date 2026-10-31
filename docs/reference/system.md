@@ -49,7 +49,7 @@ Account settings.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `mutable` | `Bool` | `true` | true: accounts created outside Laft are kept. false: the account databases contain exactly the declared accounts. |
+| `mutable` | `Bool` | `true` | true: accounts created outside Laft are kept. false: the account databases contain exactly the declared accounts and must declare `root` (`C0416`). The base part supplies `root`. |
 | `accounts` | `Map<Str, User>` | `{}` | Users. Block label: the user name. Written as `user` blocks. |
 | `groups` | `Map<Str, Group>` | `{}` | Groups. Block label: the group name. Written as `group` blocks. |
 

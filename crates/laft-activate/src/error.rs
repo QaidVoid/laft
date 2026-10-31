@@ -263,6 +263,8 @@ pub enum ConfigError {
     /// A regular user would take a system group with its name as its
     /// primary group. Code `C0415`.
     SystemPrimaryGroup(String),
+    /// Immutable accounts do not declare the root user. Code `C0416`.
+    MissingImmutableRoot,
     /// No id is free in the range an account allocates from. Code
     /// `C0491`.
     IdsExhausted {
@@ -352,6 +354,7 @@ impl ConfigError {
             Self::RegistryId { .. } => "C0408",
             Self::DuplicateId { .. } => "C0414",
             Self::SystemPrimaryGroup(_) => "C0415",
+            Self::MissingImmutableRoot => "C0416",
             Self::InvalidPath(_) => "C0420",
             Self::ReservedPath(_) => "C0421",
             Self::Content(_) => "C0422",
@@ -402,6 +405,9 @@ impl fmt::Display for ConfigError {
             Self::SystemPrimaryGroup(name) => write!(
                 f,
                 "user {name:?} would take the system group {name:?} as its primary group. Set group explicitly."
+            ),
+            Self::MissingImmutableRoot => f.write_str(
+                "users.mutable = false requires a declared root user to keep uid 0 in the account databases",
             ),
             Self::IdsExhausted { kind, name } => {
                 write!(f, "no free id is left for {kind} {name:?}")

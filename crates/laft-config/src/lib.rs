@@ -26,6 +26,7 @@
 //! | `C0408` | changed id of `root` or a static account |
 //! | `C0414` | two declared accounts with the same id |
 //! | `C0415` | a regular user would take a system group as its primary group |
+//! | `C0416` | immutable accounts do not declare the root user |
 //! | `C0420` | `file` path not an absolute, normalized path below `/etc/` |
 //! | `C0421` | `file` path reserved for Laft |
 //! | `C0422` | enabled `file` without exactly one content field |

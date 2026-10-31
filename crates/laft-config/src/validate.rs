@@ -160,6 +160,10 @@ fn etc_error(cx: &Cx<'_>, error: &EtcError) -> Option<FileDiagnostic> {
             );
             helped(d, "set group explicitly")
         }
+        EtcError::MissingImmutableRoot => helped(
+            cx.error(code, &["system", "users", "mutable"], message),
+            "declare `user root { }` in `users`, or set `users.mutable = true` to keep undeclared accounts",
+        ),
         EtcError::InvalidPath(path)
         | EtcError::ReservedPath(path)
         | EtcError::Content(path)
@@ -534,3 +538,7 @@ fn check_view_members(cx: &Cx<'_>, etc: &EtcConfig, found: &mut Vec<FileDiagnost
         }
     }
 }
+
+#[cfg(test)]
+#[path = "validate_tests.rs"]
+mod tests;

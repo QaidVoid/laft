@@ -65,8 +65,8 @@ impl Default for EtcConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct Users {
     /// With `true`, accounts created outside Laft are kept. With `false`,
-    /// the account databases contain exactly the declared accounts. Default
-    /// `true`.
+    /// the account databases contain exactly the declared accounts and a
+    /// `root` user must be declared. Default `true`.
     pub mutable: bool,
     /// The declared users, by name.
     pub accounts: BTreeMap<String, User>,

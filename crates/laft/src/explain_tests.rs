@@ -21,7 +21,15 @@ fn every_code_is_listed_once() {
 
 #[test]
 fn every_account_code_of_activation_is_explained() {
-    for code in ["C0409", "C0410", "C0411", "C0412", "C0413"] {
+    for code in ["C0409", "C0410", "C0411", "C0412", "C0413", "C0416"] {
         assert!(explain(code).is_some(), "{code}");
     }
+}
+
+#[test]
+fn missing_immutable_root_explains_why_and_how_to_declare_it() {
+    let text = explain("C0416").expect("immutable root protection is explained");
+    assert!(text.contains("root"), "{text}");
+    assert!(text.contains("mutable"), "{text}");
+    assert!(text.contains("user root"), "{text}");
 }

@@ -77,6 +77,9 @@ pub(crate) fn resolve(
     current: &Databases,
 ) -> Result<Declared, Vec<ConfigError>> {
     let mut errors = Vec::new();
+    if !users.mutable && !users.accounts.contains_key("root") {
+        errors.push(ConfigError::MissingImmutableRoot);
+    }
     let groups = effective_groups(users, &mut errors);
     check_users(users, &groups, &mut errors);
     for (name, group) in &users.groups {

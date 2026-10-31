@@ -189,3 +189,14 @@ fn a_group_reference_without_any_such_group_is_rejected() {
         load_body(r#"file "/etc/x" { text = "", group = qaid }"#).expect_err("no group qaid");
     assert_eq!(codes(&report), ["E0802"]);
 }
+
+#[test]
+fn immutable_accounts_still_inherit_root_from_the_base_part() {
+    let config = load_body("users { mutable = false }")
+        .expect("the base supplies root")
+        .config;
+    assert!(!config.etc.users.mutable);
+    assert_eq!(config.etc.users.accounts["root"].uid, Some(0));
+    assert_eq!(config.etc.users.groups["root"].gid, Some(0));
+    assert!(laft_activate::check_config(&config.etc, &config.security).is_empty());
+}

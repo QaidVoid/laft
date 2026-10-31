@@ -58,6 +58,11 @@ const TEXTS: &[(&str, &str, &str)] = &[
         "Set the user's `group` explicitly.",
     ),
     (
+        "C0416",
+        "With `users.mutable = false`, the account databases contain only declared accounts. The root user must be declared so that uid 0 is not removed.",
+        "Declare `user root { }` inside `users`, or set `users.mutable = true` to keep undeclared accounts. The normal system configuration already inherits root from the base part.",
+    ),
+    (
         "C0420",
         "A `file` path is not an absolute, normalized path below `/etc/`.",
         "Write it as `/etc/<path>` without `.`, `..` or repeated slashes.",

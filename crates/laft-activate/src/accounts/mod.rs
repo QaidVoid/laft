@@ -141,7 +141,9 @@ impl Declared {
     ///
     /// # Errors
     ///
-    /// Fails when the file cannot be read or is not a supported version.
+    /// Fails when the file cannot be read, is not a supported version or
+    /// contains invalid accounts, including immutable accounts without
+    /// `root` with uid 0.
     pub fn read(generation_dir: &Path) -> Result<Self> {
         let path = generation_dir.join(DECLARED_FILE);
         let bytes = fs::read(&path).map_err(io(&path))?;
@@ -157,6 +159,9 @@ impl Declared {
     /// system against the rules [`declare`] enforces, so that a damaged
     /// record cannot produce malformed databases or paths outside the root.
     fn check(&self) -> std::result::Result<(), String> {
+        if !self.mutable && !self.users.get("root").is_some_and(|user| user.uid == 0) {
+            return Err("immutable accounts require a root user with uid 0".into());
+        }
         for (name, user) in &self.users {
             if !valid_name(name) {
                 return Err(format!("invalid user name {name:?}"));
