@@ -6,8 +6,9 @@
 /// Paths are relative and separated by `/`. `*` matches any characters
 /// except `/`, `?` matches one character except `/`, `**` as a whole
 /// segment matches zero or more segments, and `{a,b}` matches either
-/// alternative. Matching is case sensitive and byte based. A glob that
-/// matches a directory matches everything below it.
+/// alternative, including nested groups such as `{a,{b,c}}`. Matching is
+/// case sensitive and byte based. A glob that matches a directory matches
+/// everything below it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Glob {
     /// The glob with every brace alternative expanded, split into segments.
@@ -46,12 +47,32 @@ fn expand(text: &str) -> Vec<String> {
     let Some(open) = text.find('{') else {
         return vec![text.to_owned()];
     };
-    let Some(close) = text[open..].find('}').map(|c| c + open) else {
+    let mut depth = 0;
+    let mut start = open + 1;
+    let mut alternatives = Vec::new();
+    let mut close = None;
+    for (at, byte) in text.bytes().enumerate().skip(start) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' if depth > 0 => depth -= 1,
+            b'}' => {
+                alternatives.push(&text[start..at]);
+                close = Some(at);
+                break;
+            }
+            b',' if depth == 0 => {
+                alternatives.push(&text[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
         return vec![text.to_owned()];
     };
     let (head, tail) = (&text[..open], &text[close + 1..]);
-    text[open + 1..close]
-        .split(',')
+    alternatives
+        .into_iter()
         .flat_map(|alt| expand(&format!("{head}{alt}{tail}")))
         .collect()
 }

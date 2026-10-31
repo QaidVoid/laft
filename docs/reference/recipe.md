@@ -174,6 +174,8 @@ Phase replacements, hooks and the start directory.
 
 An explicit subpackage. Block label: the suffix.
 
+Glob patterns are relative to the payload root. `*` and `?` stay within a path segment, and a whole `**` segment matches any number of segments. Brace alternatives may nest: `usr/{lib,{libexec,share}}/**` matches all three directories. An unclosed brace group is literal. Matching a directory includes its descendants. These rules also apply to ownership and dependency-exclusion patterns.
+
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `summary` | `Option<Str>` |  | none: the package summary followed by the suffix in parentheses. |

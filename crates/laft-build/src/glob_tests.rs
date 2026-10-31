@@ -39,3 +39,38 @@ fn a_glob_matching_a_directory_matches_its_contents() {
     assert!(glob.matches("etc/ssl/certs/ca.pem"));
     assert!(!glob.matches("etc/ssl2"));
 }
+
+#[test]
+fn nested_braces_match_all_alternatives_without_stray_braces() {
+    for pattern in ["usr/{a,{b,c}}/**", "usr/{{a,b},c}/**"] {
+        let glob = Glob::new(pattern);
+        for directory in ["a", "b", "c"] {
+            assert!(glob.matches(&format!("usr/{directory}/file")), "{pattern}");
+        }
+        for directory in ["a}", "c}", "b,c}", "d"] {
+            assert!(!glob.matches(&format!("usr/{directory}/file")), "{pattern}");
+        }
+    }
+}
+
+#[test]
+fn nested_and_adjacent_groups_keep_their_prefixes_and_suffixes() {
+    let glob = Glob::new("usr/{lib,{libexec,share}}/tool{,{-dbg,-doc}}");
+    for directory in ["lib", "libexec", "share"] {
+        for suffix in ["", "-dbg", "-doc"] {
+            assert!(glob.matches(&format!("usr/{directory}/tool{suffix}")));
+        }
+    }
+    assert!(!glob.matches("usr/bin/tool"));
+    assert!(!glob.matches("usr/share/tool-debug"));
+}
+
+#[test]
+fn unclosed_brace_groups_are_literal() {
+    for pattern in ["usr/{a,b", "usr/{a,{b,c}/file"] {
+        let glob = Glob::new(pattern);
+        assert!(glob.matches(pattern));
+        assert!(!glob.matches("usr/a"));
+        assert!(!glob.matches("usr/b/file"));
+    }
+}
