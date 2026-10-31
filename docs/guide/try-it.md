@@ -276,4 +276,11 @@ The test gives the guest a virtio NIC on restricted QEMU user networking. Only D
 - Git committing and cloning the content over SSH and HTTPS;
 - curl fetching HTTP and HTTPS, replaying cookies and rejecting an untrusted certificate.
 
-To explore the kept usable image with ordinary outbound networking, use the manual QEMU command above but replace `-nic none` with `-nic user,model=virtio-net-pci`. Keep the root password confined to a disposable VM. The acceptance harness deletes its host-side credentials after the test, so configure your own non-root account's SSH keys before adding an SSH port forward.
+To explore the kept usable image with ordinary outbound networking, use the manual QEMU command above but replace `-nic none` with:
+
+```sh
+-netdev user,id=usable \
+-device virtio-net-pci,netdev=usable,mac=52:54:00:12:34:56,addr=0x3
+```
+
+Keep the NIC in that fixed PCI slot so the disk's firmware device path stays unchanged. Keep the root password confined to a disposable VM. The acceptance harness deletes its host-side credentials after the test, so configure your own non-root account's SSH keys before adding an SSH port forward.

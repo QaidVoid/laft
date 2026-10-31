@@ -95,8 +95,10 @@ credentials. Host command labels omit arguments and environment values.
 Fixture keys, certificates and host processes are removed on success or
 failure. A kept disk intentionally contains only its disposable guest
 keys and synthetic account, not host credentials. Do not reuse that
-image as a real system. As with failed baseline runs, a failure retains
-the diagnostic image and serial logs for inspection.
+image as a real system. When booting a kept usable image manually, keep
+its NIC at PCI addr=0x3 so adding it does not move the disk's firmware
+device path. As with failed baseline runs, a failure retains the diagnostic
+image and serial logs for inspection.
 
 laft-boot
 
