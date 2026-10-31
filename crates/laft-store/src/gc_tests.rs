@@ -268,6 +268,92 @@ fn retire_removes_symlinks_without_touching_their_targets() {
     crate::fsx::retire(&trash, &trash).expect("a missing path is fine");
 }
 
+#[test]
+fn a_session_locked_record_is_removed_and_reads_nlink_zero() {
+    let env = Env::new();
+    let tool = Pkg::new("tool", "1").file("usr/bin/tool", b"t").build(&env);
+    {
+        let lock = env.lock();
+        apply(&lock, &[&tool], Some("dev")).expect("generation 1 with dev@1");
+        apply(&lock, &[&tool], Some("dev")).expect("generation 2 with dev@2");
+    }
+    let version_dir = env.root.view_dir(&name("dev"), 1);
+    let view_json = version_dir.join("view.json");
+    let session = File::open(&view_json).expect("view.json exists");
+    rustix::fs::flock(&session, FlockOperation::LockShared).expect("can lock");
+
+    // Collection deletes the record without waiting for the session, whose
+    // descriptor keeps the inode alive.
+    let scratch = laft_test::tempdir();
+    crate::fsx::retire(&version_dir, &scratch.path().join("trash"))
+        .expect("the record is removed despite the session");
+    let stat = rustix::fs::fstat(&session).expect("the descriptor still works");
+    assert_eq!(stat.st_nlink, 0, "the session refuses the record");
+    drop(session);
+    crate::fsx::retire(&version_dir, &scratch.path().join("trash"))
+        .expect("a missing record is fine");
+}
+
+#[test]
+fn a_busy_second_view_aborts_and_releases_the_locks_taken() {
+    let env = Env::new();
+    let tool = Pkg::new("tool", "1").file("usr/bin/tool", b"t").build(&env);
+    {
+        let lock = env.lock();
+        apply(&lock, &[&tool], Some("dev")).expect("generation 1 with dev@1");
+        apply(&lock, &[&tool], Some("dev")).expect("generation 2 with dev@2");
+        apply(&lock, &[&tool], Some("lab")).expect("generation 3 with lab@1");
+        apply(&lock, &[&tool], Some("lab")).expect("generation 4 with lab@2");
+    }
+    let lock = env.lock();
+    let policy = GcPolicy {
+        keep_generations: 1,
+        keep_days: 0,
+    };
+    let plan = plan_gc(&lock, &policy, SystemTime::now()).expect("plans");
+    assert_eq!(
+        deleted(plan.decisions()),
+        [
+            "gen 3",
+            "gen 2",
+            "gen 1",
+            "view dev@1",
+            "view dev@2",
+            "view lab@1"
+        ]
+    );
+
+    let session =
+        File::open(env.root.view_dir(&name("dev"), 2).join("view.json")).expect("view.json exists");
+    rustix::fs::flock(&session, FlockOperation::LockShared).expect("can lock");
+    let error = plan
+        .execute(&lock)
+        .expect_err("the busy view aborts the collection");
+    assert!(
+        matches!(&error, crate::Error::Invalid(m) if m.contains("view dev@2")),
+        "{error}"
+    );
+
+    // The lock taken for dev@1 was released with the abort.
+    let probe =
+        File::open(env.root.view_dir(&name("dev"), 1).join("view.json")).expect("view.json exists");
+    rustix::fs::flock(&probe, FlockOperation::NonBlockingLockExclusive)
+        .expect("dev@1 was released");
+    drop(probe);
+
+    assert_eq!(env.root.generations().expect("lists"), vec![1, 2, 3, 4]);
+    assert!(env.root.view_dir(&name("dev"), 1).exists());
+    assert!(env.root.view_dir(&name("dev"), 2).exists());
+    assert!(env.root.view_dir(&name("lab"), 1).exists());
+    assert_consistent(&env.root);
+
+    drop(session);
+    plan.execute(&lock).expect("collects once the session left");
+    assert_eq!(env.root.generations().expect("lists"), vec![4]);
+    assert!(fs::symlink_metadata(env.root.views_dir().join("dev")).is_err());
+    assert_consistent(&env.root);
+}
+
 /// Replaces the content of a sealed record file and returns the old bytes.
 fn overwrite(path: &std::path::Path, content: &[u8]) -> Vec<u8> {
     use std::os::unix::fs::PermissionsExt;
