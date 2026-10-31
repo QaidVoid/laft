@@ -152,6 +152,9 @@ pub struct Sandbox {
     build: PathBuf,
     out: PathBuf,
     network: Network,
+    /// The pipe of a jobserver, bound into every command at
+    /// `/build/jobserver`.
+    jobserver: Option<PathBuf>,
 }
 
 impl Sandbox {
@@ -170,12 +173,20 @@ impl Sandbox {
             build: build.into(),
             out: out.into(),
             network: Network::Isolated,
+            jobserver: None,
         }
     }
 
     /// Chooses how commands reach the network.
     pub fn network(mut self, network: Network) -> Self {
         self.network = network;
+        self
+    }
+
+    /// Binds the named pipe at `path` into every command as
+    /// `/build/jobserver`, where a build that joins a jobserver finds it.
+    pub fn jobserver(mut self, path: impl Into<PathBuf>) -> Self {
+        self.jobserver = Some(path.into());
         self
     }
 
@@ -379,6 +390,8 @@ struct BuildRoot {
     build: CString,
     out: CString,
     host_etc: bool,
+    /// The pipe of a jobserver, bound at `/build/jobserver`.
+    jobserver: Option<CString>,
 }
 
 pub(crate) type Failure = (Step, Errno);
@@ -412,6 +425,7 @@ impl Setup {
                     build: resolve(&sandbox.build)?,
                     out: resolve(&sandbox.out)?,
                     host_etc: sandbox.network == Network::Host,
+                    jobserver: sandbox.jobserver.as_deref().map(resolve).transpose()?,
                 });
                 (root, 0, true)
             }
@@ -544,7 +558,22 @@ impl BuildRoot {
         attach(&view, &root, c"usr")?;
         attach(&build, &root, c"build")?;
         attach(&out, &root, c"out")?;
-
+        if let Some(jobserver) = &self.jobserver {
+            // The mount point of the pipe has to exist inside the tree, so
+            // the child makes an empty file there first and binds the pipe
+            // over it.
+            drop(
+                rustix::fs::openat(
+                    &build,
+                    c"jobserver",
+                    OFlags::WRONLY | OFlags::CREATE | OFlags::CLOEXEC,
+                    Mode::from_raw_mode(0o600),
+                )
+                .map_err(fail(Step::Jobserver))?,
+            );
+            let fifo = clone_tree(jobserver, nosuid)?;
+            attach(&fifo, &build, c"jobserver")?;
+        }
         let proc = fresh_mount(c"proc", None, nosuid | MountAttrFlags::MOUNT_ATTR_NOEXEC)
             .map_err(fail(Step::MountProc))?;
         attach(&proc, &root, c"proc")?;

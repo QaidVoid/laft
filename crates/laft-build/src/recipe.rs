@@ -53,7 +53,8 @@ pub struct Recipe {
     /// The rendered phase scripts.
     pub phases: Phases,
     /// The environment of every phase, except `JOBS` and `MAKEFLAGS`, which
-    /// depend on the builder. [`Recipe::environment`] adds them.
+    /// depend on the job budget the builder gives the build and which its
+    /// environment adds.
     pub env: BTreeMap<String, String>,
     /// Switches of the build and of post-processing.
     pub options: BuildOptions,
@@ -129,18 +130,28 @@ impl Recipe {
         files.map(|f| f.blake3).collect()
     }
 
-    /// The complete environment of every phase for a builder that runs
-    /// `jobs` jobs in parallel: [`Recipe::env`] with `JOBS` and
-    /// `MAKEFLAGS`. A recipe that does not build in parallel gets one job.
-    pub fn environment(&self, jobs: u32) -> BTreeMap<String, String> {
-        let jobs = if self.options.parallel {
-            jobs.max(1)
-        } else {
-            1
-        };
+    /// The complete environment of every phase for a builder whose job
+    /// budget is `budget`: [`Recipe::env`] with `JOBS` and `MAKEFLAGS`. A
+    /// recipe that does not build in parallel gets one job and no
+    /// jobserver.
+    pub(crate) fn environment(&self, budget: env::Budget) -> BTreeMap<String, String> {
         let mut env = self.env.clone();
-        env.insert(env::JOBS.to_owned(), jobs.to_string());
-        env.insert(env::MAKEFLAGS.to_owned(), format!("-j{jobs}"));
+        let (jobs, makeflags) = if self.options.parallel {
+            (
+                budget.share.max(1).to_string(),
+                match budget.jobserver {
+                    true => format!(
+                        "-j{} --jobserver-auth=fifo:/build/jobserver",
+                        budget.jobs.max(1)
+                    ),
+                    false => format!("-j{}", budget.jobs.max(1)),
+                },
+            )
+        } else {
+            ("1".to_owned(), "-j1".to_owned())
+        };
+        env.insert(env::JOBS.to_owned(), jobs);
+        env.insert(env::MAKEFLAGS.to_owned(), makeflags);
         env
     }
 }

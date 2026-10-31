@@ -129,11 +129,15 @@ mod fsx;
 mod glob;
 mod graph;
 mod host;
+mod jobserver;
 mod loader;
 mod lock;
 mod plan;
 pub mod post;
 mod recipe;
+#[cfg(test)]
+#[path = "recipe_tests.rs"]
+mod recipe_tests;
 mod repo;
 mod repro;
 mod scheduler;

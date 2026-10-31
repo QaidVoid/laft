@@ -10,6 +10,7 @@ use laft_sandbox::terminated;
 
 use crate::BuildError;
 use crate::graph::Item;
+use crate::jobserver::Jobserver;
 
 /// How long a build without a record is expected to take.
 const DEFAULT_SECONDS: u64 = 60;
@@ -106,7 +107,9 @@ impl Scheduler {
     /// Runs the builds of `initial` with `build`, up to `workers` at once.
     /// `prepare` makes the data of one build as it starts, `settled`
     /// records a finished build and returns the builds it made necessary,
-    /// which join the run unless they already ran.
+    /// which join the run unless they already ran. When a build joins a
+    /// `jobserver`, the pipe is drained and refilled whenever no build
+    /// runs, which restores the tokens a killed build lost.
     ///
     /// Returns every build it built, in the order they finished.
     pub(crate) fn run<J, T>(
@@ -115,6 +118,7 @@ impl Scheduler {
         prepare: &mut dyn FnMut(&Item) -> J,
         build: &(dyn Fn(&Item, J) -> Result<T, BuildError> + Sync),
         settled: Settled<'_, T>,
+        jobserver: Option<&Jobserver>,
     ) -> Result<Vec<(Item, T)>, Failed>
     where
         J: Send,
@@ -168,6 +172,11 @@ impl Scheduler {
                     break;
                 };
                 self.running.remove(&item);
+                if self.running.is_empty()
+                    && let Some(jobserver) = jobserver
+                {
+                    jobserver.refill();
+                }
                 match result {
                     Ok(outcome) => {
                         match settled(&item, &outcome) {

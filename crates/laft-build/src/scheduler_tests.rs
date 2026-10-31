@@ -66,6 +66,7 @@ fn a_build_starts_after_the_builds_it_waits_for() {
                 Ok(())
             },
             &mut |_, _| Ok(Vec::new()),
+            None,
         )
         .expect("the run builds");
     let seen = seen.lock().unwrap().clone();
@@ -115,6 +116,7 @@ fn no_more_builds_run_than_workers() {
                 Ok(format!("built {item}"))
             },
             &mut |_, _| Ok(Vec::new()),
+            None,
         )
         .expect("the run builds");
     assert_eq!(built.len(), 4);
@@ -144,6 +146,7 @@ fn the_build_with_the_longest_chain_ahead_starts_first() {
                 Ok(())
             },
             &mut |_, _| Ok(Vec::new()),
+            None,
         )
         .expect("the run builds");
     assert_eq!(
@@ -173,6 +176,7 @@ fn a_failure_stops_the_builds_that_wait_for_it() {
                 _ => Ok(format!("built {item}")),
             },
             &mut |_, _| Ok(Vec::new()),
+            None,
         )
         .expect_err("the run fails");
     let Failed::Build { item, error } = built else {
@@ -201,6 +205,7 @@ fn the_first_failure_in_plan_order_is_reported() {
                 Err(BuildError::problem("B040", format!("{item} failed")))
             },
             &mut |_: &Item, _: &()| Ok(Vec::new()),
+            None,
         )
         .expect_err("the run fails");
     let Failed::Build { item, error } = failed else {
@@ -231,6 +236,7 @@ fn a_finished_build_makes_its_dependents_join_the_run() {
                     Ok(Vec::new())
                 }
             },
+            None,
         )
         .expect("the run builds");
     let x = Item::new("x".parse().unwrap(), Variant::Dynamic);

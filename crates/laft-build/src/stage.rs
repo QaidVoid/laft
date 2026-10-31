@@ -467,6 +467,7 @@ fn run_steps(
     builder.workers = options.workers;
     builder.timeout = options.timeout;
     builder.mirrors = options.mirrors.clone();
+    builder.share_jobs()?;
     if let Some(root) = &options.root {
         builder.search = stage.path.iter().map(|p| root.join(p)).collect();
     }
@@ -808,7 +809,11 @@ impl StageRun<'_> {
                 (item.clone(), seconds)
             })
             .collect();
-        let workers = self.options.workers;
+        let workers = self
+            .options
+            .workers
+            .max(1)
+            .min(usize::try_from(self.builder.jobs.max(1)).unwrap_or(usize::MAX));
         let mut scheduler = Scheduler::new(items.clone(), deps, durations, workers);
         let built = scheduler.run(
             items,
@@ -852,6 +857,7 @@ impl StageRun<'_> {
                 Ok(built)
             },
             &mut |_, _| Ok(Vec::new()),
+            self.builder.jobserver.as_ref(),
         );
         let built = match built {
             Ok(built) => built,

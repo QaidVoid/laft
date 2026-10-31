@@ -13,9 +13,11 @@ use laft_pkg::Compression;
 use laft_store::Store;
 
 use crate::db::{Db, Stored};
+use crate::env::Budget;
 use crate::error::{BuildError, Warning, io};
 use crate::exec::{DEFAULT_TIMEOUT, Executor};
 use crate::fsx::{self, Kind};
+use crate::jobserver::Jobserver;
 use crate::post::{self, Package};
 use crate::scheduler::{Failed, Scheduler};
 use crate::view::{self, BuildView, StoreEntry};
@@ -268,6 +270,9 @@ pub struct Builder<'a> {
     /// before the root's `usr/bin`, as [`Executor::search_first`]
     /// describes.
     pub search: Vec<PathBuf>,
+    /// The jobserver whose pipe every build binds at `/build/jobserver`,
+    /// or `None` when the builds of this builder run without one.
+    pub(crate) jobserver: Option<Jobserver>,
 }
 
 impl<'a> Builder<'a> {
@@ -295,7 +300,60 @@ impl<'a> Builder<'a> {
             add_to_store: true,
             pinned_view: None,
             search: Vec::new(),
+            jobserver: None,
         }
+    }
+
+    /// Gives every build of this builder a share of its job budget
+    /// through a jobserver, whose pipe holds `jobs - workers` tokens
+    /// beyond the one every running build holds. A builder that does not
+    /// build into the store keeps running without one, because its builds
+    /// install into a system under construction and run one at a time.
+    ///
+    /// The workers are never more than the jobs.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the pipe of the jobserver cannot be created.
+    pub fn share_jobs(&mut self) -> Result<(), BuildError> {
+        if !matches!(self.mode, Mode::Store) || self.jobserver.is_some() {
+            return Ok(());
+        }
+        let jobs = usize::try_from(self.jobs.max(1)).unwrap_or(usize::MAX);
+        self.workers = self.workers.max(1).min(jobs);
+        let path = self.work.join("jobserver");
+        self.jobserver = Some(
+            Jobserver::open(&self.work, jobs - self.workers)
+                .map_err(|error| BuildError::Io { path, error })?,
+        );
+        Ok(())
+    }
+
+    /// The job budget a build whose executor is `exec` sees: the whole
+    /// budget for `MAKEFLAGS`, the share of the builds that may run at
+    /// once for `JOBS`, and the jobserver when the executor joins one. A
+    /// build that runs alone, such as one that installs into a system
+    /// under construction, sees the whole budget.
+    pub(crate) fn budget(&self, exec: &Executor) -> Budget {
+        let jobs = self.jobs.max(1);
+        let alone = matches!(self.mode, Mode::Bootstrap(_)) || !exec.is_sandboxed();
+        let workers = match alone {
+            true => 1,
+            false => self.workers.max(1),
+        };
+        let share = (jobs / u32::try_from(workers).unwrap_or(u32::MAX)).max(1);
+        Budget {
+            jobs,
+            share,
+            jobserver: exec.joins_jobserver(),
+        }
+    }
+
+    /// The environment of the build of `recipe` whose phases `exec` runs:
+    /// the environment of the recipe with the `JOBS` and `MAKEFLAGS` of
+    /// the budget the build sees.
+    pub fn environment(&self, recipe: &Recipe, exec: &Executor) -> BTreeMap<String, String> {
+        recipe.environment(self.budget(exec))
     }
 
     /// The build key inputs of `recipe`. In [`Mode::Store`] they come from
@@ -502,6 +560,7 @@ impl<'a> Builder<'a> {
                 };
                 Ok(made)
             },
+            self.jobserver.as_ref(),
         );
         match run {
             Ok(built) => Ok(built.into_iter().map(|(_, outcome)| outcome).collect()),
@@ -602,7 +661,7 @@ impl<'a> Builder<'a> {
             .search_first(self.search.clone())
             .timeout(self.timeout)
             .shell(recipe.shell);
-        session.env = env::install(recipe.environment(self.jobs));
+        session.env = env::install(recipe.environment(self.budget(&session.exec)));
         let record = installed_record(dest, &Item::of(recipe));
         forget_key(&record)?;
         self.phases(&session, recipe, None)?;
@@ -714,7 +773,7 @@ impl<'a> Builder<'a> {
             _ => None,
         };
         let exec = self.executor(recipe, &key_hash);
-        let env = recipe.environment(self.jobs);
+        let env = recipe.environment(self.budget(&exec));
         for vendor in &recipe.vendors {
             let what = format!("{} {}", recipe.name, recipe.version);
             let file = crate::vendor::vendor(&what, vendor, &exec, &env, &out, self.sources)?;
@@ -750,7 +809,8 @@ impl<'a> Builder<'a> {
 
     /// The executor of the build of `recipe` with the build key `key`, for
     /// its working tree as [`Builder::session`] lays it out. It can enter
-    /// the tree a failed build left behind.
+    /// the tree a failed build left behind. A sandboxed executor joins the
+    /// jobserver of the builder, when there is one.
     pub fn executor(&self, recipe: &Recipe, key: &Blake3Hash) -> Executor {
         let dir = self.work_dir(key);
         let (build, out) = (dir.join("build"), dir.join("out"));
@@ -766,7 +826,12 @@ impl<'a> Builder<'a> {
                 Executor::direct(root, build, out, logs).search_first(self.search.clone())
             }
         };
-        exec.timeout(self.timeout).shell(recipe.shell)
+        match self.jobserver.as_ref() {
+            Some(jobserver) if exec.is_sandboxed() => exec.jobserver(jobserver.path()),
+            _ => exec,
+        }
+        .timeout(self.timeout)
+        .shell(recipe.shell)
     }
 
     /// Copies the recipe directory and the `common/` directory of every

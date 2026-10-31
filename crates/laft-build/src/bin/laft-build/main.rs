@@ -445,6 +445,7 @@ fn build(
     let recipes = recipes(cx, packages)?;
     let mut builder = builder(cx, Mode::Store, Some(options));
     builder.keep_work = keep_work;
+    builder.share_jobs()?;
     let forced = if planning.rebuild {
         recipes.iter().map(Item::of).collect()
     } else {
@@ -518,9 +519,8 @@ fn build(
                 .filter(|key| builder.work_dir(key).is_dir());
             if let Some(key) = key {
                 eprintln!("opening a shell in the sandbox of {item}; exit it to continue");
-                let shell = builder
-                    .executor(recipe, &key)
-                    .interactive(&recipe.environment(builder.jobs));
+                let exec = builder.executor(recipe, &key);
+                let shell = exec.interactive(&builder.environment(recipe, &exec));
                 if let Err(shell) = shell {
                     eprintln!("laft-build: cannot open the shell: {shell}");
                 }

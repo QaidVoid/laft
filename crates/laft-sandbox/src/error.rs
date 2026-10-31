@@ -67,6 +67,7 @@ steps! {
     InvalidBindName => "expecting a plain file name below /run, got",
     Loopback => "bringing up the loopback interface",
     Session => "starting a session",
+    Jobserver => "binding the jobserver pipe into /build",
 }
 
 impl Step {

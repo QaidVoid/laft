@@ -590,3 +590,45 @@ fn a_command_leads_a_session_of_its_own_without_a_terminal() {
     };
     assert_eq!(stdout(&output), "1\nnone\n", "{output:?}");
 }
+
+#[test]
+fn the_pipe_of_a_jobserver_waits_at_build_jobserver() {
+    let dir = laft_test::tempdir();
+    std::fs::create_dir(dir.path().join("build")).unwrap();
+    std::fs::create_dir(dir.path().join("out")).unwrap();
+    let pipe = dir.path().join("jobserver");
+    rustix::fs::mkfifoat(
+        rustix::fs::CWD,
+        &pipe,
+        rustix::fs::Mode::from_raw_mode(0o666),
+    )
+    .unwrap();
+    let flags = rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::NONBLOCK;
+    let _read = rustix::fs::open(
+        &pipe,
+        flags | rustix::fs::OFlags::RDONLY,
+        rustix::fs::Mode::empty(),
+    )
+    .unwrap();
+    let _write = rustix::fs::open(
+        &pipe,
+        flags | rustix::fs::OFlags::WRONLY,
+        rustix::fs::Mode::empty(),
+    )
+    .unwrap();
+    rustix::io::write(&_write, b"\n").unwrap();
+    let sandbox =
+        Sandbox::new("/usr", dir.path().join("build"), dir.path().join("out")).jobserver(&pipe);
+    let Some(output) = supported(
+        sandbox
+            .command("/usr/bin/sh")
+            .arg("-c")
+            .arg("test -p /build/jobserver && read -r token < /build/jobserver && printf read-ok")
+            .stdin(Stdio::null())
+            .output(),
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(stdout(&output), "read-ok");
+}

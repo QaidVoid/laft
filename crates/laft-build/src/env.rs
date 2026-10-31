@@ -14,6 +14,18 @@ pub(crate) const JOBS: &str = "JOBS";
 /// `-j` with the number of parallel jobs, set by the builder.
 pub(crate) const MAKEFLAGS: &str = "MAKEFLAGS";
 
+/// The share of the job budget of a run that one build sees.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Budget {
+    /// The budget of the whole run, which `MAKEFLAGS` names so that the
+    /// build systems that join a jobserver can use the whole of it.
+    pub(crate) jobs: u32,
+    /// The part of the budget this build starts with, `$JOBS`.
+    pub(crate) share: u32,
+    /// Whether the pipe of a jobserver waits at `/build/jobserver`.
+    pub(crate) jobserver: bool,
+}
+
 /// `SOURCE_DATE_EPOCH`: 1980-01-01T00:00:00Z, the earliest time ZIP based
 /// formats can represent.
 pub const SOURCE_DATE_EPOCH: u64 = 315_532_800;

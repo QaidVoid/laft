@@ -60,6 +60,9 @@ pub struct Executor {
     search: Vec<PathBuf>,
     shell: Shell,
     peak: Arc<AtomicU64>,
+    /// The pipe of the jobserver the build joins, or `None` when it runs
+    /// without one.
+    jobserver: Option<PathBuf>,
 }
 
 impl Executor {
@@ -80,6 +83,7 @@ impl Executor {
             search: Vec::new(),
             shell: Shell::Sh,
             peak: Arc::new(AtomicU64::new(0)),
+            jobserver: None,
         }
     }
 
@@ -101,6 +105,7 @@ impl Executor {
             search: Vec::new(),
             shell: Shell::Sh,
             peak: Arc::new(AtomicU64::new(0)),
+            jobserver: None,
         }
     }
 
@@ -114,6 +119,20 @@ impl Executor {
     pub fn shell(mut self, shell: Shell) -> Self {
         self.shell = shell;
         self
+    }
+
+    /// Makes the build join the jobserver whose pipe is at `path`: a
+    /// sandboxed executor binds it at `/build/jobserver`. A direct
+    /// executor never joins, because a build that installs into a system
+    /// under construction runs alone.
+    pub fn jobserver(mut self, path: impl Into<PathBuf>) -> Self {
+        self.jobserver = Some(path.into());
+        self
+    }
+
+    /// Whether the build joins a jobserver.
+    pub(crate) fn joins_jobserver(&self) -> bool {
+        self.jobserver.is_some()
     }
 
     /// The shell program of a direct executor, from `<root>/usr/bin`
@@ -241,9 +260,7 @@ impl Executor {
     pub fn interactive(&self, env: &BTreeMap<String, String>) -> Result<ExitStatus, BuildError> {
         match &self.place {
             Place::Sandbox(view) => {
-                let command = Sandbox::new(view, &self.build, &self.out)
-                    .command(self.shell.program())
-                    .arg("-i");
+                let command = self.sandbox(view).command(self.shell.program()).arg("-i");
                 Ok(env.iter().fold(command, |c, (k, v)| c.env(k, v)).status()?)
             }
             Place::Direct(root) => {
@@ -260,6 +277,16 @@ impl Executor {
                     .status()
                     .map_err(io(&shell))
             }
+        }
+    }
+
+    /// The sandbox of a build whose `/usr` is `view`: its build and output
+    /// directories, and its jobserver when the build joins one.
+    fn sandbox(&self, view: &Path) -> Sandbox {
+        let sandbox = Sandbox::new(view, &self.build, &self.out);
+        match &self.jobserver {
+            Some(path) => sandbox.jobserver(path),
+            None => sandbox,
         }
     }
 
@@ -280,7 +307,8 @@ impl Executor {
         let err = log.try_clone().map_err(io(&log_path))?;
         let child = match &self.place {
             Place::Sandbox(view) => {
-                let command = Sandbox::new(view, &self.build, &self.out)
+                let command = self
+                    .sandbox(view)
                     .network(network)
                     .command(self.shell.program())
                     .arg("-c")
