@@ -19,7 +19,8 @@ use crate::exec::{DEFAULT_TIMEOUT, Executor};
 use crate::fsx::{self, Kind};
 use crate::jobserver::Jobserver;
 use crate::post::{self, Package};
-use crate::scheduler::{Failed, Scheduler};
+use crate::recipe::Runner;
+use crate::scheduler::{DEFAULT_MEMORY, Failed, Memory, Scheduler};
 use crate::view::{self, BuildView, StoreEntry};
 use crate::{
     BuildGraph, BuildRecord, Buildinfo, BuildinfoHost, Built, Cutoff, Fetch, Item, KeyInputs,
@@ -187,6 +188,14 @@ pub enum Event<'a> {
         /// What it means for the dependents.
         cutoff: &'a Cutoff,
     },
+    /// A build waits for the memory of the host, which no other build
+    /// uses.
+    Waiting {
+        /// The memory the build waits for, in bytes.
+        needed: u64,
+        /// The memory the host holds, in bytes.
+        available: u64,
+    },
 }
 
 /// A run that stopped because a build failed or the process was asked to
@@ -251,6 +260,9 @@ pub struct Builder<'a> {
     pub jobs: u32,
     /// The number of builds of one run that may run at once.
     pub workers: usize,
+    /// The memory, in bytes, that a build whose runner wants the host to
+    /// itself waits for when it has no record of what it needed before.
+    pub min_available: u64,
     /// Whether check phases run.
     pub check: bool,
     /// Whether working trees are kept after a successful build.
@@ -293,6 +305,7 @@ impl<'a> Builder<'a> {
             mirrors: Vec::new(),
             jobs: u32::try_from(jobs).unwrap_or(u32::MAX),
             workers: 1,
+            min_available: DEFAULT_MIN_AVAILABLE,
             check: true,
             keep_work: false,
             timeout: DEFAULT_TIMEOUT,
@@ -438,9 +451,11 @@ impl<'a> Builder<'a> {
     /// at once, and records each in `db`, so that unchanged outputs stop at
     /// once and changed ones mark the dependents they affect. The builds
     /// start in the order of the longest remaining chain, each once every
-    /// build it depends on has finished. After the first failure nothing
-    /// new starts, the builds that run finish, and the failure that comes
-    /// first in the plan order is reported.
+    /// build it depends on has finished, and only when the host holds the
+    /// memory they were seen to need. A build whose runner wants the host
+    /// to itself waits for the memory of an idle host. After the first
+    /// failure nothing new starts, the builds that run finish, and the
+    /// failure that comes first in the plan order is reported.
     ///
     /// The sources of every item that needs a build are fetched before the
     /// first one starts, so builds never race on the source cache and a
@@ -502,12 +517,34 @@ impl<'a> Builder<'a> {
             .iter()
             .map(|item| (item.clone(), schedule.duration(item)))
             .collect();
+        let memory_estimates: BTreeMap<Item, u64> = items
+            .iter()
+            .map(|item| (item.clone(), self.estimate(graph, schedule, item)))
+            .collect();
+        let memory_big: BTreeSet<Item> = items
+            .iter()
+            .filter(|item| {
+                graph
+                    .recipe(item)
+                    .is_some_and(|r| r.operations.ci.runner == Runner::Big)
+            })
+            .cloned()
+            .collect();
+        let memory = {
+            let progress = &progress;
+            Memory {
+                estimates: memory_estimates,
+                big: memory_big,
+                available: &|| available_memory(),
+                waiting: &|needed, available| progress(Event::Waiting { needed, available }),
+            }
+        };
         let initial: Vec<Item> = items
             .iter()
             .filter(|item| schedule.triggers(item).is_some())
             .cloned()
             .collect();
-        let mut scheduler = Scheduler::new(items, deps, durations, self.workers);
+        let mut scheduler = Scheduler::new(items, deps, durations, self.workers, memory);
         // The triggers of each build, which `settled` keeps current, so
         // that `prepare` reads them without holding the schedule.
         let triggers: std::cell::RefCell<BTreeMap<Item, BTreeSet<Trigger>>> =
@@ -568,10 +605,34 @@ impl<'a> Builder<'a> {
                 item: Some(item),
                 error,
             }),
+            Err(Failed::Memory(error)) => Err(BuildFailure {
+                item: None,
+                error: Box::new(error),
+            }),
             Err(Failed::Interrupted) => Err(BuildFailure {
                 item: None,
                 error: Box::new(BuildError::interrupted()),
             }),
+        }
+    }
+
+    /// What building `item` is expected to need, in bytes: the peak memory
+    /// of its latest build, or a share of the host when it never ran. A
+    /// recipe whose runner wants the host to itself gets all of
+    /// [`Builder::min_available`], and any other gets
+    /// [`DEFAULT_MEMORY`].
+    fn estimate(&self, graph: &BuildGraph, schedule: &Schedule, item: &Item) -> u64 {
+        match schedule.peak_memory(item) {
+            0 => {
+                let big = graph
+                    .recipe(item)
+                    .is_some_and(|r| r.operations.ci.runner == Runner::Big);
+                match big {
+                    true => self.min_available,
+                    false => DEFAULT_MEMORY,
+                }
+            }
+            peak => peak,
         }
     }
 
@@ -1069,6 +1130,10 @@ const INSTALLED: &str = "var/lib/laft-build/installed";
 /// bare build key line, which [`read_key`] still reads.
 const KEY_RECORD_FORMAT: u32 = 1;
 
+/// What a recipe whose runner wants the host to itself waits for when it
+/// has never run: six gibibytes.
+const DEFAULT_MIN_AVAILABLE: u64 = 6 << 30;
+
 /// A record of a build key, written as one line of JSON.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct KeyRecord {
@@ -1191,6 +1256,29 @@ fn read_only(dir: &Path) -> Result<(), BuildError> {
         }
     }
     Ok(())
+}
+
+/// The memory the host holds for new work, from `MemAvailable` in
+/// `/proc/meminfo`.
+///
+/// # Errors
+///
+/// Fails with `B044` when `/proc/meminfo` cannot be read or names no
+/// `MemAvailable`.
+pub(crate) fn available_memory() -> Result<u64, BuildError> {
+    let path = Path::new("/proc/meminfo");
+    let text = fs::read_to_string(path).map_err(io(path))?;
+    text.lines()
+        .find_map(|line| line.strip_prefix("MemAvailable:"))
+        .and_then(|rest| {
+            rest.trim()
+                .trim_end_matches("kB")
+                .trim()
+                .parse::<u64>()
+                .ok()
+        })
+        .map(|kib| kib * 1024)
+        .ok_or_else(|| BuildError::problem("B044", "/proc/meminfo has no MemAvailable line"))
 }
 
 /// The release of the running kernel.

@@ -470,6 +470,13 @@ fn build(
             let triggers: Vec<String> = triggers.iter().map(ToString::to_string).collect();
             eprintln!("building {item} ({})", triggers.join(", "));
         }
+        Event::Waiting { needed, available } => {
+            eprintln!(
+                "waiting for memory: {} MiB available, {} MiB needed",
+                available >> 20,
+                needed >> 20
+            );
+        }
         Event::Done {
             item,
             outcome,

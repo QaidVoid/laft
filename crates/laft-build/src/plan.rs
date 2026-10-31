@@ -362,6 +362,14 @@ impl Schedule {
         self.previous.get(item).map_or(0, |record| record.seconds)
     }
 
+    /// The peak memory of the latest build of `item`, in bytes, or 0 when
+    /// it has no record.
+    pub(crate) fn peak_memory(&self, item: &Item) -> u64 {
+        self.previous
+            .get(item)
+            .map_or(0, |record| record.peak_memory)
+    }
+
     /// The next item to build, or `None` when the run is complete. Items
     /// that are up to date are skipped.
     pub fn next_build(&mut self) -> Option<Item> {

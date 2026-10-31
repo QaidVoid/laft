@@ -16,12 +16,12 @@ use laft_sandbox::RootSandbox;
 use serde::Deserialize;
 use stav::{AttrPath, ImportRoot, Limits, RootSpec};
 
-use crate::build::{forget_key, installed_record, problems, read_key, write_key};
+use crate::build::{available_memory, forget_key, installed_record, problems, read_key, write_key};
 use crate::error::{BuildError, io};
 use crate::exec::{Executor, tail, wait};
 use crate::graph::BuildGraph;
 use crate::loader::Scope;
-use crate::scheduler::{Failed, Scheduler};
+use crate::scheduler::{DEFAULT_MEMORY, Failed, Memory, Scheduler};
 use crate::{
     BuildRoot, Builder, Error, Item, KeyInputs, Mode, Problem, Recipe, Repos, Runner, SourceCache,
     fsx, host, installed, repo, schema, view,
@@ -596,24 +596,6 @@ fn check_static(program: &Path) -> Result<(), BuildError> {
     ))
 }
 
-/// The available memory of the host, from `MemAvailable` in
-/// `/proc/meminfo`.
-fn available_memory() -> Result<u64, BuildError> {
-    let path = Path::new("/proc/meminfo");
-    let text = fs::read_to_string(path).map_err(io(path))?;
-    text.lines()
-        .find_map(|line| line.strip_prefix("MemAvailable:"))
-        .and_then(|rest| {
-            rest.trim()
-                .trim_end_matches("kB")
-                .trim()
-                .parse::<u64>()
-                .ok()
-        })
-        .map(|kib| kib * 1024)
-        .ok_or_else(|| BuildError::problem("B044", "/proc/meminfo has no MemAvailable line"))
-}
-
 /// What the steps of one run share.
 struct StageRun<'a> {
     stage: &'a Stage,
@@ -751,6 +733,9 @@ impl StageRun<'_> {
                 progress(finished(&step.name, &what, state, Duration::ZERO));
                 continue;
             }
+            if recipe.operations.ci.runner == Runner::Big {
+                self.wait_for_memory(progress)?;
+            }
             forget_key(&record)?;
             self.package(step, tag, recipe, &inputs, progress)?;
             write_key(&record, &done)?;
@@ -798,6 +783,30 @@ impl StageRun<'_> {
             })
             .collect();
         let db = self.build_root.db();
+        let mut big = BTreeSet::new();
+        let estimates: BTreeMap<Item, u64> = items
+            .iter()
+            .map(|item| {
+                let recipe = graph
+                    .recipe(item)
+                    .expect("the graph holds every recipe of the step");
+                let wants = recipe.operations.ci.runner == Runner::Big;
+                if wants {
+                    big.insert(item.clone());
+                }
+                let peak = db
+                    .latest(item)
+                    .ok()
+                    .flatten()
+                    .map_or(0, |latest| latest.record.peak_memory);
+                let estimate = match peak {
+                    0 if wants => self.options.min_available,
+                    0 => DEFAULT_MEMORY,
+                    peak => peak,
+                };
+                (item.clone(), estimate)
+            })
+            .collect();
         let durations: BTreeMap<Item, u64> = items
             .iter()
             .map(|item| {
@@ -814,7 +823,13 @@ impl StageRun<'_> {
             .workers
             .max(1)
             .min(usize::try_from(self.builder.jobs.max(1)).unwrap_or(usize::MAX));
-        let mut scheduler = Scheduler::new(items.clone(), deps, durations, workers);
+        let memory = Memory {
+            estimates,
+            big,
+            available: &|| available_memory(),
+            waiting: &|needed, available| progress(StageEvent::Waiting { available, needed }),
+        };
+        let mut scheduler = Scheduler::new(items.clone(), deps, durations, workers, memory);
         let built = scheduler.run(
             items,
             &mut |_: &Item| (),
@@ -862,6 +877,7 @@ impl StageRun<'_> {
         let built = match built {
             Ok(built) => built,
             Err(Failed::Build { error, .. }) => return Err(*error),
+            Err(Failed::Memory(error)) => return Err(error),
             Err(Failed::Interrupted) => return Err(BuildError::interrupted()),
         };
         let keys: BTreeMap<Item, String> = built.into_iter().collect();
@@ -893,9 +909,6 @@ impl StageRun<'_> {
     ) -> Result<(), BuildError> {
         let item = Item::of(recipe);
         let what = item.to_string();
-        if recipe.operations.ci.runner == Runner::Big {
-            self.wait_for_memory(progress)?;
-        }
         progress(StageEvent::Start {
             step: &step.name,
             what: &what,

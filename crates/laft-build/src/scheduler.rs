@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::panic::AssertUnwindSafe;
 use std::sync::Mutex;
 use std::sync::mpsc;
+use std::time::Duration;
 
 use laft_sandbox::terminated;
 
@@ -14,6 +15,31 @@ use crate::jobserver::Jobserver;
 
 /// How long a build without a record is expected to take.
 const DEFAULT_SECONDS: u64 = 60;
+
+/// What a build without a record is expected to need: one gibibyte.
+pub(crate) const DEFAULT_MEMORY: u64 = 1 << 30;
+
+/// The memory a build keeps free for the builds that run with it.
+const RESERVE: u64 = 2 << 30;
+
+/// How long a wait for memory lasts before the host is checked again.
+const MEMORY_WAIT: Duration = Duration::from_secs(60);
+
+/// The memory the builds of one run may claim, which decides which of the
+/// ready ones starts.
+pub(crate) struct Memory<'a> {
+    /// What each build is expected to need, in bytes: the peak memory of
+    /// its latest build, or a default when it never ran.
+    pub estimates: BTreeMap<Item, u64>,
+    /// The builds whose recipe names a runner that wants the host to
+    /// itself.
+    pub big: BTreeSet<Item>,
+    /// The memory the host holds for new work, in bytes.
+    pub available: &'a (dyn Fn() -> Result<u64, BuildError> + Sync),
+    /// Announces a build that waits for the memory of a host that no
+    /// build uses.
+    pub waiting: &'a (dyn Fn(u64, u64) + Sync),
+}
 
 /// Why a run ended before its last build.
 #[derive(Debug)]
@@ -26,6 +52,8 @@ pub(crate) enum Failed {
         /// What went wrong.
         error: Box<BuildError>,
     },
+    /// The memory of the host could not be read.
+    Memory(BuildError),
     /// The process was asked to stop.
     Interrupted,
 }
@@ -41,7 +69,7 @@ pub(crate) type Settled<'a, T> = &'a mut dyn FnMut(&Item, &T) -> Result<Vec<Item
 /// builds after it starts first, ties by the plan order. No more than
 /// `workers` builds run at once, and after the first failure or an
 /// interrupt nothing new starts, while the running builds finish.
-pub(crate) struct Scheduler {
+pub(crate) struct Scheduler<'a> {
     /// The place of every item of the run in the plan order.
     position: BTreeMap<Item, usize>,
     /// The builds of the run that each build waits for.
@@ -50,12 +78,16 @@ pub(crate) struct Scheduler {
     dependents: BTreeMap<Item, BTreeSet<Item>>,
     /// How long each build took before, in seconds, 0 when unknown.
     durations: BTreeMap<Item, u64>,
+    /// The memory the builds may claim.
+    memory: Memory<'a>,
     /// How many builds may run at once.
     workers: usize,
     /// The builds that wait to start.
     pending: BTreeSet<Item>,
     /// The builds that run.
     running: BTreeSet<Item>,
+    /// The running builds that want the host to itself.
+    running_big: BTreeSet<Item>,
     /// The builds that need no waiting, because they are finished or
     /// because the run does not build them.
     settled: BTreeSet<Item>,
@@ -63,18 +95,22 @@ pub(crate) struct Scheduler {
     built: BTreeSet<Item>,
     /// Whether nothing new may start.
     stopped: bool,
+    /// How long a wait for memory lasts before the host is checked again.
+    memory_wait: Duration,
 }
 
-impl Scheduler {
+impl<'a> Scheduler<'a> {
     /// The scheduler of the run `order`, whose builds wait for `deps` within
     /// the run and whose builds took `durations` before, in seconds, with
     /// 0 for unknown. Every build of `order` that is not handed to
-    /// [`Scheduler::run`] counts as settled.
+    /// [`Scheduler::run`] counts as settled. `memory` decides which of the
+    /// ready builds starts.
     pub(crate) fn new(
         order: Vec<Item>,
         deps: BTreeMap<Item, BTreeSet<Item>>,
         durations: BTreeMap<Item, u64>,
         workers: usize,
+        memory: Memory<'a>,
     ) -> Self {
         let mut dependents: BTreeMap<Item, BTreeSet<Item>> = BTreeMap::new();
         for (item, waits) in &deps {
@@ -95,13 +131,24 @@ impl Scheduler {
             deps,
             dependents,
             durations,
+            memory,
             workers: workers.max(1),
             pending: BTreeSet::new(),
             running: BTreeSet::new(),
+            running_big: BTreeSet::new(),
             settled: order.into_iter().collect(),
             built: BTreeSet::new(),
             stopped: false,
+            memory_wait: MEMORY_WAIT,
         }
+    }
+
+    /// Sets how long a wait for memory lasts before the host is checked
+    /// again, for tests that cannot wait a minute.
+    #[cfg(test)]
+    pub(crate) fn memory_wait(mut self, step: Duration) -> Self {
+        self.memory_wait = step;
+        self
     }
 
     /// Runs the builds of `initial` with `build`, up to `workers` at once.
@@ -109,7 +156,8 @@ impl Scheduler {
     /// records a finished build and returns the builds it made necessary,
     /// which join the run unless they already ran. When a build joins a
     /// `jobserver`, the pipe is drained and refilled whenever no build
-    /// runs, which restores the tokens a killed build lost.
+    /// runs, which restores the tokens a killed build lost. A build starts
+    /// only when `memory` says the host holds what it needs.
     ///
     /// Returns every build it built, in the order they finished.
     pub(crate) fn run<J, T>(
@@ -127,19 +175,22 @@ impl Scheduler {
         for item in initial {
             self.admit(item);
         }
-        let (jobs, waiting) = mpsc::channel::<(Item, J)>();
-        let waiting = Mutex::new(waiting);
+        let (jobs, waiting_queue) = mpsc::channel::<(Item, J)>();
+        let waiting_queue = Mutex::new(waiting_queue);
         let (finished, results) = mpsc::channel::<(Item, Result<T, BuildError>)>();
         let mut jobs = Some(jobs);
         let mut outcomes = Vec::new();
         let mut failures: Vec<(usize, Item, Box<BuildError>)> = Vec::new();
+        let mut lost = None;
         std::thread::scope(|scope| {
             for _ in 0..self.workers {
                 scope.spawn(|| {
                     loop {
                         let job = {
-                            let waiting = waiting.lock().expect("the job queue cannot be poisoned");
-                            waiting.recv()
+                            let waiting_queue = waiting_queue
+                                .lock()
+                                .expect("the job queue cannot be poisoned");
+                            waiting_queue.recv()
                         };
                         match job {
                             Ok((item, data)) => {
@@ -160,11 +211,15 @@ impl Scheduler {
                 });
             }
             loop {
-                self.dispatch(
+                if let Err(error) = self.dispatch(
                     prepare,
                     jobs.as_ref()
                         .expect("the job sender runs until the run ends"),
-                );
+                ) {
+                    self.stopped = true;
+                    lost = Some(error);
+                    break;
+                }
                 if self.running.is_empty() {
                     break;
                 }
@@ -172,6 +227,7 @@ impl Scheduler {
                     break;
                 };
                 self.running.remove(&item);
+                self.running_big.remove(&item);
                 if self.running.is_empty()
                     && let Some(jobserver) = jobserver
                 {
@@ -202,6 +258,9 @@ impl Scheduler {
             }
             drop(jobs.take());
         });
+        if let Some(error) = lost {
+            return Err(Failed::Memory(error));
+        }
         if let Some((_, item, error)) = failures.into_iter().min_by_key(|(place, _, _)| *place) {
             return Err(Failed::Build { item, error });
         }
@@ -211,31 +270,101 @@ impl Scheduler {
         Ok(outcomes)
     }
 
-    /// Starts every ready build until `workers` run or nothing new may
-    /// start.
-    fn dispatch<J>(&mut self, prepare: &mut dyn FnMut(&Item) -> J, jobs: &mpsc::Sender<(Item, J)>) {
-        self.stopped = self.stopped || terminated();
-        if self.stopped {
-            return;
-        }
+    /// Starts every ready build that fits until `workers` run or nothing
+    /// new may start, and reports whether a big build waits for the
+    /// memory of a host that no build uses.
+    fn fill<J>(
+        &mut self,
+        prepare: &mut dyn FnMut(&Item) -> J,
+        jobs: &mpsc::Sender<(Item, J)>,
+    ) -> Result<bool, BuildError> {
+        let available = self.memory.available;
+        let mut deferred = BTreeSet::new();
+        let mut waits = false;
         while self.running.len() < self.workers
-            && let Some(item) = self.next_ready()
+            && let Some(item) = self.next_ready(&deferred)
         {
+            let estimate = self.estimate(&item);
+            let big = self.memory.big.contains(&item);
+            let fits = if self.running.is_empty() && !big {
+                true
+            } else {
+                let free = available()?;
+                if self.running.is_empty() {
+                    free >= estimate
+                } else {
+                    (!big || self.running_big.is_empty()) && free >= estimate + RESERVE
+                }
+            };
+            if !fits {
+                deferred.insert(item);
+                waits |= big;
+                continue;
+            }
             self.pending.remove(&item);
             self.running.insert(item.clone());
+            if big {
+                self.running_big.insert(item.clone());
+            }
             let data = prepare(&item);
             if jobs.send((item, data)).is_err() {
                 break;
             }
         }
+        Ok(waits)
+    }
+
+    /// Starts every build that fits, and, when only big builds are ready
+    /// and none fits a host that no build uses, waits for the memory of
+    /// the one that comes first, checking every minute.
+    fn dispatch<J>(
+        &mut self,
+        prepare: &mut dyn FnMut(&Item) -> J,
+        jobs: &mpsc::Sender<(Item, J)>,
+    ) -> Result<(), BuildError> {
+        self.stopped = self.stopped || terminated();
+        if self.stopped {
+            return Ok(());
+        }
+        let waits = self.fill(prepare, jobs)?;
+        if self.running.is_empty() && waits && !self.stopped {
+            let item = self
+                .next_ready(&BTreeSet::new())
+                .expect("a big build waits for an idle host");
+            let needed = self.estimate(&item);
+            let (available, waiting) = (self.memory.available, self.memory.waiting);
+            loop {
+                if terminated() {
+                    self.stopped = true;
+                    break;
+                }
+                let free = available()?;
+                if free >= needed {
+                    break;
+                }
+                waiting(needed, free);
+                std::thread::sleep(self.memory_wait);
+            }
+            if !self.stopped {
+                self.fill(prepare, jobs)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// What `item` is expected to need, in bytes.
+    fn estimate(&self, item: &Item) -> u64 {
+        self.memory.estimates.get(item).copied().unwrap_or(0)
     }
 
     /// The ready build with the longest chain of builds after it, ties by
-    /// the plan order.
-    fn next_ready(&self) -> Option<Item> {
+    /// the plan order, leaving out the builds in `deferred`, which wait
+    /// for memory.
+    fn next_ready(&self, deferred: &BTreeSet<Item>) -> Option<Item> {
         let weights = self.weights();
         self.pending
             .iter()
+            .filter(|item| !deferred.contains(*item))
             .filter(|item| {
                 self.deps
                     .get(*item)
