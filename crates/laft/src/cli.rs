@@ -445,7 +445,8 @@ pub(crate) struct RescueArgs {
 pub(crate) enum RepoCommand {
     /// Sync indexes now.
     Sync {
-        /// Repositories. Every enabled one by default.
+        /// Repositories. Every enabled one by default. Named repositories
+        /// must be enabled.
         names: Vec<String>,
     },
     /// List the configured repositories.

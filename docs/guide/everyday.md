@@ -248,7 +248,7 @@ ok clock
 
 ## Repositories
 
-`laft repo sync` fetches the indexes of every enabled repository, or of the named ones. Commands sync on their own when an index is stale, and `--refresh` forces it. `laft repo list` shows the configured repositories. `laft repo reset <name>` forgets the index and keys accepted from a repository, so the next sync trusts it afresh from its configured key.
+`laft repo sync` fetches the indexes of every enabled repository, or of the named ones. An explicitly named repository must be configured and enabled. Otherwise the command exits with status 2 before syncing anything. Commands sync on their own when an index is stale, and `--refresh` forces it. `laft repo list` shows the configured repositories. `laft repo reset <name>` forgets the index and keys accepted from a repository, so the next sync trusts it afresh from its configured key.
 
 ## Installing and rescuing
 

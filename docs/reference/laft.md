@@ -160,7 +160,7 @@ The same as `laft rescue`, with the mounted system given as `DIR`.
 
 | Command | Meaning |
 |---|---|
-| `laft repo sync [NAMES]...` | Sync indexes now. Every enabled repository by default. |
+| `laft repo sync [NAMES]...` | Sync indexes now. Every enabled repository by default. Explicit names must be configured and enabled, or the command exits with status 2 before syncing any repository. |
 | `laft repo list` | List the configured repositories. |
 | `laft repo reset <NAME>` | Forget the accepted index and keys of a repository. |
 | `laft view list` | List the views besides the system view. |

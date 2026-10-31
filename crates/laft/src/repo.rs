@@ -25,7 +25,6 @@ pub(crate) fn sync(env: &Env, wanted: &[String]) -> Result<u8, Failure> {
     let wanted = names(wanted)?;
     env.require_write("repo sync")?;
     env.ui.start("repo sync");
-    let lock = env.lock("repo sync")?;
     let loaded = env.load(&|_| Ok(()))?;
     if let Some(unknown) = wanted
         .iter()
@@ -36,6 +35,13 @@ pub(crate) fn sync(env: &Env, wanted: &[String]) -> Result<u8, Failure> {
             format!("no repository {unknown} is configured"),
         ));
     }
+    if let Some(disabled) = wanted.iter().find(|n| !loaded.config.repos[*n].enable) {
+        return Err(Failure::new(
+            exit::USAGE,
+            format!("repository {disabled} is disabled"),
+        ));
+    }
+    let lock = env.lock("repo sync")?;
     let synced = env.indexes_of(&loaded.config, SyncMode::Always, Some(&lock), &|n| {
         wanted.is_empty() || wanted.contains(n)
     })?;
