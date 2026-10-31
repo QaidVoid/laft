@@ -1,6 +1,6 @@
 ---
 source: crates/laft-config/tests/examples.rs
-assertion_line: 132
+assertion_line: 133
 expression: "added_to_base(\"server\")"
 ---
 SystemConfig {
@@ -289,6 +289,87 @@ SystemConfig {
                 env: {},
                 cwd: "/",
                 umask: 18,
+                after: [
+                    "loopback",
+                ],
+                ready: Immediate,
+                log: Logged,
+                rotate: LogRotation {
+                    size: 1000000,
+                    count: 10,
+                },
+                state_dirs: [
+                    Dir {
+                        path: "empty",
+                        mode: 493,
+                        owner: Some(
+                            "root",
+                        ),
+                        group: Some(
+                            "root",
+                        ),
+                    },
+                    Dir {
+                        path: "dhcpcd",
+                        mode: 493,
+                        owner: Some(
+                            "dhcpcd",
+                        ),
+                        group: Some(
+                            "dhcpcd",
+                        ),
+                    },
+                ],
+                runtime_dirs: [
+                    Dir {
+                        path: "dhcpcd",
+                        mode: 493,
+                        owner: Some(
+                            "dhcpcd",
+                        ),
+                        group: Some(
+                            "dhcpcd",
+                        ),
+                    },
+                ],
+                restart: Always,
+                restart_delay: 1,
+                stop_signal: Term,
+                stop_timeout: 10,
+                limits: Limits {
+                    nofile: None,
+                    nproc: None,
+                    core: None,
+                    memlock: None,
+                },
+                on_change: None,
+                early: false,
+                packages: {
+                    Name(
+                        "dhcpcd",
+                    ),
+                },
+            },
+            "loopback": Service {
+                description: "Loopback interface",
+                kind: Oneshot,
+                enable: true,
+                exec: [],
+                up: [
+                    "/usr/bin/ip",
+                    "link",
+                    "set",
+                    "dev",
+                    "lo",
+                    "up",
+                ],
+                down: [],
+                user: "root",
+                group: None,
+                groups: {},
+                env: {},
+                cwd: "/",
+                umask: 18,
                 after: [],
                 ready: Immediate,
                 log: Logged,
@@ -312,7 +393,7 @@ SystemConfig {
                 early: false,
                 packages: {
                     Name(
-                        "dhcpcd",
+                        "iproute2",
                     ),
                 },
             },
@@ -386,7 +467,18 @@ SystemConfig {
                     count: 10,
                 },
                 state_dirs: [],
-                runtime_dirs: [],
+                runtime_dirs: [
+                    Dir {
+                        path: "sshd",
+                        mode: 493,
+                        owner: Some(
+                            "root",
+                        ),
+                        group: Some(
+                            "root",
+                        ),
+                    },
+                ],
                 restart: Always,
                 restart_delay: 1,
                 stop_signal: Term,

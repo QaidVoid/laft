@@ -26,6 +26,7 @@ const INDEX: &[&str] = &[
     "fuzzel",
     "git",
     "htop",
+    "iproute2",
     "iwd",
     "jujutsu",
     "linux-lts",

@@ -17,6 +17,7 @@ fn sshd(port: Int where 1..=65535 = 22) -> Part<System> = part {
     description = default("OpenSSH server")
     exec        = default(["/usr/bin/sshd", "-D", "-e", "-p", "#{port}"])
     after       = [sshd-keygen]
+    runtime_dirs = [Dir { path = "sshd", owner = root, group = root }]
     packages    = [openssh]
   }
 
@@ -68,11 +69,22 @@ fn elogind() -> Part<System> = part {
   session { rundir = default(RundirOwner.elogind) }
 }
 
-## The dhcpcd DHCP client for every interface.
+## The dhcpcd DHCP client for every interface, with loopback brought up first.
 fn dhcpcd() -> Part<System> = part {
+  service loopback {
+    description = default("Loopback interface")
+    kind        = default(oneshot)
+    up          = default(["/usr/bin/ip", "link", "set", "dev", "lo", "up"])
+    packages    = [iproute2]
+  }
+
   service dhcpcd {
     description = default("DHCP client")
     exec        = default(["/usr/bin/dhcpcd", "-B"])
+    after       = [loopback]
+    state_dirs  = [Dir { path = "empty", owner = root, group = root },
+                   Dir { path = "dhcpcd", owner = dhcpcd, group = dhcpcd }]
+    runtime_dirs = [Dir { path = "dhcpcd", owner = dhcpcd, group = dhcpcd }]
     packages    = [dhcpcd]
   }
 }

@@ -57,6 +57,66 @@ fn sshd_listens_on_the_given_port_and_refuses_passwords() {
 }
 
 #[test]
+fn sshd_has_a_root_owned_privilege_separation_directory() {
+    let config = with_catalog("include services.sshd()")
+        .expect("valid")
+        .config;
+    let dirs = &config.services.services["sshd"].runtime_dirs;
+    assert_eq!(dirs.len(), 1);
+    assert_eq!(dirs[0].path, "sshd");
+    assert_eq!(dirs[0].mode, 0o755);
+    assert_eq!(dirs[0].owner.as_deref(), Some("root"));
+    assert_eq!(dirs[0].group.as_deref(), Some("root"));
+}
+
+#[test]
+fn dhcpcd_has_writable_state_and_runtime_directories() {
+    let config = with_catalog("include services.dhcpcd()")
+        .expect("valid")
+        .config;
+    let service = &config.services.services["dhcpcd"];
+    assert_eq!(service.state_dirs.len(), 2);
+    let chroot = &service.state_dirs[0];
+    assert_eq!(chroot.path, "empty");
+    assert_eq!(chroot.mode, 0o755);
+    assert_eq!(chroot.owner.as_deref(), Some("root"));
+    assert_eq!(chroot.group.as_deref(), Some("root"));
+    assert_eq!(service.runtime_dirs.len(), 1);
+    for dir in [&service.state_dirs[1], &service.runtime_dirs[0]] {
+        assert_eq!(dir.path, "dhcpcd");
+        assert_eq!(dir.mode, 0o755);
+        assert_eq!(dir.owner.as_deref(), Some("dhcpcd"));
+        assert_eq!(dir.group.as_deref(), Some("dhcpcd"));
+    }
+    assert_eq!(service.user, "root");
+}
+
+#[test]
+fn dhcpcd_brings_up_loopback_before_configuring_interfaces() {
+    let config = with_catalog("include services.dhcpcd()")
+        .expect("valid")
+        .config;
+    let loopback = &config.services.services["loopback"];
+    assert_eq!(
+        loopback.up,
+        ["/usr/bin/ip", "link", "set", "dev", "lo", "up"]
+    );
+    assert_eq!(
+        loopback
+            .packages
+            .iter()
+            .map(|p| p.as_str())
+            .collect::<Vec<_>>(),
+        ["iproute2"]
+    );
+    assert!(
+        config.services.services["dhcpcd"]
+            .after
+            .contains(&"loopback".to_owned())
+    );
+}
+
+#[test]
 fn the_wayland_desktop_sets_up_packages_seat_groups_and_environment() {
     let body = "users { user alice { uid = 1000 } }\n\
                 include desktop.wayland(user = alice, fonts = [noto-fonts-cjk])";
