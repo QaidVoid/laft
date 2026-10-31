@@ -27,9 +27,10 @@ const CAPABILITY_XATTR: &str = "security.capability";
 /// under `.laft/`, its metadata and manifest.
 ///
 /// An entry exists exactly when its directory exists. It appears with one
-/// rename and is never written to after that, so a reader sees an entry
-/// whole or not at all. Entries are added by [`crate::Transaction::add`] and
-/// removed only by garbage collection.
+/// rename; its contents are never written to afterwards, and the only thing
+/// a later add changes is the seal that an interrupted publication may have
+/// missed. A reader sees an entry whole or not at all. Entries are added by
+/// [`crate::Transaction::add`] and removed only by garbage collection.
 ///
 /// Files the manifest gives to root are owned by the user that added the
 /// entry, which is root on a real system. Verification expects that.
@@ -62,6 +63,7 @@ pub(crate) fn is_entry_name(name: &str) -> bool {
 /// A package unpacked into the staging directory and ready to publish.
 pub(crate) struct Staged {
     pub(crate) dir_name: String,
+    pub(crate) store_id: StoreId,
     path: PathBuf,
 }
 
@@ -93,14 +95,18 @@ impl Store {
     /// staging directory `tmp`, which must be on the same filesystem as the
     /// store, and published with one rename, exactly as
     /// [`crate::Transaction::add`] does. Nothing is journaled, so this is
-    /// only for a store that no generation uses: an interrupted call leaves
-    /// at most a staging directory in `tmp`, never a partial entry. Adding a
-    /// package whose entry exists does nothing.
+    /// only for a store that no generation uses. An interrupted call leaves
+    /// at most a staging directory in `tmp`; an entry it already renamed
+    /// into place is complete, but its top directory may still be
+    /// unsealed, and the next add seals it. Adding a package whose entry
+    /// exists does nothing.
     ///
     /// # Errors
     ///
     /// Fails when the package is invalid or does not match its manifest,
-    /// when its id is not `expected`, or when the store cannot be written.
+    /// when its id is not `expected`, when something other than its own
+    /// entry occupies its place in the store, or when the store cannot be
+    /// written.
     pub fn insert(&self, lpkg: &Path, expected: &StoreId, tmp: &Path) -> Result<String> {
         for dir in [self.dir.as_path(), tmp] {
             fs::create_dir_all(dir).map_err(io(dir))?;
@@ -286,6 +292,44 @@ impl Store {
         Ok(self.path(dir_name))
     }
 
+    /// Accepts what occupies the place of entry `dir_name`, which must be
+    /// the entry of the store id `expected`, and returns whether the place
+    /// is taken.
+    ///
+    /// The entry itself is accepted. When an interrupted publication left
+    /// it unsealed, it is sealed again. Anything else occupying the name
+    /// fails with [`Error::Corrupt`].
+    fn accept_existing(&self, dir_name: &str, expected: &StoreId) -> Result<bool> {
+        let path = self.path(dir_name);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(io(&path)(e)),
+        };
+        if !metadata.is_dir() {
+            return Err(corrupt(&path, "the store entry is not a directory"));
+        }
+        let manifest_path = path.join(MANIFEST_PATH);
+        let bytes = match fs::read(&manifest_path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Err(corrupt(&manifest_path, "the entry has no manifest"));
+            }
+            Err(e) => return Err(io(&manifest_path)(e)),
+        };
+        let id = StoreId::from_manifest_hash(&Blake3Hash::of(&bytes));
+        if id != *expected {
+            return Err(corrupt(
+                &manifest_path,
+                "the manifest belongs to a different entry",
+            ));
+        }
+        if metadata.mode() & 0o7777 != fsx::SEALED_DIR {
+            fsx::set_mode(&path, fsx::SEALED_DIR)?;
+        }
+        Ok(true)
+    }
+
     /// Unpacks the package file `lpkg` into the staging directory `tmp`
     /// unless its entry exists already.
     ///
@@ -309,7 +353,7 @@ impl Store {
             });
         }
         let dir_name = entry_dir_name(reader.manifest());
-        if fs::symlink_metadata(self.path(&dir_name)).is_ok() {
+        if self.accept_existing(&dir_name, expected)? {
             return Ok(Prepared::Exists(dir_name));
         }
         let staging = tmp.join(format!("store-{actual}.{tag}"));
@@ -318,6 +362,7 @@ impl Store {
         match unpack(reader, &staging, expected) {
             Ok(()) => Ok(Prepared::Staged(Staged {
                 dir_name,
+                store_id: *expected,
                 path: staging,
             })),
             Err(e) => {
@@ -332,9 +377,13 @@ impl Store {
     pub(crate) fn publish(&self, staged: Staged) -> Result<()> {
         let target = self.path(&staged.dir_name);
         if let Err(e) = fs::rename(&staged.path, &target) {
-            let exists = fs::symlink_metadata(&target).is_ok();
+            let existing = self.accept_existing(&staged.dir_name, &staged.store_id);
             fsx::remove_tree(&staged.path)?;
-            return if exists { Ok(()) } else { Err(io(&target)(e)) };
+            return match existing {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(io(&target)(e)),
+                Err(e) => Err(e),
+            };
         }
         fsx::set_mode(&target, fsx::SEALED_DIR)
     }

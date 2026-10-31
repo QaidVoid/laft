@@ -261,3 +261,116 @@ fn a_package_with_the_wrong_id_is_not_inserted() {
     assert!(matches!(error, Error::IdMismatch { .. }), "{error}");
     assert_eq!(store.list().expect("lists"), Vec::<String>::new());
 }
+
+#[test]
+fn an_interrupted_insert_is_sealed_when_added_again() {
+    let env = Env::new();
+    let package = sample(&env);
+    let base = env.root.path().join("builder");
+    let store = crate::Store::at(base.join("store"));
+    let tmp = base.join("tmp");
+    let dir = store
+        .insert(&package.path, &package.id, &tmp)
+        .expect("the package is added");
+    // An interrupted publication sealed everything but the top directory.
+    fs::set_permissions(store.path(&dir), fs::Permissions::from_mode(0o700)).expect("chmod");
+    assert_mode(&store.path(&dir), 0o700);
+
+    let again = store
+        .insert(&package.path, &package.id, &tmp)
+        .expect("added again");
+    assert_eq!(again, dir);
+    assert_mode(&store.path(&dir), 0o555);
+    assert_eq!(store.verify(&dir, true).expect("verifiable"), vec![]);
+}
+
+#[test]
+fn something_else_in_an_entrys_place_is_refused() {
+    let env = Env::new();
+    let package = sample(&env);
+    let base = env.root.path().join("builder");
+    let store = crate::Store::at(base.join("store"));
+    let tmp = base.join("tmp");
+    fs::create_dir_all(store.path(&package.dir).parent().expect("has a parent"))
+        .expect("the store directory");
+    std::os::unix::fs::symlink("elsewhere", store.path(&package.dir)).expect("can link");
+    let error = store
+        .insert(&package.path, &package.id, &tmp)
+        .expect_err("the symlink is refused");
+    assert!(matches!(error, Error::Corrupt { .. }), "{error}");
+
+    fs::remove_file(store.path(&package.dir)).expect("can remove the link");
+    fs::create_dir_all(store.path(&package.dir)).expect("mkdir");
+    let error = store
+        .insert(&package.path, &package.id, &tmp)
+        .expect_err("the directory without documents is refused");
+    assert!(matches!(error, Error::Corrupt { .. }), "{error}");
+
+    let other = Pkg::new("zlib", "1.3.1")
+        .file("usr/lib/libz.so.1", b"z")
+        .build(&env);
+    store
+        .insert(&other.path, &other.id, &tmp)
+        .expect("the other entry is added");
+    let docs = store.path(&package.dir).join(".laft");
+    fs::create_dir_all(&docs).expect("mkdir");
+    fs::copy(
+        store.path(&other.dir).join(".laft/manifest.json"),
+        docs.join("manifest.json"),
+    )
+    .expect("can copy the foreign manifest");
+    let error = store
+        .insert(&package.path, &package.id, &tmp)
+        .expect_err("the entry of another package is refused");
+    assert!(matches!(error, Error::Corrupt { .. }), "{error}");
+    assert!(error.to_string().contains("different entry"), "{error}");
+}
+
+#[test]
+fn a_publication_collision_is_checked_and_never_replaces() {
+    let env = Env::new();
+    let package = sample(&env);
+    let base = env.root.path().join("builder");
+    let store = crate::Store::at(base.join("store"));
+    let tmp = base.join("tmp");
+    fs::create_dir_all(store.path(&package.dir).parent().expect("has a parent"))
+        .expect("the store directory");
+    fs::create_dir_all(&tmp).expect("the staging directory");
+
+    let staged = match store
+        .stage(&package.path, &package.id, &tmp, "test")
+        .expect("staged")
+    {
+        crate::store::Prepared::Staged(staged) => staged,
+        crate::store::Prepared::Exists(_) => panic!("the entry does not exist yet"),
+    };
+    fs::write(store.path(&package.dir), b"not an entry").expect("can write");
+    let error = store.publish(staged).expect_err("the file is refused");
+    assert!(matches!(error, Error::Corrupt { .. }), "{error}");
+    assert_eq!(
+        fs::read(store.path(&package.dir)).expect("still there"),
+        b"not an entry"
+    );
+    assert!(
+        fs::read_dir(&tmp).expect("reads").next().is_none(),
+        "the staged tree is gone"
+    );
+
+    fs::remove_file(store.path(&package.dir)).expect("can remove the file");
+    let staged = match store
+        .stage(&package.path, &package.id, &tmp, "test")
+        .expect("staged")
+    {
+        crate::store::Prepared::Staged(staged) => staged,
+        crate::store::Prepared::Exists(_) => panic!("the entry does not exist yet"),
+    };
+    store
+        .insert(&package.path, &package.id, &tmp)
+        .expect("the entry is published");
+    store.publish(staged).expect("the staged copy is discarded");
+    assert_eq!(
+        store.verify(&package.dir, true).expect("verifiable"),
+        vec![]
+    );
+    assert!(fs::read_dir(&tmp).expect("reads").next().is_none());
+}

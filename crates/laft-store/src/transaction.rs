@@ -168,7 +168,8 @@ impl<'l> Transaction<'l> {
     /// # Errors
     ///
     /// Fails when assembly has started, when the package is invalid or does
-    /// not match its manifest, when its id is not `expected`, or when the
+    /// not match its manifest, when its id is not `expected`, when something
+    /// other than the entry occupies its place in the store, or when the
     /// store cannot be written. A failed add leaves no entry and no staging
     /// directory behind.
     pub fn add(&mut self, lpkg: &Path, expected: &StoreId) -> Result<String> {
