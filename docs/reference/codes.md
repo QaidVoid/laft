@@ -36,7 +36,7 @@ Stav checks types, refinements, required fields and references. After evaluation
 | `C0413` | A password file does not hold a valid password hash. | Write a hash made by mkpasswd or openssl passwd into the file. |
 | `C0414` | Two declared accounts have the same id. | Give one of them another id, or leave both out. |
 | `C0415` | A regular user would take a system group as its primary group. | Set the user's `group` explicitly. |
-| `C0416` | With `users.mutable = false`, the root user is not declared, so uid 0 would be removed. | Declare `user root { }` in `users`, or set `users.mutable = true`. |
+| `C0416` | With `users.mutable = false`, the account databases contain only declared accounts. The root user must be declared so that uid 0 is not removed. | Declare `user root { }` inside `users`, or set `users.mutable = true` to keep undeclared accounts. The normal system configuration already inherits root from the base part. |
 | `C0420` | A `file` path is not an absolute, normalized path below `/etc/`. | Write it as `/etc/<path>` without `.`, `..` or repeated slashes. |
 | `C0421` | A `file` path is reserved for Laft, such as `/etc/static` or an account database. | Configure the setting the file belongs to instead. |
 | `C0422` | An enabled `file` does not set exactly one of `text`, `source`, `link`, `json`, `toml`, `yaml`, `ini` and `env`. | Keep exactly one content field. |
