@@ -843,6 +843,8 @@ impl<'a> Builder<'a> {
                 inputs: inputs.clone(),
                 outputs: outputs.clone(),
                 imports: output.imports.clone(),
+                peak_memory: session.exec.peak_memory(),
+                seconds: Timestamp::now().as_secs().saturating_sub(started.as_secs()),
             },
             buildinfo: buildinfo_name,
             files: buildinfo.outputs.iter().map(|o| o.file.clone()).collect(),

@@ -1,13 +1,15 @@
 //! Running build phases and tools, in a sandbox or, in bootstrap mode,
 //! directly on the host.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use laft_sandbox::{Network, Sandbox};
@@ -57,6 +59,7 @@ pub struct Executor {
     timeout: Duration,
     search: Vec<PathBuf>,
     shell: Shell,
+    peak: Arc<AtomicU64>,
 }
 
 impl Executor {
@@ -76,6 +79,7 @@ impl Executor {
             timeout: DEFAULT_TIMEOUT,
             search: Vec::new(),
             shell: Shell::Sh,
+            peak: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -96,6 +100,7 @@ impl Executor {
             timeout: DEFAULT_TIMEOUT,
             search: Vec::new(),
             shell: Shell::Sh,
+            peak: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -161,6 +166,12 @@ impl Executor {
     /// The directory that holds the logs.
     pub fn logs(&self) -> &Path {
         &self.logs
+    }
+
+    /// The largest total resident memory the processes of this executor's
+    /// commands were seen at, in bytes, sampled once a second.
+    pub fn peak_memory(&self) -> u64 {
+        self.peak.load(Ordering::Relaxed)
     }
 
     /// The path under which commands see the payload path `rel` of the
@@ -304,7 +315,13 @@ impl Executor {
                     .map_err(io(&shell))?
             }
         };
-        let status = wait(child, self.timeout, &log_path, &format!("phase {phase}"))?;
+        let status = wait(
+            child,
+            self.timeout,
+            &log_path,
+            &format!("phase {phase}"),
+            Some(&self.peak),
+        )?;
         if status.success() {
             return Ok(());
         }
@@ -327,6 +344,9 @@ impl Executor {
 /// process of the namespace through its death signal, and the end of that
 /// process takes every other process of the namespace with it.
 ///
+/// While it waits it raises `peak` to the largest total resident memory of
+/// the descendants of `child`, in bytes, sampled once a second.
+///
 /// # Errors
 ///
 /// Fails with `B030` when `child` runs longer than `timeout`.
@@ -335,11 +355,19 @@ pub(crate) fn wait(
     timeout: Duration,
     log: &Path,
     what: &str,
+    peak: Option<&AtomicU64>,
 ) -> Result<ExitStatus, BuildError> {
     let deadline = Instant::now() + timeout;
+    let mut sampled = Instant::now() - SAMPLE_INTERVAL;
     loop {
         if let Some(status) = child.try_wait().map_err(io(log))? {
             return Ok(status);
+        }
+        if let Some(peak) = peak
+            && sampled.elapsed() >= SAMPLE_INTERVAL
+        {
+            sampled = Instant::now();
+            sample_peak(child.id(), peak);
         }
         if Instant::now() >= deadline {
             // A group with the child's pid as its id exists only when the
@@ -359,6 +387,61 @@ pub(crate) fn wait(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// How often the resident memory of a running build is sampled.
+const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Raises `peak` to the total resident memory of the processes below `root`,
+/// read from `/proc`. Processes that are gone while they are read are left
+/// out, and pages are counted once per process, which errs on the safe
+/// side when processes share them.
+fn sample_peak(root: u32, peak: &AtomicU64) {
+    let page = rustix::param::page_size() as u64;
+    let mut children: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    let mut resident: BTreeMap<u32, u64> = BTreeMap::new();
+    let items = match fs::read_dir("/proc") {
+        Ok(items) => items,
+        Err(_) => return,
+    };
+    for item in items.flatten() {
+        let Ok(pid) = item.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let (Some(ppid), Some(kib)) = (process_parent(pid), process_resident(pid, page)) else {
+            continue;
+        };
+        children.entry(ppid).or_default().push(pid);
+        resident.insert(pid, kib);
+    }
+    let mut below: BTreeSet<u32> = BTreeSet::new();
+    let mut todo = vec![root];
+    while let Some(pid) = todo.pop() {
+        if !below.insert(pid) {
+            continue;
+        }
+        todo.extend(children.get(&pid).into_iter().flatten());
+    }
+    let total: u64 = below.iter().filter_map(|pid| resident.get(pid)).sum();
+    peak.fetch_max(total, Ordering::Relaxed);
+}
+
+/// The parent process of `pid`, from `/proc/<pid>/stat`.
+fn process_parent(pid: u32) -> Option<u32> {
+    let stat = fs::read_to_string(Path::new("/proc").join(pid.to_string()).join("stat")).ok()?;
+    let mut fields = stat.rsplit_once(')')?.1.split_whitespace();
+    fields.nth(1)?.parse().ok()
+}
+
+/// The resident memory of `pid`, in bytes, from `/proc/<pid>/statm`.
+fn process_resident(pid: u32, page: u64) -> Option<u64> {
+    let statm = fs::read_to_string(Path::new("/proc").join(pid.to_string()).join("statm")).ok()?;
+    statm
+        .split_whitespace()
+        .nth(1)?
+        .parse::<u64>()
+        .ok()
+        .map(|pages| pages * page)
 }
 
 /// `duration` in whole hours, minutes and seconds, such as `6h` or

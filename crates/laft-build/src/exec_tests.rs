@@ -171,3 +171,29 @@ fn a_search_directory_with_a_colon_is_refused() {
         .expect_err("PATH cannot hold the directory");
     assert!(error.to_string().contains("a:b"), "{error}");
 }
+
+#[test]
+fn the_sampler_counts_the_processes_of_a_build() {
+    let mut child = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("sleep 1 & wait")
+        .spawn()
+        .expect("a shell runs");
+    std::thread::sleep(Duration::from_millis(200));
+    let peak = Arc::new(AtomicU64::new(0));
+    sample_peak(child.id(), &peak);
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let total = peak.load(Ordering::Relaxed);
+    assert!(total > 0, "the shell and its sleep hold memory: {total}");
+}
+
+#[test]
+fn process_parent_and_resident_are_read_from_proc() {
+    let me = std::process::id();
+    let parent = process_parent(me).expect("this process is in /proc");
+    assert_eq!(parent, std::os::unix::process::parent_id());
+    let resident =
+        process_resident(me, rustix::param::page_size() as u64).expect("this process is in /proc");
+    assert!(resident > 0, "a running process holds memory");
+}

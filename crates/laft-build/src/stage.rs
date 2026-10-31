@@ -869,7 +869,7 @@ impl StageRun<'_> {
             .stderr(err)
             .spawn()?;
         let status = match timeout {
-            Some(timeout) => wait(child, timeout, log, what)?,
+            Some(timeout) => wait(child, timeout, log, what, None)?,
             None => child.wait().map_err(io(log))?,
         };
         if status.success() {

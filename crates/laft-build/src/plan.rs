@@ -218,6 +218,15 @@ pub struct BuildRecord {
     /// What the outputs import: for every needed soname, the symbols taken
     /// from it, written `name@VERSION` or `name`.
     pub imports: BTreeMap<String, BTreeSet<String>>,
+    /// The largest total resident memory of the processes of the build,
+    /// sampled once a second, in bytes. Records written before it was
+    /// measured hold 0.
+    #[serde(default)]
+    pub peak_memory: u64,
+    /// How long the build took, in whole seconds. Records written before
+    /// it was measured hold 0.
+    #[serde(default)]
+    pub seconds: u64,
 }
 
 /// What a finished build produced, as far as its dependents care.

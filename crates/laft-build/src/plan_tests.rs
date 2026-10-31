@@ -52,6 +52,8 @@ fn record(inputs: &KeyInputs, item: &Item) -> BuildRecord {
         inputs: inputs.clone(),
         outputs: BTreeMap::new(),
         imports: BTreeMap::new(),
+        peak_memory: 0,
+        seconds: 0,
     }
 }
 

@@ -15,6 +15,8 @@ fn stored(rev: u32) -> Stored {
             inputs,
             outputs: BTreeMap::new(),
             imports: BTreeMap::new(),
+            peak_memory: 0,
+            seconds: 0,
         },
         buildinfo: format!("zlib-1.0-r{rev}.buildinfo.json"),
         files: vec![format!("zlib-1.0-r{rev}.x86_64-v3.lpkg")],
@@ -43,4 +45,18 @@ fn a_corrupt_record_is_an_error() {
     fs::create_dir_all(dir.path().join("latest")).unwrap();
     fs::write(dir.path().join("latest/zlib+dynamic"), b"{").unwrap();
     assert!(db.latest(&item("zlib")).is_err());
+}
+
+#[test]
+fn a_record_without_cost_fields_reads_as_unmeasured() {
+    let dir = laft_test::tempdir();
+    let db = Db::new(dir.path());
+    let stored = stored(1);
+    let old = serde_json::to_string(&stored)
+        .unwrap()
+        .replace(r#","peak_memory":0,"seconds":0"#, "");
+    fs::create_dir_all(dir.path().join("latest")).unwrap();
+    fs::write(dir.path().join("latest/zlib+dynamic"), old).unwrap();
+    let read = db.latest(&item("zlib")).unwrap().unwrap();
+    assert_eq!((read.record.peak_memory, read.record.seconds), (0, 0));
 }
