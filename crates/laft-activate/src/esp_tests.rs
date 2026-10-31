@@ -190,6 +190,52 @@ fn identical_files_are_shared_and_unused_ones_removed() {
 }
 
 #[test]
+fn temporary_files_of_an_interrupted_install_are_swept() {
+    let env = Env::new();
+    generation(&env, 1, "6.17.4-laft1", b"one", "{}");
+    let esp = esp(&env);
+    // What an interrupted installation leaves: partial files at the root,
+    // beside the loader, and beside the boot files.
+    fs::create_dir_all(esp.join("EFI/BOOT")).unwrap();
+    fs::create_dir_all(esp.join("laft")).unwrap();
+    fs::write(esp.join(".tmp-999-0"), b"partial limine").unwrap();
+    fs::write(esp.join("EFI/BOOT/.tmp-999-1"), b"partial loader").unwrap();
+    fs::write(esp.join("laft/.tmp-999-2"), b"partial kernel").unwrap();
+    fs::write(esp.join("laft/.tmp-999-3"), b"partial initramfs").unwrap();
+    fs::create_dir(esp.join("laft/.tmp-999-4")).unwrap();
+    fs::write(esp.join("startup.nsh"), b"unrelated").unwrap();
+
+    let installed = install_boot(&env.root, &esp).unwrap();
+    assert_eq!(
+        installed.removed,
+        [
+            ".tmp-999-0",
+            "EFI/BOOT/.tmp-999-1",
+            "laft/.tmp-999-2",
+            "laft/.tmp-999-3"
+        ],
+        "{:?}",
+        installed.removed
+    );
+    for leftover in [
+        ".tmp-999-0",
+        "EFI/BOOT/.tmp-999-1",
+        "laft/.tmp-999-2",
+        "laft/.tmp-999-3",
+    ] {
+        assert!(!esp.join(leftover).exists(), "{leftover} survived");
+    }
+    assert!(esp.join("laft/.tmp-999-4").is_dir(), "a directory stays");
+    assert_eq!(
+        fs::read(esp.join("startup.nsh")).unwrap(),
+        b"unrelated",
+        "unrelated files stay"
+    );
+    assert_menu_files_exist(&esp);
+    assert_eq!(installed.copied.len(), 2, "{:?}", installed.copied);
+}
+
+#[test]
 fn generations_without_boot_files_are_left_out() {
     let env = Env::new();
     generation(&env, 1, "6.17.4-laft1", b"one", "{}");

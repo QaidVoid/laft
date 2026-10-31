@@ -36,7 +36,8 @@ pub struct BootInstall {
     pub default: Option<u64>,
     /// The files copied to the EFI system partition, relative to it.
     pub copied: Vec<String>,
-    /// The files removed from it because no menu entry needs them.
+    /// The files removed from it: boot files no menu entry needs, and
+    /// temporary files of interrupted installations.
     pub removed: Vec<String>,
 }
 
@@ -92,6 +93,12 @@ impl MenuEntry {
 /// is durable before `limine.conf` is replaced. Limine itself is updated from the newest
 /// generation before the menu, so a new menu is never read by an old
 /// Limine.
+///
+/// Temporary files of an interrupted installation, which start with
+/// `.tmp-` beside the files at the root of the partition, in `EFI/BOOT`
+/// and in `laft/`, are removed before anything is written. Installations
+/// are serialized by the caller through the transaction lock, so no
+/// concurrent installation creates any.
 ///
 /// The menu settings come from the configuration of the default
 /// generation, or of the newest one when none is the default. Generations
@@ -153,6 +160,7 @@ pub fn install_boot(root: &Root, esp: &Path) -> Result<BootInstall> {
         default: default.filter(|d| entries.iter().any(|e| e.generation == *d)),
         ..BootInstall::default()
     };
+    sweep_temps(esp, &mut install)?;
     let mut wanted = BTreeSet::new();
     for entry in &entries {
         let dir = gen_dir(root, entry.generation);
@@ -222,9 +230,17 @@ pub fn install_boot(root: &Root, esp: &Path) -> Result<BootInstall> {
     }
     names.sort();
     for name in names {
-        let boot_file = name.ends_with(".vmlinuz") || name.ends_with(".initramfs");
-        if (boot_file && !wanted.contains(&name)) || name.starts_with(".tmp-") {
-            let path = laft.join(&name);
+        let path = laft.join(&name);
+        if name.starts_with(".tmp-") {
+            if fs::symlink_metadata(&path).map_err(io(&path))?.is_dir() {
+                continue;
+            }
+            fs::remove_file(&path).map_err(io(&path))?;
+            install.removed.push(format!("laft/{name}"));
+        } else if name.ends_with(".vmlinuz") || name.ends_with(".initramfs") {
+            if wanted.contains(&name) {
+                continue;
+            }
             fs::remove_file(&path).map_err(io(&path))?;
             install.removed.push(format!("laft/{name}"));
         }
@@ -235,6 +251,48 @@ pub fn install_boot(root: &Root, esp: &Path) -> Result<BootInstall> {
 
 fn gen_dir(root: &Root, number: u64) -> std::path::PathBuf {
     root.path().join("laft/gens").join(number.to_string())
+}
+
+/// Removes the `.tmp-` files an interrupted installation left at the root
+/// of the partition, in `EFI/BOOT` and in `laft/`, and syncs each directory
+/// it emptied. No menu references those names, so the old menu stays
+/// complete while they go.
+fn sweep_temps(esp: &Path, install: &mut BootInstall) -> Result<()> {
+    let dirs = [
+        (esp.to_path_buf(), ""),
+        (esp.join("EFI").join("BOOT"), "EFI/BOOT/"),
+        (esp.join("laft"), "laft/"),
+    ];
+    for (dir, prefix) in dirs {
+        let items = match fs::read_dir(&dir) {
+            Ok(items) => items,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(io(&dir)(e)),
+        };
+        let mut emptied = false;
+        let mut names = Vec::new();
+        for item in items {
+            let item = item.map_err(io(&dir))?;
+            if item.file_type().map_err(io(&dir))?.is_dir() {
+                continue;
+            }
+            let name = item.file_name().to_string_lossy().into_owned();
+            if name.starts_with(".tmp-") {
+                names.push(name);
+            }
+        }
+        names.sort();
+        for name in names {
+            let path = dir.join(&name);
+            fs::remove_file(&path).map_err(io(&path))?;
+            install.removed.push(format!("{prefix}{name}"));
+            emptied = true;
+        }
+        if emptied {
+            sync_dir(&dir)?;
+        }
+    }
+    Ok(())
 }
 
 /// The part of a generation's `config.json` that the boot menu reads.
@@ -360,28 +418,38 @@ fn tmp_name() -> String {
 }
 
 /// Copies `source` to `target` through a synced temporary file in the
-/// same directory, and syncs the directory, so the copy is durable.
+/// same directory, and syncs the directory, so the copy is durable. A
+/// failed copy removes its temporary file.
 fn copy_in(source: &Path, target: &Path) -> Result<()> {
     let mut from = File::open(source).map_err(io(source))?;
     let dir = target.parent().unwrap_or(target);
     let tmp = dir.join(tmp_name());
     let mut to = create(&tmp)?;
-    io::copy(&mut from, &mut to).map_err(io(&tmp))?;
-    to.sync_all().map_err(io(&tmp))?;
-    fs::rename(&tmp, target).map_err(io(target))?;
-    sync_dir(dir)
+    let copied = io::copy(&mut from, &mut to).map(|_| ()).map_err(io(&tmp));
+    let copied = copied.and_then(|()| to.sync_all().map_err(io(&tmp)));
+    let copied = copied.and_then(|()| fs::rename(&tmp, target).map_err(io(target)));
+    let copied = copied.and_then(|()| sync_dir(dir));
+    if copied.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    copied
 }
 
 /// Writes `bytes` to `dir/name` through a synced temporary file, and syncs
-/// the directory, so the new file is durable.
+/// the directory, so the new file is durable. A failed write removes its
+/// temporary file.
 fn write_in(dir: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     let tmp = dir.join(tmp_name());
     let mut file = create(&tmp)?;
-    file.write_all(bytes).map_err(io(&tmp))?;
-    file.sync_all().map_err(io(&tmp))?;
     let target = dir.join(name);
-    fs::rename(&tmp, &target).map_err(io(&target))?;
-    sync_dir(dir)
+    let written = file.write_all(bytes).map_err(io(&tmp));
+    let written = written.and_then(|()| file.sync_all().map_err(io(&tmp)));
+    let written = written.and_then(|()| fs::rename(&tmp, &target).map_err(io(&target)));
+    let written = written.and_then(|()| sync_dir(dir));
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
 }
 
 fn create(path: &Path) -> Result<File> {
