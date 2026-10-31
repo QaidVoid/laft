@@ -46,6 +46,7 @@ fn options(dir: &Path) -> StageOptions {
         root: Some(dir.join("root")),
         check: false,
         jobs: 1,
+        workers: 1,
         timeout: Duration::from_secs(600),
         min_available: 0,
         dry_run: false,
@@ -93,18 +94,19 @@ fn states_and_result(
         ..Config::new(dir.join("cache"))
     };
     let cache = SourceCache::new(build_root.sources(), Fetcher::new(config));
-    let states = std::cell::RefCell::new(Vec::new());
-    let mut progress = |event: StageEvent<'_>| {
+    let states = std::sync::Mutex::new(Vec::new());
+    let progress = |event: StageEvent<'_>| {
         if let StageEvent::Finished { step, state, .. } = event {
-            states.borrow_mut().push((step.to_owned(), state));
+            states.lock().unwrap().push((step.to_owned(), state));
         }
     };
     let result = if checked {
-        run_stage(stage, &repos, &cache, &build_root, options, &mut progress)
+        run_stage(stage, &repos, &cache, &build_root, options, &progress)
     } else {
-        run_steps(stage, &repos, &cache, &build_root, options, &mut progress)
+        run_steps(stage, &repos, &cache, &build_root, options, &progress)
     };
-    (states.into_inner(), result)
+    let states = states.into_inner().unwrap();
+    (states, result)
 }
 
 /// Runs `stage` into `dir/root` and returns the states it reported.
@@ -877,6 +879,7 @@ fn write_store_stage(dir: &Path, steps: &str) -> PathBuf {
 fn store_options(dir: &Path) -> StageOptions {
     StageOptions {
         root: None,
+        workers: 1,
         ..options(dir)
     }
 }
@@ -1291,8 +1294,8 @@ fn a_store_step_skips_the_packages_that_are_still_done_after_another_changes() {
         dir.path(),
         r#"    { name = "build", packages = [base, greet, top] },"#,
     );
-    // The build of top needs a package the store does not have yet, so the
-    // step stops after base and greet are done.
+    // The install of top fails, so the step stops after base and greet
+    // are done.
     fs::create_dir_all(stage.recipes.join("recipes/top")).unwrap();
     fs::write(
         stage.recipes.join("recipes/top/package.stav"),
@@ -1303,9 +1306,8 @@ fn a_store_step_skips_the_packages_that_are_still_done_after_another_changes() {
   empty   = true
   build custom {}
   env     = { LD_LIBRARY_PATH = "/usr/lib" }
-  build_deps = [tool]
   phases {
-    install = "true"
+    install = "exit 1"
   }
 }
 "#,
@@ -1317,7 +1319,7 @@ fn a_store_step_skips_the_packages_that_are_still_done_after_another_changes() {
         return;
     }
     let error = result.unwrap_err();
-    assert_eq!(error.code(), Some("B050"), "{error}");
+    assert_eq!(error.code(), Some("B040"), "{error}");
 
     // A summary edit of base gives base a new build key, but the key of
     // greet, which links against it, stays the same.
@@ -1329,7 +1331,7 @@ fn a_store_step_skips_the_packages_that_are_still_done_after_another_changes() {
 
     let (second, result) = states_and_result(dir.path(), &stage, &store_options(dir.path()), true);
     let error = result.unwrap_err();
-    assert_eq!(error.code(), Some("B050"), "{error}");
+    assert_eq!(error.code(), Some("B040"), "{error}");
     assert_eq!(
         second,
         [
@@ -1338,6 +1340,79 @@ fn a_store_step_skips_the_packages_that_are_still_done_after_another_changes() {
         ],
         "greet is not rebuilt after base changed",
     );
+}
+
+/// The build keys and store ids a run of a store step leaves behind, with
+/// the key of its step.
+fn results(dir: &Path, workers: usize) -> (Vec<String>, Vec<String>, String) {
+    let stage = linked_stage(
+        dir,
+        r#"    { name = "build", packages = [base, greet, top] },"#,
+    );
+    fs::create_dir_all(stage.recipes.join("recipes/top")).unwrap();
+    fs::write(
+        stage.recipes.join("recipes/top/package.stav"),
+        r#"package top {
+  version = "1"
+  summary = "Tops"
+  license = [MIT]
+  empty   = true
+  build custom {}
+  env     = { LD_LIBRARY_PATH = "/usr/lib" }
+  phases {
+    install = "true"
+  }
+}
+"#,
+    )
+    .unwrap();
+    store_with_host_tools(dir);
+    let options = StageOptions {
+        workers,
+        ..store_options(dir)
+    };
+    run_with(dir, &stage, &options).expect("the step builds");
+    let build = BuildRoot::new(dir.join("build"));
+    let mut ids: Vec<String> = crate::view::store_entries(&build.store())
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.id.to_string())
+        .collect();
+    ids.sort();
+    let mut records: Vec<String> = Vec::new();
+    for name in ["base", "greet", "top"] {
+        let item = Item::new(name.parse().unwrap(), laft_core::Variant::Dynamic);
+        let latest = build.db().latest(&item).unwrap().expect("a record");
+        records.push(format!(
+            "{item} {} {:?}",
+            latest.record.key, latest.record.outputs
+        ));
+    }
+    records.sort();
+    let key = read_key(
+        &build
+            .path()
+            .join(super::STORE_STEPS_RUN)
+            .join("demo")
+            .join("build"),
+    )
+    .unwrap()
+    .expect("the step records its key");
+    (ids, records, key.to_string())
+}
+
+#[test]
+fn a_store_step_gives_the_same_results_with_one_and_four_workers() {
+    if no_shell() {
+        return;
+    }
+    let one = laft_test::tempdir();
+    let four = laft_test::tempdir();
+    let one = results(one.path(), 1);
+    let four = results(four.path(), 4);
+    assert_eq!(one.0, four.0, "the same store ids");
+    assert_eq!(one.1, four.1, "the same build records");
+    assert_eq!(one.2, four.2, "the same step key");
 }
 
 #[test]

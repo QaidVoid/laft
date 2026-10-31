@@ -17,6 +17,7 @@ use crate::error::{BuildError, Warning, io};
 use crate::exec::{DEFAULT_TIMEOUT, Executor};
 use crate::fsx::{self, Kind};
 use crate::post::{self, Package};
+use crate::scheduler::{Failed, Scheduler};
 use crate::view::{self, BuildView, StoreEntry};
 use crate::{
     BuildGraph, BuildRecord, Buildinfo, BuildinfoHost, Built, Cutoff, Fetch, Item, KeyInputs,
@@ -186,6 +187,17 @@ pub enum Event<'a> {
     },
 }
 
+/// A run that stopped because a build failed or the process was asked to
+/// stop.
+#[derive(Debug)]
+pub struct BuildFailure {
+    /// The build that failed, when a build failed. It is the failure that
+    /// comes first in the plan order, whichever build failed first.
+    pub item: Option<Item>,
+    /// What went wrong.
+    pub error: Box<BuildError>,
+}
+
 /// Builds recipes into packages.
 ///
 /// A build runs these steps:
@@ -235,6 +247,8 @@ pub struct Builder<'a> {
     pub mirrors: Vec<String>,
     /// The number of parallel jobs, `$JOBS`.
     pub jobs: u32,
+    /// The number of builds of one run that may run at once.
+    pub workers: usize,
     /// Whether check phases run.
     pub check: bool,
     /// Whether working trees are kept after a successful build.
@@ -273,6 +287,7 @@ impl<'a> Builder<'a> {
             logs: root.logs(),
             mirrors: Vec::new(),
             jobs: u32::try_from(jobs).unwrap_or(u32::MAX),
+            workers: 1,
             check: true,
             keep_work: false,
             timeout: DEFAULT_TIMEOUT,
@@ -361,10 +376,13 @@ impl<'a> Builder<'a> {
         Ok((graph, schedule))
     }
 
-    /// Builds every item `schedule` hands out, records each in `db`, and
-    /// feeds its outputs back with [`Schedule::finish`], so that unchanged
-    /// outputs stop at once and changed ones mark the dependents they
-    /// affect. Stops at the first failure.
+    /// Builds every build the schedule asks for, up to [`Builder::workers`]
+    /// at once, and records each in `db`, so that unchanged outputs stop at
+    /// once and changed ones mark the dependents they affect. The builds
+    /// start in the order of the longest remaining chain, each once every
+    /// build it depends on has finished. After the first failure nothing
+    /// new starts, the builds that run finish, and the failure that comes
+    /// first in the plan order is reported.
     ///
     /// The sources of every item that needs a build are fetched before the
     /// first one starts, so builds never race on the source cache and a
@@ -372,51 +390,130 @@ impl<'a> Builder<'a> {
     ///
     /// # Errors
     ///
-    /// Fails like [`Builder::build`], and when the database cannot be
-    /// written.
+    /// Returns the failure of the run: the build that failed, or that the
+    /// process was interrupted. Fails like [`Builder::build`] otherwise,
+    /// and when the database cannot be written.
     ///
     /// # Panics
     ///
-    /// Panics when `schedule` hands out an item that `graph` does not hold,
-    /// which never happens for a schedule made from that graph.
+    /// Panics when the schedule hands out an item that `graph` does not
+    /// hold, which never happens for a schedule made from that graph.
     pub fn run(
         &self,
         graph: &BuildGraph,
         schedule: &mut Schedule,
         db: &Db,
-        progress: &mut dyn FnMut(Event<'_>),
-    ) -> Result<Vec<Outcome>, BuildError> {
+        progress: &(dyn Fn(Event<'_>) + Sync),
+    ) -> Result<Vec<Outcome>, BuildFailure> {
         for item in schedule.order() {
             if schedule.triggers(item).is_none() {
                 continue;
             }
+            if laft_sandbox::terminated() {
+                return Err(BuildFailure {
+                    item: None,
+                    error: Box::new(BuildError::interrupted()),
+                });
+            }
             let recipe = graph
                 .recipe(item)
                 .expect("the schedule only hands out items of its graph");
-            self.fetch(recipe)?;
+            if let Err(error) = self.fetch(recipe) {
+                return Err(BuildFailure {
+                    item: Some(item.clone()),
+                    error: Box::new(error),
+                });
+            }
         }
-        let mut outcomes = Vec::new();
-        while let Some(item) = schedule.next_build() {
-            let recipe = graph
-                .recipe(&item)
-                .expect("the schedule only hands out items of its graph");
-            let triggers = schedule.triggers(&item).cloned().unwrap_or_default();
-            progress(Event::Start {
-                item: &item,
-                triggers: &triggers,
-            });
-            let inputs = self.key_inputs(recipe)?;
-            let outcome = self.build(recipe, &inputs)?;
-            db.record(&outcome.stored)?;
-            let cutoff = schedule.finish(&item, &outcome.built);
-            progress(Event::Done {
-                item: &item,
-                outcome: &outcome,
-                cutoff: &cutoff,
-            });
-            outcomes.push(outcome);
+        let items: Vec<Item> = schedule.order().to_vec();
+        let inside: BTreeSet<Item> = items.iter().cloned().collect();
+        let deps: BTreeMap<Item, BTreeSet<Item>> = items
+            .iter()
+            .map(|item| {
+                let within: BTreeSet<Item> = graph
+                    .deps(item)
+                    .expect("the schedule only hands out items of its graph")
+                    .all()
+                    .filter(|dep| inside.contains(*dep))
+                    .cloned()
+                    .collect();
+                (item.clone(), within)
+            })
+            .collect();
+        let durations: BTreeMap<Item, u64> = items
+            .iter()
+            .map(|item| (item.clone(), schedule.duration(item)))
+            .collect();
+        let initial: Vec<Item> = items
+            .iter()
+            .filter(|item| schedule.triggers(item).is_some())
+            .cloned()
+            .collect();
+        let mut scheduler = Scheduler::new(items, deps, durations, self.workers);
+        // The triggers of each build, which `settled` keeps current, so
+        // that `prepare` reads them without holding the schedule.
+        let triggers: std::cell::RefCell<BTreeMap<Item, BTreeSet<Trigger>>> =
+            std::cell::RefCell::new(
+                schedule
+                    .planned()
+                    .into_iter()
+                    .map(|(item, causes)| (item.clone(), causes.clone()))
+                    .collect(),
+            );
+        let run = scheduler.run(
+            initial,
+            &mut |item| triggers.borrow().get(item).cloned().unwrap_or_default(),
+            &|item, triggers| {
+                let recipe = graph
+                    .recipe(item)
+                    .expect("the schedule only hands out items of its graph");
+                progress(Event::Start {
+                    item,
+                    triggers: &triggers,
+                });
+                let inputs = self.key_inputs(recipe)?;
+                self.build(recipe, &inputs)
+            },
+            &mut |item, outcome| {
+                db.record(&outcome.stored)?;
+                let cutoff = schedule.finish(item, &outcome.built);
+                progress(Event::Done {
+                    item,
+                    outcome,
+                    cutoff: &cutoff,
+                });
+                let made = match cutoff {
+                    Cutoff::Unchanged => Vec::new(),
+                    Cutoff::Changed(dirtied) => {
+                        {
+                            let mut triggers = triggers.borrow_mut();
+                            for dirtied in &dirtied {
+                                if let Some(why) = schedule.triggers(&dirtied.item) {
+                                    triggers.insert(dirtied.item.clone(), why.clone());
+                                }
+                            }
+                        }
+                        dirtied
+                            .into_iter()
+                            .filter(|dirtied| !dirtied.late)
+                            .map(|dirtied| dirtied.item)
+                            .collect()
+                    }
+                };
+                Ok(made)
+            },
+        );
+        match run {
+            Ok(built) => Ok(built.into_iter().map(|(_, outcome)| outcome).collect()),
+            Err(Failed::Build { item, error }) => Err(BuildFailure {
+                item: Some(item),
+                error,
+            }),
+            Err(Failed::Interrupted) => Err(BuildFailure {
+                item: None,
+                error: Box::new(BuildError::interrupted()),
+            }),
         }
-        Ok(outcomes)
     }
 
     /// Fetches every URL source of `recipe` into the source cache and
@@ -996,7 +1093,7 @@ fn item_dir(item: &Item) -> String {
     format!("{}+{}", item.name, item.variant)
 }
 
-fn problems(problems: Vec<Problem>) -> BuildError {
+pub(crate) fn problems(problems: Vec<Problem>) -> BuildError {
     let mut problems = problems.into_iter();
     let first = problems
         .next()

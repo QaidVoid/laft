@@ -363,6 +363,13 @@ pub(crate) fn wait(
         if let Some(status) = child.try_wait().map_err(io(log))? {
             return Ok(status);
         }
+        if laft_sandbox::terminated() {
+            kill(&mut child);
+            return Err(BuildError::problem(
+                "B045",
+                format!("{what} was interrupted, see {}", log.display()),
+            ));
+        }
         if let Some(peak) = peak
             && sampled.elapsed() >= SAMPLE_INTERVAL
         {
@@ -370,16 +377,7 @@ pub(crate) fn wait(
             sample_peak(child.id(), peak);
         }
         if Instant::now() >= deadline {
-            // A group with the child's pid as its id exists only when the
-            // child leads it, so this never reaches unrelated processes.
-            if let Some(pid) = i32::try_from(child.id())
-                .ok()
-                .and_then(rustix::process::Pid::from_raw)
-            {
-                let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-            }
-            let _ = child.kill();
-            let _ = child.wait();
+            kill(&mut child);
             return Err(BuildError::problem(
                 "B030",
                 format!("{what} ran longer than {}", duration_text(timeout)),
@@ -387,6 +385,24 @@ pub(crate) fn wait(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Kills `child` and, when it leads one, its process group, so that
+/// nothing it started keeps writing to the tree. A sandboxed child is the
+/// supervisor that waits outside the sandbox's PID namespace, and killing
+/// it lets the death signal of the first process of the namespace take
+/// every other process of it with it.
+fn kill(child: &mut Child) {
+    // A group with the child's pid as its id exists only when the child
+    // leads it, so this never reaches unrelated processes.
+    if let Some(pid) = i32::try_from(child.id())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// How often the resident memory of a running build is sampled.

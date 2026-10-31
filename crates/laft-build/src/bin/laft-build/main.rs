@@ -135,6 +135,9 @@ struct Context {
 fn run(cli: Cli) -> Result<(), Failure> {
     let root = BuildRoot::new(build_root(cli.root)?);
     let json = cli.json;
+    if matches!(cli.command, Command::Build { .. } | Command::Stage { .. }) {
+        laft_sandbox::catch_termination();
+    }
     let lock = match writer(&cli.command) {
         Some(command) => Some(lock(&root, command)?),
         None => None,
@@ -460,13 +463,11 @@ fn build(
         }
         return Ok(());
     }
-    let mut current: Option<Item> = None;
-    let mut report = Vec::new();
-    let result = builder.run(&graph, &mut schedule, &db, &mut |event| match event {
+    let report = std::sync::Mutex::new(Vec::new());
+    let result = builder.run(&graph, &mut schedule, &db, &|event| match event {
         Event::Start { item, triggers } => {
             let triggers: Vec<String> = triggers.iter().map(ToString::to_string).collect();
             eprintln!("building {item} ({})", triggers.join(", "));
-            current = Some(item.clone());
         }
         Event::Done {
             item,
@@ -488,12 +489,15 @@ fn build(
                 }
             };
             eprintln!("built {item}: {changes}");
-            report.push(json!({
-                "item": item.to_string(),
-                "packages": outcome.stored.files,
-                "buildinfo": outcome.stored.buildinfo,
-                "unchanged": matches!(cutoff, Cutoff::Unchanged),
-            }));
+            report
+                .lock()
+                .expect("the report cannot be poisoned")
+                .push(json!({
+                    "item": item.to_string(),
+                    "packages": outcome.stored.files,
+                    "buildinfo": outcome.stored.buildinfo,
+                    "unchanged": matches!(cutoff, Cutoff::Unchanged),
+                }));
             if !cx.json {
                 for file in &outcome.stored.files {
                     say(cx.root.out().join(file).display());
@@ -501,12 +505,12 @@ fn build(
             }
         }
     });
-    if let Err(error) = result {
+    if let Err(failed) = result {
         if shell_on_failure
-            && let Some(item) = &current
+            && let Some(item) = &failed.item
             && let Some(recipe) = graph.recipe(item)
         {
-            eprintln!("laft-build: {error}");
+            eprintln!("laft-build: {}", failed.error);
             let key = builder
                 .key_inputs(recipe)
                 .ok()
@@ -526,8 +530,9 @@ fn build(
                 );
             }
         }
-        return Err(error.into());
+        return Err((*failed.error).into());
     }
+    let report = report.into_inner().expect("the report cannot be poisoned");
     if cx.json {
         say(json!({ "built": report }));
     }
@@ -848,6 +853,7 @@ fn stage(
         jobs: options.jobs.unwrap_or_else(|| {
             std::thread::available_parallelism().map_or(1, |n| u32::try_from(n.get()).unwrap_or(1))
         }),
+        workers: 1,
         timeout: Duration::from_secs(options.timeout_hours * 3600),
         min_available: run.min_free_gib << 30,
         dry_run,
@@ -856,14 +862,14 @@ fn stage(
         mirrors: options.mirrors.clone(),
         lock,
     };
-    let mut report = Vec::new();
+    let report = std::sync::Mutex::new(Vec::new());
     let result = run_stage(
         &stage,
         &repos,
         &cache,
         build_root,
         &options,
-        &mut |event| match event {
+        &|event| match event {
             StageEvent::Start { step, what } => eprintln!("{step}: {what}: starting"),
             StageEvent::Waiting { available, needed } => eprintln!(
                 "waiting for memory: {} MiB available, {} MiB needed",
@@ -883,17 +889,23 @@ fn stage(
                         elapsed.as_secs()
                     ));
                 }
-                report.push(json!({
-                    "step": step,
-                    "what": what,
-                    "state": state.as_str(),
-                    "seconds": elapsed.as_secs(),
-                }));
+                report
+                    .lock()
+                    .expect("the report cannot be poisoned")
+                    .push(json!({
+                        "step": step,
+                        "what": what,
+                        "state": state.as_str(),
+                        "seconds": elapsed.as_secs(),
+                    }));
             }
         },
     );
     if json {
-        say(json!({ "stage": stage.name, "steps": report }));
+        say(json!({
+            "stage": stage.name,
+            "steps": report.into_inner().expect("the report cannot be poisoned"),
+        }));
     }
     result.map_err(|e| match e.code() {
         Some("R060") => Failure::Usage(e.to_string()),

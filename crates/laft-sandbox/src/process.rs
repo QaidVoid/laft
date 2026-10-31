@@ -39,6 +39,39 @@ pub fn reset_signal_dispositions() {
     }
 }
 
+/// Whether the process was asked to terminate since
+/// [`catch_termination`].
+///
+/// ```
+/// assert!(!laft_sandbox::terminated());
+/// laft_sandbox::catch_termination();
+/// assert!(!laft_sandbox::terminated());
+/// ```
+pub fn terminated() -> bool {
+    ASKED_TO_STOP.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Handles SIGINT and SIGTERM by marking [`terminated`], instead of
+/// ending the process. A caller checks the flag where it can stop without
+/// breaking anything and kills what it runs.
+///
+/// The handler writes one atomic, so it is async signal safe.
+pub fn catch_termination() {
+    // SAFETY: installing a handler that writes one atomic touches no
+    // memory but that atomic and registers no code that could unwind.
+    unsafe {
+        let handler = ask_to_stop as *const () as libc::sighandler_t;
+        libc::signal(libc::SIGINT, handler);
+        libc::signal(libc::SIGTERM, handler);
+    }
+}
+
+static ASKED_TO_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn ask_to_stop(_: libc::c_int) {
+    ASKED_TO_STOP.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The real, effective and saved user ids of the calling thread, in that
 /// order.
 ///

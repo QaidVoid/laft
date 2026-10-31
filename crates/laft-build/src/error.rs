@@ -37,6 +37,11 @@ impl BuildError {
         Self::Problem(Problem::new(code, message))
     }
 
+    /// The error of a run that SIGINT or SIGTERM stopped.
+    pub(crate) fn interrupted() -> Self {
+        Self::problem("B045", "the run was interrupted")
+    }
+
     /// The stable code of a [`BuildError::Problem`] or a
     /// [`BuildError::Source`], or `None` for the other kinds.
     pub fn code(&self) -> Option<&'static str> {

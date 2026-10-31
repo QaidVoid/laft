@@ -173,9 +173,9 @@ fn a_c_package_builds_in_the_sandbox_into_reproducible_packages() {
         planned,
         [format!("hello {:?}", BTreeSet::from([Trigger::New]))]
     );
-    let outcomes = match builder.run(&graph, &mut schedule, &db, &mut |_| {}) {
+    let outcomes = match builder.run(&graph, &mut schedule, &db, &|_| {}) {
         Ok(outcomes) => outcomes,
-        Err(e) => panic!("the build fails: {e}"),
+        Err(e) => panic!("the build fails: {}", e.error),
     };
     let outcome = &outcomes[0];
     let names: Vec<String> = outcome
@@ -290,14 +290,15 @@ fn a_c_package_builds_in_the_sandbox_into_reproducible_packages() {
     let (graph, mut schedule) = builder
         .plan(vec![recipe.clone()], &db, &forced, &none)
         .expect("the run plans");
-    let mut cutoffs = Vec::new();
+    let cutoffs = std::sync::Mutex::new(Vec::new());
     builder
-        .run(&graph, &mut schedule, &db, &mut |event| {
+        .run(&graph, &mut schedule, &db, &|event| {
             if let Event::Done { cutoff, .. } = event {
-                cutoffs.push(cutoff.clone());
+                cutoffs.lock().unwrap().push(cutoff.clone());
             }
         })
         .expect("the forced build succeeds");
+    let cutoffs = cutoffs.into_inner().unwrap();
     assert_eq!(
         cutoffs,
         [Cutoff::Unchanged],

@@ -54,6 +54,9 @@ mod test_support;
 pub use enter::{enter_view, private_mount_namespace};
 pub use error::Error;
 pub use fixed::{FixedSandbox, NOBODY};
-pub use process::{close_inherited_on_exec, group_ids, reset_signal_dispositions, user_ids};
+pub use process::{
+    catch_termination, close_inherited_on_exec, group_ids, reset_signal_dispositions, terminated,
+    user_ids,
+};
 pub use root::RootSandbox;
 pub use sandbox::{Command, HOSTNAME, MAX_OPEN_FILES, Network, Sandbox};

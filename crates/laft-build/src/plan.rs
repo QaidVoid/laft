@@ -356,6 +356,12 @@ impl Schedule {
         self.dirty.get(item)
     }
 
+    /// How long the latest build of `item` took, in seconds, or 0 when it
+    /// has no record.
+    pub(crate) fn duration(&self, item: &Item) -> u64 {
+        self.previous.get(item).map_or(0, |record| record.seconds)
+    }
+
     /// The next item to build, or `None` when the run is complete. Items
     /// that are up to date are skipped.
     pub fn next_build(&mut self) -> Option<Item> {

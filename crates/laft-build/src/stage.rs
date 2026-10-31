@@ -11,18 +11,20 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use laft_core::{Blake3Hash, PkgRef};
+use laft_core::{Blake3Hash, Name, PkgRef, Variant};
 use laft_sandbox::RootSandbox;
 use serde::Deserialize;
 use stav::{AttrPath, ImportRoot, Limits, RootSpec};
 
-use crate::build::{forget_key, installed_record, read_key, write_key};
+use crate::build::{forget_key, installed_record, problems, read_key, write_key};
 use crate::error::{BuildError, io};
 use crate::exec::{Executor, tail, wait};
+use crate::graph::BuildGraph;
 use crate::loader::Scope;
+use crate::scheduler::{Failed, Scheduler};
 use crate::{
     BuildRoot, Builder, Error, Item, KeyInputs, Mode, Problem, Recipe, Repos, Runner, SourceCache,
-    fsx, host, installed, repo, schema,
+    fsx, host, installed, repo, schema, view,
 };
 
 /// Where a step runs.
@@ -245,6 +247,8 @@ pub struct StageOptions {
     pub check: bool,
     /// The number of parallel jobs inside one build.
     pub jobs: u32,
+    /// The number of packages of one step that may build at once.
+    pub workers: usize,
     /// The longest one phase or script may run.
     pub timeout: Duration,
     /// The available memory, in bytes, that a build waits for when its
@@ -408,7 +412,7 @@ pub fn run_stage(
     cache: &SourceCache,
     build_root: &BuildRoot,
     options: &StageOptions,
-    progress: &mut dyn FnMut(StageEvent<'_>),
+    progress: &(dyn Fn(StageEvent<'_>) + Sync),
 ) -> Result<(), BuildError> {
     let store = stage.install == Install::Store;
     match (&options.root, store) {
@@ -451,7 +455,7 @@ fn run_steps(
     cache: &SourceCache,
     build_root: &BuildRoot,
     options: &StageOptions,
-    progress: &mut dyn FnMut(StageEvent<'_>),
+    progress: &(dyn Fn(StageEvent<'_>) + Sync),
 ) -> Result<(), BuildError> {
     let mode = match stage.install {
         Install::Store => Mode::Store,
@@ -460,6 +464,7 @@ fn run_steps(
     let mut builder = Builder::new(repos, cache, build_root, mode);
     builder.check = options.check && stage.install == Install::Store;
     builder.jobs = options.jobs;
+    builder.workers = options.workers;
     builder.timeout = options.timeout;
     builder.mirrors = options.mirrors.clone();
     if let Some(root) = &options.root {
@@ -660,18 +665,13 @@ impl StageRun<'_> {
         tag: &str,
         recipes: &[Recipe],
         previous: Option<Blake3Hash>,
-        progress: &mut dyn FnMut(StageEvent<'_>),
+        progress: &(dyn Fn(StageEvent<'_>) + Sync),
     ) -> Result<Blake3Hash, BuildError> {
         let mut keys = Vec::new();
         for recipe in recipes {
             keys.push(self.builder.key_inputs(recipe)?.build_key().to_string());
         }
-        let work = |keys: &[String]| match self.stage.install {
-            Install::Direct => serde_json::json!({ "packages": keys }),
-            Install::Packages => serde_json::json!({ "packages": keys, "install": "packages" }),
-            Install::Store => serde_json::json!({ "packages": keys, "install": "store" }),
-        };
-        let key = step_key(step, previous, &self.stage.path, work(&keys))?;
+        let key = step_key(step, previous, &self.stage.path, self.work(&keys))?;
         if !self.options.rebuild && read_key(&self.record(step))? == Some(key) {
             for recipe in recipes {
                 let what = Item::of(recipe).to_string();
@@ -692,20 +692,51 @@ impl StageRun<'_> {
                 self.builder.fetch(recipe)?;
             }
         }
+        let keys = match self.stage.install {
+            Install::Store => self.store_packages(step, tag, recipes, previous, progress)?,
+            Install::Direct | Install::Packages => {
+                self.chain_packages(step, tag, recipes, previous, &mut keys, progress)?;
+                keys
+            }
+        };
+        let key = step_key(step, previous, &self.stage.path, self.work(&keys))?;
+        if !self.options.dry_run {
+            write_key(&self.record(step), &key)?;
+        }
+        Ok(key)
+    }
+
+    /// What the step covers when it builds the packages whose build keys
+    /// are `keys`.
+    fn work(&self, keys: &[String]) -> serde_json::Value {
+        match self.stage.install {
+            Install::Direct => serde_json::json!({ "packages": keys }),
+            Install::Packages => serde_json::json!({ "packages": keys, "install": "packages" }),
+            Install::Store => serde_json::json!({ "packages": keys, "install": "store" }),
+        }
+    }
+
+    /// Builds the packages of a step that installs into its root, one at a
+    /// time, in the order the step names them. Extends `keys` with the
+    /// build key each package had when it started, and records each package
+    /// with the key of the step as if it ended with it, so that a failed
+    /// step resumes with the package that failed.
+    fn chain_packages(
+        &self,
+        step: &Step,
+        tag: &str,
+        recipes: &[Recipe],
+        previous: Option<Blake3Hash>,
+        keys: &mut [String],
+        progress: &(dyn Fn(StageEvent<'_>) + Sync),
+    ) -> Result<(), BuildError> {
         for (index, recipe) in recipes.iter().enumerate() {
             // A package that this step built before may have changed what
-            // the store holds for this one.
+            // the root holds for this one.
             let inputs = self.builder.key_inputs(recipe)?;
             keys[index] = inputs.build_key().to_string();
-            // A step that builds in parallel records each package under its
-            // own build key, so a resumed run skips the ones that are done
-            // in any order. A serial step chains them, so that a package is
-            // found again when every package before it is done.
-            let own = match self.stage.install {
-                Install::Store => vec![keys[index].clone()],
-                Install::Direct | Install::Packages => keys[..=index].to_vec(),
-            };
-            let done = step_key(step, previous, &self.stage.path, work(&own))?;
+            let own = keys[..=index].to_vec();
+            let done = step_key(step, previous, &self.stage.path, self.work(&own))?;
             let record = self.package_record(step, recipe);
             let state = if !self.options.rebuild && read_key(&record)? == Some(done) {
                 Some(StageState::UpToDate)
@@ -723,11 +754,115 @@ impl StageRun<'_> {
             self.package(step, tag, recipe, &inputs, progress)?;
             write_key(&record, &done)?;
         }
-        let key = step_key(step, previous, &self.stage.path, work(&keys))?;
-        if !self.options.dry_run {
-            write_key(&self.record(step), &key)?;
-        }
-        Ok(key)
+        Ok(())
+    }
+
+    /// Builds the packages of a store step with every package whose
+    /// dependencies within the step are done, up to
+    /// [`StageOptions::workers`] at once, and returns the build key each
+    /// package had when it started, in step order.
+    fn store_packages(
+        &self,
+        step: &Step,
+        tag: &str,
+        recipes: &[Recipe],
+        previous: Option<Blake3Hash>,
+        progress: &(dyn Fn(StageEvent<'_>) + Sync),
+    ) -> Result<Vec<String>, BuildError> {
+        let entries = view::usable(
+            view::store_entries(&self.builder.store)?,
+            &self.builder.seeds()?,
+        );
+        let known: BTreeSet<(Name, Variant)> = entries
+            .iter()
+            .map(|entry| (entry.meta.name.clone(), entry.meta.variant))
+            .collect();
+        let graph = BuildGraph::new(recipes.iter().cloned(), &|reference: &PkgRef| {
+            known.contains(&(reference.name().clone(), reference.variant()))
+        })
+        .map_err(problems)?;
+        let items: Vec<Item> = graph.items().cloned().collect();
+        let inside: BTreeSet<Item> = items.iter().cloned().collect();
+        let deps: BTreeMap<Item, BTreeSet<Item>> = items
+            .iter()
+            .map(|item| {
+                let waits: BTreeSet<Item> = graph
+                    .deps(item)
+                    .expect("the graph holds every recipe of the step")
+                    .all()
+                    .filter(|dep| inside.contains(*dep))
+                    .cloned()
+                    .collect();
+                (item.clone(), waits)
+            })
+            .collect();
+        let db = self.build_root.db();
+        let durations: BTreeMap<Item, u64> = items
+            .iter()
+            .map(|item| {
+                let seconds = db
+                    .latest(item)
+                    .ok()
+                    .flatten()
+                    .map_or(0, |latest| latest.record.seconds);
+                (item.clone(), seconds)
+            })
+            .collect();
+        let workers = self.options.workers;
+        let mut scheduler = Scheduler::new(items.clone(), deps, durations, workers);
+        let built = scheduler.run(
+            items,
+            &mut |_: &Item| (),
+            &|item, (): ()| {
+                let recipe = graph
+                    .recipe(item)
+                    .expect("the graph holds every recipe of the step");
+                let inputs = self.builder.key_inputs(recipe)?;
+                let built = inputs.build_key().to_string();
+                let done = step_key(
+                    step,
+                    previous,
+                    &self.stage.path,
+                    self.work(std::slice::from_ref(&built)),
+                )?;
+                let record = self.package_record(step, recipe);
+                if !self.options.rebuild && read_key(&record)? == Some(done) {
+                    let what = item.to_string();
+                    progress(finished(
+                        &step.name,
+                        &what,
+                        StageState::UpToDate,
+                        Duration::ZERO,
+                    ));
+                    return Ok(built);
+                }
+                if self.options.dry_run {
+                    let what = item.to_string();
+                    progress(finished(
+                        &step.name,
+                        &what,
+                        StageState::Pending,
+                        Duration::ZERO,
+                    ));
+                    return Ok(built);
+                }
+                forget_key(&record)?;
+                self.package(step, tag, recipe, &inputs, progress)?;
+                write_key(&record, &done)?;
+                Ok(built)
+            },
+            &mut |_, _| Ok(Vec::new()),
+        );
+        let built = match built {
+            Ok(built) => built,
+            Err(Failed::Build { error, .. }) => return Err(*error),
+            Err(Failed::Interrupted) => return Err(BuildError::interrupted()),
+        };
+        let keys: BTreeMap<Item, String> = built.into_iter().collect();
+        Ok(recipes
+            .iter()
+            .map(|recipe| keys[&Item::of(recipe)].clone())
+            .collect())
     }
 
     /// The record of `recipe` in the packages step `step`. A serial step
@@ -748,7 +883,7 @@ impl StageRun<'_> {
         tag: &str,
         recipe: &Recipe,
         inputs: &KeyInputs,
-        progress: &mut dyn FnMut(StageEvent<'_>),
+        progress: &(dyn Fn(StageEvent<'_>) + Sync),
     ) -> Result<(), BuildError> {
         let item = Item::of(recipe);
         let what = item.to_string();
@@ -908,7 +1043,7 @@ impl StageRun<'_> {
         step: &Step,
         tag: &str,
         previous: Option<Blake3Hash>,
-        progress: &mut dyn FnMut(StageEvent<'_>),
+        progress: &(dyn Fn(StageEvent<'_>) + Sync),
     ) -> Result<Blake3Hash, BuildError> {
         let Work::Script { script, env, view } = &step.work else {
             return Err(BuildError::problem(
@@ -1057,7 +1192,10 @@ impl StageRun<'_> {
         fsx::remove_tree(&scratch)
     }
 
-    fn wait_for_memory(&self, progress: &mut dyn FnMut(StageEvent<'_>)) -> Result<(), BuildError> {
+    fn wait_for_memory(
+        &self,
+        progress: &(dyn Fn(StageEvent<'_>) + Sync),
+    ) -> Result<(), BuildError> {
         let needed = self.options.min_available;
         loop {
             let available = available_memory()?;
