@@ -2,7 +2,7 @@
 
 <p class="lead">A recipe describes how one upstream project becomes Laft packages: where its source comes from, what it needs, and how to build it. Recipes are Stav files, so <code>laft-build</code> checks every field before a build starts.</p>
 
-The examples on this page come from the `laft-recipes` repository, which holds the 89 recipes of the base system and the bootstrap.
+The examples on this page come from the `laft-recipes` repository, which holds the base system, the bootstrap and additional tools for a usable system.
 
 ## The layout of a recipe repository
 

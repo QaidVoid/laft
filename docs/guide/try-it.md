@@ -253,3 +253,27 @@ tests/vm/run --self-built ~/.cache/laft-bootstrap/build/out
 ```
 
 That system has glibc, dash, bash, coreutils, util-linux, shadow, udev, runit, dosfstools, the kernel built from kernel.org sources and Limine built from source, with the configuration in `tests/vm/system-self-built.stav`. It boots without busybox, with udev populating `/dev`. Running it needs a finished bootstrap first, which takes hours.
+
+### Add usable tools and networking
+
+After stage 3, build the extra recipes against its existing store. This does not rebuild the base system. With `laft-recipes` next to the Laft checkout, run from the Laft directory:
+
+```sh
+cargo build --release --target x86_64-unknown-linux-musl -p laft-build
+target/x86_64-unknown-linux-musl/release/laft-build \
+  --root ~/.cache/laft-bootstrap/stage3 \
+  stage ../laft-recipes/bootstrap/usable.stav --jobs 12
+tests/vm/run --self-built ~/.cache/laft-bootstrap/stage3/out --usable --keep
+```
+
+This mode adds Vim, Git, curl, CA certificates, iproute2 and inetutils, and enables DHCP and OpenSSH with `tests/vm/system-usable.stav`. The host also needs `openssl`, `ssh-keygen` and `ssh` for disposable test credentials and local HTTPS fixtures.
+
+The test gives the guest a virtio NIC on restricted QEMU user networking. Only DHCP, loopback-bound SSH ingress and explicit local HTTP/HTTPS fixtures are available. No public network is used by these acceptance checks. They verify:
+
+- a DHCP address and subnet route, with no default route or DNS server under restricted networking, also after reboot;
+- non-root public-key SSH login with a pinned host key, and root login rejection;
+- Vim saving and reopening a file;
+- Git committing and cloning the content over SSH and HTTPS;
+- curl fetching HTTP and HTTPS, replaying cookies and rejecting an untrusted certificate.
+
+To explore the kept usable image with ordinary outbound networking, use the manual QEMU command above but replace `-nic none` with `-nic user,model=virtio-net-pci`. Keep the root password confined to a disposable VM. The acceptance harness deletes its host-side credentials after the test, so configure your own non-root account's SSH keys before adding an SSH port forward.

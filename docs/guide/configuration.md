@@ -242,7 +242,9 @@ service sshd { restart_delay = 5 }
 ```
 
 ::: info Packages behind the catalog
-The catalog refers to packages such as `openssh`, `dhcpcd` and `iwd` that the [recipe repository](./recipes) does not have yet. A configuration that includes them type checks, but resolving it needs a repository that provides them.
+The [recipe repository](./recipes) provides `openssh` and `dhcpcd`. Other catalog entries, such as `iwd`, still need recipes. Including a service type checks independently of package availability, but resolving it needs a repository that provides its packages.
+
+The SSH service creates missing host keys and its privilege-separation directory. Root and password logins are disabled. Declare a non-root user's `ssh_keys` for remote access. The DHCP service brings up loopback first and creates its writable state and runtime directories and an empty privilege-separation directory. Its resolver hook manages `/etc/resolv.conf`, which must remain writable and unmanaged by Laft.
 :::
 
 ### Services in full

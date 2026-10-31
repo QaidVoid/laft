@@ -75,14 +75,14 @@ Stage 0 builds without root, from any Linux system, with a statically linked `la
 
 ```sh
 laft-build --root ~/.cache/laft-bootstrap/build \
-  stage bootstrap/stage0.stav --target ~/.cache/laft-bootstrap/root --jobs 4
+  stage bootstrap/stage0.stav --target ~/.cache/laft-bootstrap/root --jobs 12
 ```
 
 Stage 1 builds the whole base system from `recipes/` inside that root, with the temporary toolchain. Each build makes real Laft packages, which stay in the build root's output directory and are unpacked into the root, so that each build after it uses them instead of the temporary tools:
 
 ```sh
 laft-build --root ~/.cache/laft-bootstrap/build \
-  stage bootstrap/stage1.stav --target ~/.cache/laft-bootstrap/root --jobs 4
+  stage bootstrap/stage1.stav --target ~/.cache/laft-bootstrap/root --jobs 12
 ```
 
 Its checkpoints check that the new toolchain compiles and runs C and C++ against the new glibc and libstdc++, and that the system has what a Laft machine boots with: dash as `/bin/sh`, the kernel and its modules, Limine, runit and udev.
@@ -95,7 +95,7 @@ Stage 1 packages were built with tools the host provided. Stage 2 rebuilds every
 laft-build --root ~/.cache/laft-bootstrap/stage2 \
   seed ~/.cache/laft-bootstrap/build/out/*.lpkg
 laft-build --root ~/.cache/laft-bootstrap/stage2 \
-  stage bootstrap/stage2.stav --jobs 4
+  stage bootstrap/stage2.stav --jobs 12
 ```
 
 The order follows the declared dependencies, toolchain first, so that every package after GCC is compiled by the stage 2 compiler. Each build sees only the build base and what its recipe declares.
@@ -108,14 +108,14 @@ Stage 3 seeds a third build root with the stage 2 packages alone, so no package 
 laft-build --root ~/.cache/laft-bootstrap/stage3 \
   seed ~/.cache/laft-bootstrap/stage2/out/*.lpkg
 laft-build --root ~/.cache/laft-bootstrap/stage3 \
-  stage bootstrap/stage3.stav --jobs 4
+  stage bootstrap/stage3.stav --jobs 12
 laft-build --root ~/.cache/laft-bootstrap/stage3 --recipes . check-repro
 ```
 
 The packages of a finished bootstrap boot in the virtual machine test with `tests/vm/run --self-built <dir>`, as described in [Try it in QEMU](./try-it#the-self-built-system).
 
 ::: tip Resources
-The bootstrap takes hours. Build with at most four jobs on a machine shared with other work. `laft-build stage` waits for `--min-free-gib` of available memory, 6 GiB by default, before each build whose recipe sets `ci { runner = big }`, such as GCC and glibc.
+The bootstrap takes hours. Choose a job budget that leaves room for other work. The examples use twelve jobs. `laft-build stage` waits for `--min-free-gib` of available memory, 6 GiB by default, before each build whose recipe sets `ci { runner = big }`, such as GCC and glibc.
 :::
 
 ## Publishing
