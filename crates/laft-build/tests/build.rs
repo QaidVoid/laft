@@ -1,14 +1,16 @@
 //! Builds a small C package from a local tarball with the host's compiler
 //! as the build view, in the sandbox, and checks the packages, their
 //! dependencies, the debug split, the buildinfo, early cutoff and that two
-//! builds give the same store ids.
+//! builds give the same store ids. Parallel runs keep the builds a package
+//! depends on ahead of it, share one job budget through a jobserver, and
+//! follow the memory and worker limits of the host.
 //!
 //! The test is skipped with a reason when the machine cannot run
 //! sandboxes or has no C toolchain in `/usr/bin`.
 
 mod support;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -72,15 +74,20 @@ fn unsupported(dir: &Path) -> Option<String> {
 
 /// A gzip compressed tarball of the sources below `hello-1.0/`.
 fn tarball() -> Vec<u8> {
+    tarball_of("hello-1.0", FILES)
+}
+
+/// A gzip compressed tarball of `files` below `name/`.
+fn tarball_of(name: &str, files: &[(&str, &str)]) -> Vec<u8> {
     let mut builder = tar::Builder::new(Vec::new());
-    for (name, text) in FILES {
+    for (file, text) in files {
         let mut header = tar::Header::new_gnu();
         header.set_size(text.len() as u64);
         header.set_mode(0o644);
         header.set_mtime(0);
         header.set_cksum();
         builder
-            .append_data(&mut header, format!("hello-1.0/{name}"), text.as_bytes())
+            .append_data(&mut header, format!("{name}/{file}"), text.as_bytes())
             .expect("the test setup works");
     }
     let tar = builder.into_inner().expect("the test setup works");
@@ -557,6 +564,515 @@ fn an_installing_build_sees_the_destination_and_no_toolchain() {
         .install(&recipe, &inputs, &dest)
         .expect_err("only bootstrap mode installs");
     assert_eq!(error.code(), Some("B041"));
+}
+
+/// A recipe repository whose `packages` are `(name, build_deps)` pairs
+/// that share the tarball `files` from a `file://` mirror below `dir`,
+/// with `body` rendered per package name after the source block.
+fn graph_repos(
+    dir: &Path,
+    files: &[(&str, &str)],
+    packages: &[(&str, &[&str])],
+    body: &dyn Fn(&str) -> String,
+) -> Repos {
+    let bytes = tarball_of("hello-1.0", files);
+    let hex: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let mirror = dir.join("mirror");
+    fs::create_dir_all(mirror.join("sha256")).expect("the test setup works");
+    fs::write(mirror.join("sha256").join(&hex), bytes).expect("the test setup works");
+    let mut recipes = Vec::new();
+    for (name, deps) in packages {
+        let mut text = format!(
+            "  source main {{\n    url = [\"https://example.org/hello-1.0.tar.gz\"]\n    \
+             sha256 = \"sha256:{hex}\"\n  }}\n"
+        );
+        if !deps.is_empty() {
+            text.push_str(&format!("  build_deps = [{}]\n", deps.join(", ")));
+        }
+        text.push_str(&body(name));
+        recipes.push((
+            format!("recipes/{name}/package.stav"),
+            support::recipe(name, &text),
+        ));
+    }
+    let repo = support::write_repo(
+        &dir.join("core"),
+        "core",
+        &format!("  source_mirrors = [\"file://{}\"]\n", mirror.display()),
+        &recipes
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_str()))
+            .collect::<Vec<_>>(),
+    );
+    Repos::open(&[repo]).expect("the repository opens")
+}
+
+/// The recipes of `packages`, one per package.
+fn evaluated(repos: &Repos, packages: &[(&str, &[&str])]) -> Vec<Recipe> {
+    packages
+        .iter()
+        .map(|(name, _)| support::evaluate(repos, name).remove(0))
+        .collect()
+}
+
+/// Where the host keeps shared libraries.
+const LIBRARY_DIRS: [&str; 6] = [
+    "/lib64",
+    "/usr/lib64",
+    "/lib",
+    "/usr/lib",
+    "/lib/x86_64-linux-gnu",
+    "/usr/lib/x86_64-linux-gnu",
+];
+
+/// The files of the host's `tools`, with the loader and the libraries
+/// they need, laid out below `usr` so that they run inside a store view.
+fn host_tool_files(tools: &[(&str, &str)]) -> Vec<(String, Vec<u8>)> {
+    let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut queue = Vec::new();
+    for (name, host) in tools {
+        let host = fs::canonicalize(host).expect("the host has the tool");
+        files.insert(
+            format!("usr/bin/{name}"),
+            fs::read(&host).expect("the host tool reads"),
+        );
+        queue.push(host);
+    }
+    let mut seen = BTreeSet::new();
+    while let Some(file) = queue.pop() {
+        let Some(elf) =
+            laft_elf::inspect(&fs::read(&file).expect("the file reads")).expect("the ELF inspects")
+        else {
+            continue;
+        };
+        let found = elf.needed.iter().filter_map(|lib| {
+            LIBRARY_DIRS
+                .iter()
+                .map(|d| Path::new(d).join(lib.as_str()))
+                .find(|path| path.exists())
+        });
+        for dep in elf.interpreter.iter().map(PathBuf::from).chain(found) {
+            if !seen.insert(dep.clone()) {
+                continue;
+            }
+            let host = dep.to_str().expect("a UTF-8 library path");
+            let host = host.strip_prefix('/').expect("an absolute library path");
+            let under = host.strip_prefix("usr/").unwrap_or(host);
+            let rel = match under.split_once('/') {
+                Some(("lib" | "lib64", tail)) => format!("usr/lib/{tail}"),
+                _ => format!("usr/{under}"),
+            };
+            files.insert(rel, fs::read(&dep).expect("the library reads"));
+            queue.push(dep);
+        }
+    }
+    files.into_iter().collect()
+}
+
+/// Adds a package `name` holding `files` to the store of `root`, with one
+/// file `usr/share/<name>/file` when `files` is empty.
+fn add_package(root: &BuildRoot, dir: &Path, name: &str, files: &[(String, Vec<u8>)]) {
+    use std::os::unix::fs::PermissionsExt;
+    let payload = dir.join(format!("payload-{name}"));
+    let default = format!("usr/share/{name}/file");
+    let own: Vec<(String, Vec<u8>)> = if files.is_empty() {
+        vec![(default, name.as_bytes().to_vec())]
+    } else {
+        files.to_vec()
+    };
+    for (rel, bytes) in &own {
+        let path = payload.join(rel);
+        fs::create_dir_all(path.parent().expect("a file has a parent")).expect("writable");
+        fs::write(&path, bytes).expect("writable");
+        let mode = if rel.starts_with("usr/bin/") || bytes.starts_with(b"\x7fELF") {
+            0o555
+        } else {
+            0o444
+        };
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).expect("chmod");
+    }
+    let mut meta = laft_pkg::Meta {
+        format: laft_pkg::FORMAT,
+        name: name.parse().expect("a valid name"),
+        version: "1.0".parse().expect("a valid version"),
+        rev: 1,
+        variant: laft_core::Variant::Dynamic,
+        arch: laft_pkg::Arch::X86_64V3,
+        origin: name.parse().expect("a valid name"),
+        summary: "A test package".into(),
+        homepage: None,
+        license: vec!["MIT".into()],
+        depends: vec![],
+        provides: vec![],
+        conflicts: vec![],
+        replaces: vec![],
+        alternatives: vec![],
+        triggers: vec![],
+        static_deps: vec![],
+        abi: Default::default(),
+        abi_epoch: 2,
+        requested_privileges: vec![],
+        installed_size: 0,
+    };
+    let entries = laft_pkg::scan(&payload).expect("scannable");
+    meta.installed_size = entries
+        .iter()
+        .map(|e| match e {
+            laft_pkg::Entry::File { size, .. } => *size,
+            _ => 0,
+        })
+        .sum();
+    let manifest = laft_pkg::Manifest::new(
+        meta.identity(),
+        laft_core::Blake3Hash::of(&meta.to_json().expect("valid meta")),
+        entries,
+    )
+    .expect("a valid manifest");
+    let file = dir.join(manifest.package().file_name());
+    let mut out = fs::File::create(&file).expect("writable");
+    laft_pkg::write_package(
+        &mut out,
+        &payload,
+        &meta,
+        &manifest,
+        laft_pkg::Compression::DEVELOPMENT,
+    )
+    .expect("the package is written");
+    root.store()
+        .insert(&file, &manifest.store_id(), &dir.join("tmp"))
+        .expect("the package enters the store");
+}
+
+/// Fills the store of `root` with the build base, `dash` carrying the
+/// host's `sh`, `make` and `flock` with the libraries they need.
+fn seed_store(root: &BuildRoot, dir: &Path) {
+    let tools = host_tool_files(&[
+        ("sh", "/bin/sh"),
+        ("make", "/usr/bin/make"),
+        ("flock", "/usr/bin/flock"),
+        ("sleep", "/usr/bin/sleep"),
+        ("mkdir", "/usr/bin/mkdir"),
+        ("cat", "/usr/bin/cat"),
+        ("dd", "/usr/bin/dd"),
+        ("wc", "/usr/bin/wc"),
+    ]);
+    for name in laft_build::view::BUILD_BASE {
+        let own: &[(String, Vec<u8>)] = if *name == "dash" { &tools } else { &[] };
+        add_package(root, dir, name, own);
+    }
+}
+
+/// The gigabytes of memory the host holds for new work, rounded down.
+fn available_gib() -> u64 {
+    fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find(|line| line.starts_with("MemAvailable:"))
+                .and_then(|line| line.split_whitespace().nth(1).map(String::from))
+        })
+        .and_then(|kib| kib.parse::<u64>().ok())
+        .map_or(0, |kib| kib / (1 << 20))
+}
+
+/// The highest number of jobs one `make` ran at once, read from the meter
+/// of every kept working tree.
+fn meter_peaks(root: &BuildRoot) -> Vec<u32> {
+    let mut peaks = Vec::new();
+    for entry in fs::read_dir(root.work()).expect("the working trees are kept") {
+        let path = entry.expect("a work tree").path().join("build/tmp/m");
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        peaks.push(text.trim().parse().expect("the meter holds a number"));
+    }
+    peaks
+}
+
+#[test]
+fn a_run_builds_a_package_only_after_the_packages_it_depends_on() {
+    let dir = laft_test::tempdir();
+    if let Some(reason) = unsupported(dir.path()) {
+        println!("skipping: {reason}");
+        return;
+    }
+    let packages: &[(&str, &[&str])] = &[
+        ("a", &[]),
+        ("b", &["a"]),
+        ("c", &["a"]),
+        ("d", &["b", "c"]),
+        ("e", &[]),
+        ("f", &["e"]),
+        ("g", &["f"]),
+    ];
+    let repos = graph_repos(dir.path(), FILES, packages, &marker_phase);
+    let (root, cache) = offline_cache(dir.path());
+    let mut builder = Builder::new(&repos, &cache, &root, Mode::View("/usr".into()));
+    builder.jobs = 4;
+    builder.workers = 4;
+    let db = root.db();
+    let none = BTreeSet::new();
+    let (graph, mut schedule) = builder
+        .plan(evaluated(&repos, packages), &db, &none, &none)
+        .expect("the run plans");
+    let events = std::sync::Mutex::new(Vec::new());
+    if let Err(e) = builder.run(&graph, &mut schedule, &db, &|event| {
+        let mut events = events.lock().unwrap();
+        match event {
+            Event::Start { item, .. } => events.push(("start", item.to_string())),
+            Event::Done { item, .. } => events.push(("done", item.to_string())),
+            Event::Waiting { .. } => {}
+        }
+    }) {
+        panic!("the run fails: {}", e.error);
+    }
+    let events = events.into_inner().unwrap();
+    assert_eq!(
+        events.len(),
+        2 * packages.len(),
+        "every build starts and finishes: {events:?}"
+    );
+    for (kind, item) in &events {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(k, i)| k == kind && i == item)
+                .count(),
+            1,
+            "{item} reports {kind} once: {events:?}"
+        );
+    }
+    for (index, (kind, item)) in events.iter().enumerate() {
+        if *kind != "start" {
+            continue;
+        }
+        let deps = packages
+            .iter()
+            .find(|(name, _)| name == item)
+            .expect("a fixture package")
+            .1;
+        for dep in deps {
+            assert!(
+                events[..index]
+                    .iter()
+                    .any(|(kind, done)| *kind == "done" && done == dep),
+                "{item} starts before {dep} is done: {events:?}"
+            );
+        }
+    }
+}
+
+/// Builds the graph `packages` with `workers`, and returns the build key
+/// and the output ids of every package.
+fn graph_records(
+    dir: &Path,
+    packages: &[(&str, &[&str])],
+    workers: usize,
+) -> BTreeMap<String, (String, Vec<String>)> {
+    let repos = graph_repos(dir, FILES, packages, &marker_phase);
+    let (root, cache) = offline_cache(dir);
+    let mut builder = Builder::new(&repos, &cache, &root, Mode::View("/usr".into()));
+    builder.jobs = 4;
+    builder.workers = workers;
+    let db = root.db();
+    let none = BTreeSet::new();
+    let (graph, mut schedule) = builder
+        .plan(evaluated(&repos, packages), &db, &none, &none)
+        .expect("the run plans");
+    let records = std::sync::Mutex::new(BTreeMap::new());
+    if let Err(e) = builder.run(&graph, &mut schedule, &db, &|event| {
+        if let Event::Done { item, outcome, .. } = event {
+            let mut outputs: Vec<String> = outcome
+                .built
+                .outputs
+                .iter()
+                .map(|(name, id)| format!("{name} {id}"))
+                .collect();
+            outputs.sort();
+            records.lock().expect("the records unlock").insert(
+                item.to_string(),
+                (outcome.stored.record.key.to_string(), outputs),
+            );
+        }
+    }) {
+        panic!("the run fails: {}", e.error);
+    }
+    records.into_inner().expect("the records unlock")
+}
+
+#[test]
+fn a_run_gives_the_same_records_with_one_and_four_workers() {
+    let dir = laft_test::tempdir();
+    if let Some(reason) = unsupported(dir.path()) {
+        println!("skipping: {reason}");
+        return;
+    }
+    let packages: &[(&str, &[&str])] = &[
+        ("a", &[]),
+        ("b", &["a"]),
+        ("c", &["a"]),
+        ("d", &["b", "c"]),
+        ("e", &[]),
+        ("f", &["e"]),
+        ("g", &["f"]),
+    ];
+    let one = graph_records(&dir.path().join("one"), packages, 1);
+    let four = graph_records(&dir.path().join("four"), packages, 4);
+    assert_eq!(one.len(), packages.len(), "every package has a record");
+    assert_eq!(one, four, "the same build keys and outputs");
+}
+
+/// The `make` recipe of the job meter: eight jobs that each count
+/// themselves up under a `flock` guard, sleep, and count themselves down
+/// again, so the highest count is the most jobs `make` ran at once.
+const METER_MAKEFILE: &str = "all: job1 job2 job3 job4 job5 job6 job7 job8
+job1 job2 job3 job4 job5 job6 job7 job8:
+\t@flock \"$$TMPDIR/lock\" sh -c 'n=$$(cat \"$$TMPDIR/n\" 2>/dev/null || echo 0); \
+n=$$((n+1)); echo $$n > \"$$TMPDIR/n\"; m=$$(cat \"$$TMPDIR/m\" 2>/dev/null || echo 0); \
+if [ $$n -gt $$m ]; then echo $$n > \"$$TMPDIR/m\"; fi'
+\t@sleep 0.2
+\t@flock \"$$TMPDIR/lock\" sh -c 'echo $$(( $$(cat \"$$TMPDIR/n\") - 1 )) > \"$$TMPDIR/n\"'
+.PHONY: all job1 job2 job3 job4 job5 job6 job7 job8
+";
+
+#[test]
+fn the_builds_of_a_store_run_share_one_job_budget() {
+    let dir = laft_test::tempdir();
+    if let Some(reason) = unsupported(dir.path()) {
+        println!("skipping: {reason}");
+        return;
+    }
+    for tool in ["make", "flock"] {
+        if !Path::new("/usr/bin").join(tool).exists() {
+            println!("skipping: /usr/bin/{tool} is missing");
+            return;
+        }
+    }
+    let packages: &[(&str, &[&str])] = &[
+        ("meter-a", &[]),
+        ("meter-b", &[]),
+        ("meter-c", &[]),
+        ("meter-d", &[]),
+    ];
+    let meter = &[("Makefile", METER_MAKEFILE), ("LICENSE", FILES[4].1)];
+    let repos = graph_repos(dir.path(), meter, packages, &|_| {
+        "  build custom {}\n  env = { LD_LIBRARY_PATH = \"/usr/lib\" }\n  phases {\n    \
+         build = \"test -p /build/jobserver\"\n    install = \"cd \\\"$SRC\\\" && make \
+         && mkdir -p \\\"$OUT/usr/share\\\" && echo m > \\\"$OUT/usr/share/m\\\"\"\n  }\n"
+            .to_owned()
+    });
+    let (root, cache) = offline_cache(dir.path());
+    seed_store(&root, dir.path());
+    let mut builder = Builder::new(&repos, &cache, &root, Mode::Store);
+    builder.jobs = 6;
+    builder.workers = 3;
+    builder.keep_work = true;
+    builder.share_jobs().expect("the jobserver opens");
+    let db = root.db();
+    let none = BTreeSet::new();
+    let (graph, mut schedule) = builder
+        .plan(evaluated(&repos, packages), &db, &none, &none)
+        .expect("the run plans");
+    if let Err(e) = builder.run(&graph, &mut schedule, &db, &|_| {}) {
+        panic!("the run fails: {}", e.error);
+    }
+    let peaks = meter_peaks(&root);
+    assert_eq!(peaks.len(), packages.len(), "every build keeps a meter");
+    for peak in peaks {
+        assert!(peak >= 2, "make runs more than one job at once: {peak}");
+        assert!(
+            peak <= 4,
+            "make sees more than its one job and the three spare tokens: {peak}"
+        );
+    }
+}
+
+/// The install phase of a package that writes its own marker file.
+fn marker_phase(name: &str) -> String {
+    format!(
+        "  build custom {{}}\n  phases {{\n    install = \"mkdir -p \\\"$OUT/usr/share\\\" \
+         && echo {name} > \\\"$OUT/usr/share/{name}\\\"\"\n  }}\n"
+    )
+}
+
+#[test]
+fn a_big_build_runs_alone_while_small_builds_share_the_workers() {
+    let dir = laft_test::tempdir();
+    if let Some(reason) = unsupported(dir.path()) {
+        println!("skipping: {reason}");
+        return;
+    }
+    if available_gib() < 4 {
+        let free = available_gib();
+        println!("skipping: the host holds {free} GiB, a second build needs three");
+        return;
+    }
+    let packages: &[(&str, &[&str])] = &[
+        ("big-a", &[]),
+        ("big-b", &[]),
+        ("small-a", &[]),
+        ("small-b", &[]),
+    ];
+    let repos = graph_repos(dir.path(), FILES, packages, &|name| {
+        let runner = if name.starts_with("big") {
+            "  ci { runner = big }\n"
+        } else {
+            ""
+        };
+        format!("{}{}", runner, marker_phase(name))
+    });
+    let (root, cache) = offline_cache(dir.path());
+    let mut builder = Builder::new(&repos, &cache, &root, Mode::View("/usr".into()));
+    builder.jobs = 4;
+    builder.workers = 4;
+    builder.min_available = 0;
+    let db = root.db();
+    let none = BTreeSet::new();
+    let (graph, mut schedule) = builder
+        .plan(evaluated(&repos, packages), &db, &none, &none)
+        .expect("the run plans");
+    let events = std::sync::Mutex::new(Vec::new());
+    if let Err(e) = builder.run(&graph, &mut schedule, &db, &|event| {
+        let mut events = events.lock().unwrap();
+        match event {
+            Event::Start { item, .. } => events.push(("start", item.to_string())),
+            Event::Done { item, .. } => events.push(("done", item.to_string())),
+            Event::Waiting { .. } => {}
+        }
+    }) {
+        panic!("the run fails: {}", e.error);
+    }
+    let events = events.into_inner().unwrap();
+    let mut running: BTreeSet<String> = BTreeSet::new();
+    let mut running_big = 0;
+    for (kind, item) in &events {
+        let big = item.starts_with("big");
+        if *kind == "start" {
+            if big {
+                assert_eq!(running_big, 0, "a big build runs alone: {events:?}");
+                running_big += 1;
+            }
+            running.insert(item.clone());
+        } else {
+            if big {
+                running_big -= 1;
+            }
+            running.remove(item);
+        }
+    }
+    assert!(running.is_empty(), "every build finishes: {events:?}");
+    for name in ["small-a", "small-b"] {
+        assert!(
+            events
+                .iter()
+                .take(4)
+                .any(|(kind, item)| *kind == "start" && item == name),
+            "both small builds start while the first big build runs: {events:?}"
+        );
+    }
 }
 
 #[test]
