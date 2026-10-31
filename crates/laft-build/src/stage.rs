@@ -769,14 +769,26 @@ impl StageRun<'_> {
         .map_err(problems)?;
         let items: Vec<Item> = graph.items().cloned().collect();
         let inside: BTreeSet<Item> = items.iter().cloned().collect();
+        // The step builds its packages in the order the stage file names
+        // them, so a package waits only for the dependencies the serial
+        // order builds before it: the store serves the rest, as a seed or
+        // as the package of an earlier step.
+        let stage_position: BTreeMap<Item, usize> = recipes
+            .iter()
+            .enumerate()
+            .map(|(index, recipe)| (Item::of(recipe), index))
+            .collect();
+        let order: Vec<Item> = recipes.iter().map(Item::of).collect();
         let deps: BTreeMap<Item, BTreeSet<Item>> = items
             .iter()
             .map(|item| {
+                let at = stage_position.get(item).copied().unwrap_or(usize::MAX);
                 let waits: BTreeSet<Item> = graph
                     .deps(item)
                     .expect("the graph holds every recipe of the step")
                     .all()
                     .filter(|dep| inside.contains(*dep))
+                    .filter(|dep| stage_position.get(*dep).is_some_and(|d| *d < at))
                     .cloned()
                     .collect();
                 (item.clone(), waits)
@@ -829,7 +841,7 @@ impl StageRun<'_> {
             available: &|| available_memory(),
             waiting: &|needed, available| progress(StageEvent::Waiting { available, needed }),
         };
-        let mut scheduler = Scheduler::new(items.clone(), deps, durations, workers, memory);
+        let mut scheduler = Scheduler::new(order, deps, durations, workers, memory);
         let built = scheduler.run(
             items,
             &mut |_: &Item| (),

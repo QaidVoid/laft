@@ -1285,6 +1285,53 @@ fn a_package_built_after_its_link_dependency_in_one_step_is_up_to_date_next_time
 }
 
 #[test]
+fn a_store_step_builds_packages_whose_seed_dependencies_cycle() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = host_tools_stage(
+        dir.path(),
+        r#"    { name = "build", packages = [first, second] },"#,
+    );
+    // `first` links against `second` and `second` builds with `first`, a
+    // cycle that no order of the step alone satisfies. The store holds a
+    // seed of `second`, which serves `first` until the step builds
+    // `second` after it, like the stage file orders them.
+    for (name, deps) in [
+        ("first", "  link_deps = [second]"),
+        ("second", "  build_deps = [first]"),
+    ] {
+        fs::create_dir_all(stage.recipes.join(format!("recipes/{name}"))).unwrap();
+        fs::write(
+            stage.recipes.join(format!("recipes/{name}/package.stav")),
+            RECIPE
+                .replace("greet", name)
+                .replace("greeting", &format!("{name}-file"))
+                .replace(
+                    "  build custom {}",
+                    &format!(
+                        "  build custom {{}}\n  env = {{ LD_LIBRARY_PATH = \"/usr/lib\" }}\n{deps}"
+                    ),
+                ),
+        )
+        .unwrap();
+    }
+    store_with_host_tools(dir.path());
+    let store = BuildRoot::new(dir.path().join("build")).store();
+    crate::test_support::TestPkg::new("second").add(&store, dir.path());
+    let result = run_with(dir.path(), &stage, &store_options(dir.path()));
+    if refused(&result) {
+        return;
+    }
+    let states = result.expect("the step builds both packages of the cycle");
+    assert!(
+        states.iter().all(|(_, s)| *s == StageState::Done),
+        "{states:?}"
+    );
+}
+
+#[test]
 fn a_store_step_skips_the_packages_that_are_still_done_after_another_changes() {
     if no_shell() {
         return;
