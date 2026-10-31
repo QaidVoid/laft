@@ -74,6 +74,18 @@ fn states(
     options: &StageOptions,
     checked: bool,
 ) -> Result<Vec<(String, StageState)>, BuildError> {
+    let (states, result) = states_and_result(dir, stage, options, checked);
+    result.map(|()| states)
+}
+
+/// Runs `stage` like [`states`], and returns the states it reported even
+/// when the run failed.
+fn states_and_result(
+    dir: &Path,
+    stage: &Stage,
+    options: &StageOptions,
+    checked: bool,
+) -> (Vec<(String, StageState)>, Result<(), BuildError>) {
     let repos = Repos::open(&[&stage.recipes]).unwrap();
     let build_root = BuildRoot::new(dir.join("build"));
     let config = Config {
@@ -81,18 +93,18 @@ fn states(
         ..Config::new(dir.join("cache"))
     };
     let cache = SourceCache::new(build_root.sources(), Fetcher::new(config));
-    let mut states = Vec::new();
+    let states = std::cell::RefCell::new(Vec::new());
     let mut progress = |event: StageEvent<'_>| {
         if let StageEvent::Finished { step, state, .. } = event {
-            states.push((step.to_owned(), state));
+            states.borrow_mut().push((step.to_owned(), state));
         }
     };
-    if checked {
-        run_stage(stage, &repos, &cache, &build_root, options, &mut progress)?;
+    let result = if checked {
+        run_stage(stage, &repos, &cache, &build_root, options, &mut progress)
     } else {
-        run_steps(stage, &repos, &cache, &build_root, options, &mut progress)?;
-    }
-    Ok(states)
+        run_steps(stage, &repos, &cache, &build_root, options, &mut progress)
+    };
+    (states.into_inner(), result)
 }
 
 /// Runs `stage` into `dir/root` and returns the states it reported.
@@ -1266,6 +1278,121 @@ fn a_package_built_after_its_link_dependency_in_one_step_is_up_to_date_next_time
     assert!(
         second.iter().all(|(_, s)| *s == StageState::UpToDate),
         "{second:?}"
+    );
+}
+
+#[test]
+fn a_store_step_skips_the_packages_that_are_still_done_after_another_changes() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = linked_stage(
+        dir.path(),
+        r#"    { name = "build", packages = [base, greet, top] },"#,
+    );
+    // The build of top needs a package the store does not have yet, so the
+    // step stops after base and greet are done.
+    fs::create_dir_all(stage.recipes.join("recipes/top")).unwrap();
+    fs::write(
+        stage.recipes.join("recipes/top/package.stav"),
+        r#"package top {
+  version = "1"
+  summary = "Tops"
+  license = [MIT]
+  empty   = true
+  build custom {}
+  env     = { LD_LIBRARY_PATH = "/usr/lib" }
+  build_deps = [tool]
+  phases {
+    install = "true"
+  }
+}
+"#,
+    )
+    .unwrap();
+    store_with_host_tools(dir.path());
+    let result = run_with(dir.path(), &stage, &store_options(dir.path()));
+    if refused(&result) {
+        return;
+    }
+    let error = result.unwrap_err();
+    assert_eq!(error.code(), Some("B050"), "{error}");
+
+    // A summary edit of base gives base a new build key, but the key of
+    // greet, which links against it, stays the same.
+    let base = stage.recipes.join("recipes/base/package.stav");
+    let text = fs::read_to_string(&base)
+        .unwrap()
+        .replace("Lies beneath", "Lies above");
+    fs::write(&base, text).unwrap();
+
+    let (second, result) = states_and_result(dir.path(), &stage, &store_options(dir.path()), true);
+    let error = result.unwrap_err();
+    assert_eq!(error.code(), Some("B050"), "{error}");
+    assert_eq!(
+        second,
+        [
+            ("build".to_owned(), StageState::Done),
+            ("build".to_owned(), StageState::UpToDate),
+        ],
+        "greet is not rebuilt after base changed",
+    );
+}
+
+#[test]
+fn a_store_step_resumes_with_the_package_that_failed() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = linked_stage(
+        dir.path(),
+        r#"    { name = "build", packages = [base, greet] },"#,
+    );
+    // The check phase of greet fails while the checks run, and the run
+    // after it, without checks, builds the rest of greet.
+    fs::create_dir_all(stage.recipes.join("recipes/greet")).unwrap();
+    fs::write(
+        stage.recipes.join("recipes/greet/package.stav"),
+        r#"package greet {
+  version = "1"
+  summary = "Greets"
+  license = [MIT]
+  empty   = true
+  build custom {}
+  env     = { LD_LIBRARY_PATH = "/usr/lib" }
+  link_deps = [base]
+  phases {
+    check = "exit 1"
+    install = """
+      mkdir -p "$DESTDIR/usr/share"
+      echo hi > "$DESTDIR/usr/share/greeting"
+      """
+  }
+}
+"#,
+    )
+    .unwrap();
+    store_with_host_tools(dir.path());
+    let checked = StageOptions {
+        check: true,
+        ..store_options(dir.path())
+    };
+    let result = run_with(dir.path(), &stage, &checked);
+    if refused(&result) {
+        return;
+    }
+    let error = result.unwrap_err();
+    assert_eq!(error.code(), Some("B040"), "{error}");
+    let second = run_with(dir.path(), &stage, &store_options(dir.path())).unwrap();
+    assert_eq!(
+        second,
+        [
+            ("build".to_owned(), StageState::UpToDate),
+            ("build".to_owned(), StageState::Done)
+        ],
+        "base is not rebuilt after greet failed"
     );
 }
 

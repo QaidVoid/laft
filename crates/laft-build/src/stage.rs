@@ -697,7 +697,15 @@ impl StageRun<'_> {
             // the store holds for this one.
             let inputs = self.builder.key_inputs(recipe)?;
             keys[index] = inputs.build_key().to_string();
-            let done = step_key(step, previous, &self.stage.path, work(&keys[..=index]))?;
+            // A step that builds in parallel records each package under its
+            // own build key, so a resumed run skips the ones that are done
+            // in any order. A serial step chains them, so that a package is
+            // found again when every package before it is done.
+            let own = match self.stage.install {
+                Install::Store => vec![keys[index].clone()],
+                Install::Direct | Install::Packages => keys[..=index].to_vec(),
+            };
+            let done = step_key(step, previous, &self.stage.path, work(&own))?;
             let record = self.package_record(step, recipe);
             let state = if !self.options.rebuild && read_key(&record)? == Some(done) {
                 Some(StageState::UpToDate)
@@ -722,9 +730,12 @@ impl StageRun<'_> {
         Ok(key)
     }
 
-    /// The record of `recipe` in the packages step `step`, which holds the
-    /// key of the step as if it ended with `recipe`, so that a failed step
-    /// resumes with the package that failed.
+    /// The record of `recipe` in the packages step `step`. A serial step
+    /// records the key of the step as if it ended with `recipe`, so that a
+    /// failed step resumes with the package that failed. A step that
+    /// builds in parallel records the key of the step with `recipe` as its
+    /// only package, so that the finished packages of one step stand on
+    /// their own.
     fn package_record(&self, step: &Step, recipe: &Recipe) -> PathBuf {
         let mut record = self.record(step).into_os_string();
         record.push(".packages");
