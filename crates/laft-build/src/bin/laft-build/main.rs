@@ -337,6 +337,9 @@ fn builder<'a>(cx: &'a Context, mode: Mode, options: Option<&BuildOptions>) -> B
         if let Some(jobs) = options.jobs {
             builder.jobs = jobs;
         }
+        if let Some(workers) = options.workers {
+            builder.workers = usize::try_from(workers).unwrap_or(usize::MAX);
+        }
         builder.timeout = Duration::from_secs(options.timeout_hours * 3600);
         builder.mirrors = options.mirrors.clone();
     }
@@ -860,7 +863,9 @@ fn stage(
         jobs: options.jobs.unwrap_or_else(|| {
             std::thread::available_parallelism().map_or(1, |n| u32::try_from(n.get()).unwrap_or(1))
         }),
-        workers: 1,
+        workers: options
+            .workers
+            .map_or(1, |n| usize::try_from(n).unwrap_or(usize::MAX)),
         timeout: Duration::from_secs(options.timeout_hours * 3600),
         min_available: run.min_free_gib << 30,
         dry_run,
