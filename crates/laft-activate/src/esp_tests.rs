@@ -203,6 +203,10 @@ fn temporary_files_of_an_interrupted_install_are_swept() {
     fs::write(esp.join("laft/.tmp-999-2"), b"partial kernel").unwrap();
     fs::write(esp.join("laft/.tmp-999-3"), b"partial initramfs").unwrap();
     fs::create_dir(esp.join("laft/.tmp-999-4")).unwrap();
+    // Foreign names that merely start with `.tmp-` or end like a boot
+    // file are not laft's; they stay.
+    fs::write(esp.join("laft/.tmp-notes"), b"not ours").unwrap();
+    fs::create_dir(esp.join("laft/old.vmlinuz")).unwrap();
     fs::write(esp.join("startup.nsh"), b"unrelated").unwrap();
 
     let installed = install_boot(&env.root, &esp).unwrap();
@@ -227,12 +231,43 @@ fn temporary_files_of_an_interrupted_install_are_swept() {
     }
     assert!(esp.join("laft/.tmp-999-4").is_dir(), "a directory stays");
     assert_eq!(
+        fs::read(esp.join("laft/.tmp-notes")).unwrap(),
+        b"not ours",
+        "a foreign .tmp- file stays"
+    );
+    assert!(esp.join("laft/old.vmlinuz").is_dir(), "a directory stays");
+    assert_eq!(
         fs::read(esp.join("startup.nsh")).unwrap(),
         b"unrelated",
         "unrelated files stay"
     );
     assert_menu_files_exist(&esp);
     assert_eq!(installed.copied.len(), 2, "{:?}", installed.copied);
+}
+
+#[test]
+fn a_failed_copy_leaves_no_temporary_file() {
+    let env = Env::new();
+    let dir = generation(&env, 1, "6.17.4-laft1", b"one", "{}");
+    let esp = esp(&env);
+    // A directory where the kernel should be makes the copy fail after
+    // the temporary file is created.
+    let kernel = dir.join("usr/lib/modules/6.17.4-laft1/vmlinuz");
+    fs::remove_file(&kernel).unwrap();
+    fs::create_dir(&kernel).unwrap();
+    let error = install_boot(&env.root, &esp).unwrap_err();
+    assert!(error.to_string().contains("directory"), "{error}");
+    let names: Vec<_> = fs::read_dir(esp.join("laft"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(names.is_empty(), "{names:?}");
+
+    // With the kernel readable again, a retry installs a full menu.
+    fs::remove_dir(&kernel).unwrap();
+    fs::write(&kernel, b"one").unwrap();
+    install_boot(&env.root, &esp).unwrap();
+    assert_menu_files_exist(&esp);
 }
 
 #[test]

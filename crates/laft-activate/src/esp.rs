@@ -94,11 +94,12 @@ impl MenuEntry {
 /// generation before the menu, so a new menu is never read by an old
 /// Limine.
 ///
-/// Temporary files of an interrupted installation, which start with
-/// `.tmp-` beside the files at the root of the partition, in `EFI/BOOT`
-/// and in `laft/`, are removed before anything is written. Installations
-/// are serialized by the caller through the transaction lock, so no
-/// concurrent installation creates any.
+/// Temporary files of an interrupted installation, named
+/// `.tmp-<pid>-<n>` beside the files at the root of the partition, in
+/// `EFI/BOOT` and in `laft/`, are removed before anything is written.
+/// Files and directories with any other name are left alone.
+/// Installations are serialized by the caller through the transaction
+/// lock, so no concurrent installation creates any.
 ///
 /// The menu settings come from the configuration of the default
 /// generation, or of the newest one when none is the default. Generations
@@ -115,8 +116,10 @@ impl MenuEntry {
 /// use laft_activate::{check_esp, install_boot};
 /// use laft_store::Root;
 ///
+/// let root = Root::default();
+/// let _lock = root.lock("install-boot")?;
 /// check_esp(Path::new("/boot"))?;
-/// let installed = install_boot(&Root::default(), Path::new("/boot"))?;
+/// let installed = install_boot(&root, Path::new("/boot"))?;
 /// println!("boot menu: {:?}", installed.entries);
 /// # Ok::<(), laft_activate::Error>(())
 /// ```
@@ -231,14 +234,14 @@ pub fn install_boot(root: &Root, esp: &Path) -> Result<BootInstall> {
     names.sort();
     for name in names {
         let path = laft.join(&name);
-        if name.starts_with(".tmp-") {
+        if is_temp_name(&name) {
             if fs::symlink_metadata(&path).map_err(io(&path))?.is_dir() {
                 continue;
             }
             fs::remove_file(&path).map_err(io(&path))?;
             install.removed.push(format!("laft/{name}"));
         } else if name.ends_with(".vmlinuz") || name.ends_with(".initramfs") {
-            if wanted.contains(&name) {
+            if wanted.contains(&name) || fs::symlink_metadata(&path).map_err(io(&path))?.is_dir() {
                 continue;
             }
             fs::remove_file(&path).map_err(io(&path))?;
@@ -253,10 +256,10 @@ fn gen_dir(root: &Root, number: u64) -> std::path::PathBuf {
     root.path().join("laft/gens").join(number.to_string())
 }
 
-/// Removes the `.tmp-` files an interrupted installation left at the root
-/// of the partition, in `EFI/BOOT` and in `laft/`, and syncs each directory
-/// it emptied. No menu references those names, so the old menu stays
-/// complete while they go.
+/// Removes the `.tmp-<pid>-<n>` files an interrupted installation left at
+/// the root of the partition, in `EFI/BOOT` and in `laft/`, and syncs each
+/// directory it emptied. No menu references those names, so the old menu
+/// stays complete while they go. Other names are left alone.
 fn sweep_temps(esp: &Path, install: &mut BootInstall) -> Result<()> {
     let dirs = [
         (esp.to_path_buf(), ""),
@@ -277,7 +280,7 @@ fn sweep_temps(esp: &Path, install: &mut BootInstall) -> Result<()> {
                 continue;
             }
             let name = item.file_name().to_string_lossy().into_owned();
-            if name.starts_with(".tmp-") {
+            if is_temp_name(&name) {
                 names.push(name);
             }
         }
@@ -415,6 +418,20 @@ fn tmp_name() -> String {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     format!(".tmp-{}-{n}", std::process::id())
+}
+
+/// Whether `name` is a temporary name this crate writes: `.tmp-` followed
+/// by two non-empty dot-separated parts of ASCII digits. Foreign files
+/// that merely start with `.tmp-` do not match and are left alone.
+fn is_temp_name(name: &str) -> bool {
+    name.strip_prefix(".tmp-")
+        .and_then(|rest| rest.split_once('-'))
+        .is_some_and(|(pid, n)| {
+            !pid.is_empty()
+                && !n.is_empty()
+                && pid.bytes().all(|b| b.is_ascii_digit())
+                && n.bytes().all(|b| b.is_ascii_digit())
+        })
 }
 
 /// Copies `source` to `target` through a synced temporary file in the
