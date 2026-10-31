@@ -366,6 +366,10 @@ impl<'a> Builder<'a> {
     /// outputs stop at once and changed ones mark the dependents they
     /// affect. Stops at the first failure.
     ///
+    /// The sources of every item that needs a build are fetched before the
+    /// first one starts, so builds never race on the source cache and a
+    /// bad URL or hash fails the run before anything is built.
+    ///
     /// # Errors
     ///
     /// Fails like [`Builder::build`], and when the database cannot be
@@ -382,6 +386,15 @@ impl<'a> Builder<'a> {
         db: &Db,
         progress: &mut dyn FnMut(Event<'_>),
     ) -> Result<Vec<Outcome>, BuildError> {
+        for item in schedule.order() {
+            if schedule.triggers(item).is_none() {
+                continue;
+            }
+            let recipe = graph
+                .recipe(item)
+                .expect("the schedule only hands out items of its graph");
+            self.fetch(recipe)?;
+        }
         let mut outcomes = Vec::new();
         while let Some(item) = schedule.next_build() {
             let recipe = graph

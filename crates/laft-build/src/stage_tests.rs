@@ -1106,6 +1106,92 @@ fn a_view_the_store_cannot_satisfy_stops_the_stage() {
     assert!(!dir.path().join("build/stages/demo/check").exists());
 }
 
+/// A store stage whose step builds `grumpy`, which fails, and `greet`,
+/// which installs the greeting of a source that a mirror below `dir`
+/// serves, and the store with the build base in it.
+fn failing_store_stage(dir: &Path) -> Stage {
+    use sha2::Digest;
+    let hex = |bytes: &[u8]| {
+        sha2::Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let (greeting, grump) = (hex(b"hi\n"), hex(b"grr\n"));
+    let mirror = dir.join("mirror/sha256");
+    fs::create_dir_all(&mirror).unwrap();
+    fs::write(mirror.join(&greeting), b"hi\n").unwrap();
+    fs::write(mirror.join(&grump), b"grr\n").unwrap();
+    let stage = host_tools_stage(dir, r#"    { name = "step", packages = [grumpy, greet] },"#);
+    fs::write(
+        stage.recipes.join("recipes.stav"),
+        format!(
+            "recipe_repo t {{\n  source_mirrors = [\"file://{}\"]\n}}\n",
+            dir.join("mirror").display()
+        ),
+    )
+    .unwrap();
+    let source = |name: &str, hash: &str, phase: &str| {
+        format!(
+            r#"package {name} {{
+  version = "1"
+  summary = "A package"
+  license = [MIT]
+  env = {{ LD_LIBRARY_PATH = "/usr/lib" }}
+  source main {{
+    url     = ["https://example.org/{name}"]
+    sha256  = "sha256:{hash}"
+    extract = false
+  }}
+  build custom {{}}
+  phases {{
+    install = """
+      {phase}
+      """
+  }}
+}}
+"#
+        )
+    };
+    fs::create_dir_all(stage.recipes.join("recipes/grumpy")).unwrap();
+    fs::write(
+        stage.recipes.join("recipes/grumpy/package.stav"),
+        source("grumpy", &grump, "exit 1"),
+    )
+    .unwrap();
+    fs::write(
+        stage.recipes.join("recipes/greet/package.stav"),
+        source("greet", &greeting, "test -f \"$SRC/greeting\""),
+    )
+    .unwrap();
+    store_with_host_tools(dir);
+    stage
+}
+
+#[test]
+fn the_sources_of_a_step_are_fetched_before_its_first_build() {
+    use sha2::Digest;
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = failing_store_stage(dir.path());
+    let result = run_with(dir.path(), &stage, &store_options(dir.path()));
+    if refused(&result) {
+        return;
+    }
+    let error = result.unwrap_err();
+    assert_eq!(error.code(), Some("B040"), "{error}");
+    let hex: String = sha2::Sha256::digest(b"hi\n")
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert!(
+        dir.path().join("build/sources/sha256").join(&hex).is_file(),
+        "the source of greet is cached even though grumpy failed"
+    );
+}
+
 /// The recipe of `base`, which `greet` links against in
 /// [`linked_stage`].
 const BASE: &str = r#"package base {

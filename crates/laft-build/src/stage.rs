@@ -687,6 +687,11 @@ impl StageRun<'_> {
         if !self.options.dry_run {
             forget_key(&self.record(step))?;
         }
+        if self.stage.install == Install::Store {
+            for recipe in recipes {
+                self.builder.fetch(recipe)?;
+            }
+        }
         for (index, recipe) in recipes.iter().enumerate() {
             // A package that this step built before may have changed what
             // the store holds for this one.
