@@ -290,7 +290,7 @@ SystemConfig {
                 cwd: "/",
                 umask: 18,
                 after: [
-                    "loopback",
+                    "dhcpcd-loopback",
                 ],
                 ready: Immediate,
                 log: Logged,
@@ -350,7 +350,7 @@ SystemConfig {
                     ),
                 },
             },
-            "loopback": Service {
+            "dhcpcd-loopback": Service {
                 description: "Loopback interface",
                 kind: Oneshot,
                 enable: true,

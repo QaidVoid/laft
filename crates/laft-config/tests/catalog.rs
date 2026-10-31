@@ -96,7 +96,7 @@ fn dhcpcd_brings_up_loopback_before_configuring_interfaces() {
     let config = with_catalog("include services.dhcpcd()")
         .expect("valid")
         .config;
-    let loopback = &config.services.services["loopback"];
+    let loopback = &config.services.services["dhcpcd-loopback"];
     assert_eq!(
         loopback.up,
         ["/usr/bin/ip", "link", "set", "dev", "lo", "up"]
@@ -112,8 +112,17 @@ fn dhcpcd_brings_up_loopback_before_configuring_interfaces() {
     assert!(
         config.services.services["dhcpcd"]
             .after
-            .contains(&"loopback".to_owned())
+            .contains(&"dhcpcd-loopback".to_owned())
     );
+}
+
+#[test]
+fn dhcpcd_does_not_merge_into_an_unrelated_loopback_service() {
+    let config =
+        with_catalog("service loopback { exec = [\"/usr/bin/true\"] }\ninclude services.dhcpcd()")
+            .expect("independent services")
+            .config;
+    assert_eq!(config.services.services["loopback"].exec, ["/usr/bin/true"]);
 }
 
 #[test]

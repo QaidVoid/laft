@@ -71,7 +71,7 @@ fn elogind() -> Part<System> = part {
 
 ## The dhcpcd DHCP client for every interface, with loopback brought up first.
 fn dhcpcd() -> Part<System> = part {
-  service loopback {
+  service dhcpcd-loopback {
     description = default("Loopback interface")
     kind        = default(oneshot)
     up          = default(["/usr/bin/ip", "link", "set", "dev", "lo", "up"])
@@ -81,7 +81,7 @@ fn dhcpcd() -> Part<System> = part {
   service dhcpcd {
     description = default("DHCP client")
     exec        = default(["/usr/bin/dhcpcd", "-B"])
-    after       = [loopback]
+    after       = [dhcpcd-loopback]
     state_dirs  = [Dir { path = "empty", owner = root, group = root },
                    Dir { path = "dhcpcd", owner = dhcpcd, group = dhcpcd }]
     runtime_dirs = [Dir { path = "dhcpcd", owner = dhcpcd, group = dhcpcd }]
