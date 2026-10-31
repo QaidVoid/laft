@@ -150,13 +150,18 @@ pub(crate) fn clear_dir(dir: &Path) -> Result<()> {
 
 /// Deletes the published tree `path` so that readers see it either whole or
 /// gone: it is renamed to `trash` (in the staging directory of the same
-/// filesystem) first, then removed.
+/// filesystem) first, then removed. A symlink at `path` is removed without
+/// touching its target. Missing trees are fine.
 pub(crate) fn retire(path: &Path, trash: &Path) -> Result<()> {
-    if fs::symlink_metadata(path).is_err_and(|e| e.kind() == io::ErrorKind::NotFound) {
-        return Ok(());
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(io(path)(e)),
+    };
+    if metadata.is_dir() {
+        // A cross-directory rename of a directory needs write permission on it.
+        set_mode(path, 0o700)?;
     }
-    // A cross-directory rename of a directory needs write permission on it.
-    set_mode(path, 0o700)?;
     remove_tree(trash)?;
     fs::rename(path, trash).map_err(io(path))?;
     sync_dir(parent(path))?;

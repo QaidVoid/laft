@@ -1,10 +1,10 @@
 use std::fs::{self, File};
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::time::{Duration, SystemTime};
 
 use rustix::fs::FlockOperation;
 
-use crate::test_support::{Built, Env, Pkg, apply, assert_consistent, commit, name};
+use crate::test_support::{Built, Env, Pkg, apply, assert_consistent, assert_mode, commit, name};
 use crate::{Decision, GcPolicy, Subject, plan_gc};
 
 fn deleted(decisions: &[Decision]) -> Vec<String> {
@@ -185,6 +185,29 @@ fn gc_keeps_pinned_entries_and_referenced_views() {
         Subject::Generation(4)
     ));
     assert_consistent(&env.root);
+}
+
+#[test]
+fn retire_removes_symlinks_without_touching_their_targets() {
+    let dir = laft_test::tempdir();
+    let target = dir.path().join("target");
+    fs::write(&target, b"kept").expect("can write");
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).expect("can chmod");
+    let live = dir.path().join("live");
+    symlink(&target, &live).expect("can link");
+    let dangling = dir.path().join("dangling");
+    symlink("gone", &dangling).expect("can link");
+    let trash = dir.path().join("trash");
+
+    crate::fsx::retire(&live, &trash).expect("retires the live link");
+    assert!(fs::symlink_metadata(&live).is_err(), "the link is gone");
+    assert_eq!(fs::read(&target).expect("the target survives"), b"kept");
+    assert_mode(&target, 0o600);
+
+    crate::fsx::retire(&dangling, &trash).expect("retires the dangling link");
+    assert!(fs::symlink_metadata(&dangling).is_err(), "the link is gone");
+
+    crate::fsx::retire(&trash, &trash).expect("a missing path is fine");
 }
 
 /// Replaces the content of a sealed record file and returns the old bytes.
