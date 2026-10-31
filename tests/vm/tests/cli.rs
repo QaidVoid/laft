@@ -42,3 +42,13 @@ fn fixture_relay_forwards_binary_replies_before_the_connection_closes() {
     result.expect("binary reply arrives while the server connection is open");
     assert_eq!(bytes, packet);
 }
+
+#[test]
+fn fixture_relay_rejects_missing_ports_with_a_diagnostic() {
+    let output = Command::new(env!("CARGO_BIN_EXE_laft-vmtest"))
+        .arg("--fixture-relay")
+        .output()
+        .expect("start fixture relay");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires exactly one port"));
+}

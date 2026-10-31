@@ -36,7 +36,7 @@ fn usable_requires_an_explicit_package_directory_in_either_order() {
 }
 
 #[test]
-fn usable_checks_install_and_publish_their_shell_tools() {
+fn usable_system_requests_and_publishes_its_test_tools() {
     let config = include_str!("../system-usable.stav");
     let packages = config
         .split("packages = [")
@@ -47,7 +47,7 @@ fn usable_checks_install_and_publish_their_shell_tools() {
         .expect("package entries");
     for tool in ["findutils", "diffutils"] {
         assert!(
-            system::USABLE_PACKAGES.contains(&tool) || system::SELF_BUILT_PACKAGES.contains(&tool),
+            system::USABLE_PACKAGES.contains(&tool),
             "missing published package: {tool}"
         );
         assert!(
@@ -55,6 +55,20 @@ fn usable_checks_install_and_publish_their_shell_tools() {
             "missing requested package: {tool}"
         );
     }
+}
+
+#[test]
+fn installer_errors_include_failure_after_package_installation() {
+    let transcript = format!("{}1\n", installer::DONE);
+    let error = check_install_result(&transcript, Path::new("install.log")).unwrap_err();
+    assert!(
+        error.starts_with("installer exited with status 1"),
+        "{error}"
+    );
+    assert!(!error.contains("laft install exited"));
+    assert!(
+        check_install_result(&format!("{}0\n", installer::DONE), Path::new("install.log")).is_ok()
+    );
 }
 
 #[test]

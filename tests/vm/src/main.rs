@@ -174,7 +174,10 @@ fn main() -> ExitCode {
                     ExitCode::FAILURE
                 }
             },
-            _ => ExitCode::FAILURE,
+            _ => {
+                eprintln!("laft-vmtest: fixture relay requires exactly one port");
+                ExitCode::FAILURE
+            }
         };
     }
     let (keep, system) = match options(arguments) {
@@ -281,7 +284,12 @@ fn install(
     machine.expect("the installer finishes", installer::DONE)?;
     machine.wait()?;
     let _ = fs::remove_file(initrd);
-    let transcript = machine.transcript();
+    check_install_result(&machine.transcript(), &paths.work.join("install.log"))?;
+    eprintln!("laft-vmtest: ok: laft install succeeded");
+    Ok(())
+}
+
+fn check_install_result(transcript: &str, log: &Path) -> Result<()> {
     let status = transcript
         .split(installer::DONE)
         .nth(1)
@@ -289,11 +297,10 @@ fn install(
         .unwrap_or_default();
     if status != "0" {
         return Err(fail(format!(
-            "laft install exited with status {status}, see {}",
-            paths.work.join("install.log").display()
+            "installer exited with status {status}, see {}",
+            log.display()
         )));
     }
-    eprintln!("laft-vmtest: ok: laft install succeeded");
     Ok(())
 }
 

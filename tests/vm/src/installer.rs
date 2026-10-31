@@ -17,8 +17,8 @@ use crate::packages::package_file;
 use crate::system::System;
 use crate::{Paths, Result, fail};
 
-/// The line the installer prints when it is done, followed by the exit
-/// status of `laft install`.
+/// The line the installer prints when it is done, followed by the status
+/// of package installation and any disposable fixture provisioning.
 pub(crate) const DONE: &str = "laft-vmtest: install finished with status ";
 
 /// The installer's `/init`.
