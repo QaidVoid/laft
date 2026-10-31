@@ -188,6 +188,64 @@ fn gc_keeps_pinned_entries_and_referenced_views() {
 }
 
 #[test]
+fn a_session_that_starts_after_planning_aborts_the_collection() {
+    let env = Env::new();
+    let viewed = Pkg::new("viewed", "1")
+        .file("usr/bin/viewed", b"v")
+        .build(&env);
+    let old = Pkg::new("old", "1").file("usr/bin/old", b"o").build(&env);
+    {
+        let lock = env.lock();
+        apply(&lock, &[&viewed], Some("dev")).expect("generation 1 with dev@1");
+        apply(&lock, &[&old], Some("dev")).expect("generation 2 with dev@2");
+    }
+    let lock = env.lock();
+    let policy = GcPolicy {
+        keep_generations: 1,
+        keep_days: 0,
+    };
+    let plan = plan_gc(&lock, &policy, SystemTime::now()).expect("plans");
+    assert_eq!(
+        deleted(plan.decisions()),
+        ["gen 1", "view dev@1", "viewed 1-r1"]
+    );
+
+    let session =
+        File::open(env.root.view_dir(&name("dev"), 1).join("view.json")).expect("view.json exists");
+    rustix::fs::flock(&session, FlockOperation::LockShared).expect("can lock");
+    let error = plan
+        .execute(&lock)
+        .expect_err("the busy view aborts the collection");
+    assert!(
+        matches!(&error, crate::Error::Invalid(m) if m.contains("view dev@1") && m.contains("again")),
+        "{error}"
+    );
+    assert_eq!(env.root.generations().expect("lists"), vec![1, 2]);
+    assert!(env.root.view_dir(&name("dev"), 1).exists());
+    assert!(
+        env.root
+            .store()
+            .list()
+            .expect("lists")
+            .contains(&viewed.dir)
+    );
+    assert_consistent(&env.root);
+
+    drop(session);
+    plan.execute(&lock).expect("collects once the session left");
+    assert!(fs::symlink_metadata(env.root.view_dir(&name("dev"), 1)).is_err());
+    assert_eq!(env.root.generations().expect("lists"), vec![2]);
+    assert!(
+        !env.root
+            .store()
+            .list()
+            .expect("lists")
+            .contains(&viewed.dir)
+    );
+    assert_consistent(&env.root);
+}
+
+#[test]
 fn retire_removes_symlinks_without_touching_their_targets() {
     let dir = laft_test::tempdir();
     let target = dir.path().join("target");

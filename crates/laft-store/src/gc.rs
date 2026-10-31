@@ -107,16 +107,25 @@ impl GcPlan {
     /// Each is renamed into the staging directory before it is removed, so
     /// readers see it whole or not at all.
     ///
+    /// Before deleting anything, every view version the plan deletes gets
+    /// its exclusive lock, which is held until the deletion is done. When a
+    /// session already entered one of them, nothing is deleted, because the
+    /// plan's store deletions were computed together with the view
+    /// deletions: delete a part, and the busy view could lose files it
+    /// still needs. Run the collection again.
+    ///
     /// The plan must have been made under `lock`.
     ///
     /// # Errors
     ///
-    /// Fails when something cannot be deleted. Whatever was deleted stays
-    /// deleted, and the next collection finishes the job.
+    /// Fails when a view version came into use after planning, or when
+    /// something cannot be deleted. Whatever was deleted stays deleted, and
+    /// the next collection finishes the job.
     pub fn execute(&self, lock: &Lock) -> Result<()> {
         let root = lock.root();
         let tmp = root.tmp_dir();
         let store = root.store();
+        let _condemned = self.lock_condemned_views(root)?;
         let mut views = BTreeSet::new();
         for decision in self.decisions.iter().filter(|d| !d.keep) {
             match &decision.subject {
@@ -143,6 +152,35 @@ impl GcPlan {
             }
         }
         Ok(())
+    }
+
+    /// Takes the exclusive lock on the `view.json` of every view version
+    /// this plan deletes, so a session that enters one of them waits until
+    /// the deletion is done and is then refused by its removed-record
+    /// check. The locks are released when the returned files are dropped.
+    fn lock_condemned_views(&self, root: &Root) -> Result<Vec<File>> {
+        let mut locks = Vec::new();
+        for decision in self.decisions.iter().filter(|d| !d.keep) {
+            let Subject::View { name, version } = &decision.subject else {
+                continue;
+            };
+            let path = root.view_dir(name, *version).join("view.json");
+            let file = match File::open(&path) {
+                Ok(file) => file,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(io(&path)(e)),
+            };
+            match rustix::fs::flock(&file, FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => locks.push(file),
+                Err(rustix::io::Errno::WOULDBLOCK) => {
+                    return Err(crate::Error::Invalid(format!(
+                        "view {name}@{version} came into use after planning; run garbage collection again"
+                    )));
+                }
+                Err(e) => return Err(io(&path)(e)),
+            }
+        }
+        Ok(locks)
     }
 }
 
