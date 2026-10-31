@@ -1,12 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, Read};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use laft_core::{Blake3Hash, Name, StoreId, system_gid, system_uid};
 use laft_pkg::{Entry, Manifest, Meta, Reader};
+use rustix::fs::{FileType, Mode, OFlags};
+use rustix::io::Errno;
 
 use crate::error::{Error, Result, corrupt, io};
 use crate::{PackageInput, PackageRecord, fsx, view};
@@ -99,7 +101,7 @@ impl Store {
     /// at most a staging directory in `tmp`; an entry it already renamed
     /// into place is complete, but its top directory may still be
     /// unsealed, and the next add seals it. Adding a package whose entry
-    /// exists does nothing.
+    /// exists succeeds without rewriting the entry.
     ///
     /// # Errors
     ///
@@ -297,8 +299,9 @@ impl Store {
     /// is taken.
     ///
     /// The entry itself is accepted. When an interrupted publication left
-    /// it unsealed, it is sealed again. Anything else occupying the name
-    /// fails with [`Error::Corrupt`].
+    /// it unsealed, it is sealed again. Wrong occupants, such as a symlink
+    /// or another package's manifest, are rejected with [`Error::Corrupt`];
+    /// a place that cannot be read fails with [`Error::Io`].
     fn accept_existing(&self, dir_name: &str, expected: &StoreId) -> Result<bool> {
         let path = self.path(dir_name);
         let metadata = match fs::symlink_metadata(&path) {
@@ -310,13 +313,7 @@ impl Store {
             return Err(corrupt(&path, "the store entry is not a directory"));
         }
         let manifest_path = path.join(MANIFEST_PATH);
-        let bytes = match fs::read(&manifest_path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                return Err(corrupt(&manifest_path, "the entry has no manifest"));
-            }
-            Err(e) => return Err(io(&manifest_path)(e)),
-        };
+        let bytes = read_manifest(&manifest_path)?;
         let id = StoreId::from_manifest_hash(&Blake3Hash::of(&bytes));
         if id != *expected {
             return Err(corrupt(
@@ -395,6 +392,30 @@ pub(crate) fn entry_dir_name(manifest: &Manifest) -> String {
     manifest
         .store_id()
         .dir_name(&package.name, &package.version, package.variant)
+}
+
+/// Reads the manifest at `path` without following a symlink and without
+/// blocking on a FIFO, so a corrupt entry can neither point the read
+/// outside the store nor hang the add.
+fn read_manifest(path: &Path) -> Result<Vec<u8>> {
+    let file = rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    )
+    .map_err(|errno| match errno {
+        Errno::NOENT => corrupt(path, "the entry has no manifest"),
+        Errno::LOOP => corrupt(path, "the manifest is a symlink"),
+        errno => io(path)(errno),
+    })?;
+    let stat = rustix::fs::fstat(&file).map_err(io(path))?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+        return Err(corrupt(path, "the manifest is not a regular file"));
+    }
+    let mut file = File::from(file);
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(io(path))?;
+    Ok(bytes)
 }
 
 fn missing(dir_name: &str, path: &Path, e: io::Error) -> Error {

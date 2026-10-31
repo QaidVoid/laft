@@ -327,6 +327,45 @@ fn something_else_in_an_entrys_place_is_refused() {
 }
 
 #[test]
+fn a_manifest_that_is_not_a_regular_file_is_refused() {
+    let env = Env::new();
+    let package = sample(&env);
+    let base = env.root.path().join("builder");
+    let store = crate::Store::at(base.join("store"));
+    let tmp = base.join("tmp");
+    let dir = store
+        .insert(&package.path, &package.id, &tmp)
+        .expect("the package is added");
+    for path in [store.path(&dir), store.path(&dir).join(".laft")] {
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    let manifest = store.path(&dir).join(".laft/manifest.json");
+    fs::rename(&manifest, store.path(&dir).join(".laft/kept.json")).expect("can move");
+
+    std::os::unix::fs::symlink("../../elsewhere", &manifest).expect("can link");
+    let error = store
+        .insert(&package.path, &package.id, &tmp)
+        .expect_err("the symlinked manifest is refused");
+    assert!(matches!(error, Error::Corrupt { .. }), "{error}");
+    assert!(error.to_string().contains("symlink"), "{error}");
+
+    fs::remove_file(&manifest).expect("can remove the link");
+    rustix::fs::mkfifoat(
+        rustix::fs::CWD,
+        &manifest,
+        rustix::fs::Mode::from_raw_mode(0o644),
+    )
+    .expect("can create a fifo");
+    let error = store
+        .insert(&package.path, &package.id, &tmp)
+        .expect_err("the fifo is refused");
+    assert!(error.to_string().contains("not a regular file"), "{error}");
+
+    fs::remove_file(&manifest).expect("can remove the fifo");
+    assert_eq!(store.list().expect("lists"), vec![dir], "nothing changed");
+}
+
+#[test]
 fn a_publication_collision_is_checked_and_never_replaces() {
     let env = Env::new();
     let package = sample(&env);
