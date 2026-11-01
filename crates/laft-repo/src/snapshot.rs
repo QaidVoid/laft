@@ -9,28 +9,29 @@ use crate::error::{Error, Result};
 use crate::fsx;
 use crate::layout::Repository;
 
-/// The zstd level the snapshot is compressed with. A fixed level keeps the
-/// archive reproducible.
+/// The zstd level the snapshot is compressed with. A fixed level and the
+/// same tree give the same archive with the same zstd library version; a
+/// zstd upgrade may encode the same tree into different bytes, which then
+/// live under their own hash until the old generation is gone.
 const LEVEL: i32 = 19;
 
 /// Packs the recipe repository at `source` into `repo` and returns the
 /// `recipes` member naming it.
 ///
-/// The tree is packed as a normalized tarball: entries are sorted by path
-/// and carry no owner names, no times but [`laft_build::SOURCE_DATE_EPOCH`]
-/// and no modes but the directory and executable bits. The same tree
-/// therefore always gives the same archive, and two generations built from
-/// it share one file. An existing file is kept, because published files
-/// never change.
+/// The tree is packed as a normalized tarball: entries are sorted by path,
+/// the `.git` and `.jj` directories of the tree are left out, and entries
+/// carry no owner names, no times but [`laft_build::SOURCE_DATE_EPOCH`] and
+/// no modes but the directory and executable bits. The same tree therefore
+/// always gives the same archive with the same zstd library version, and
+/// two generations built from it share one file. An existing file is kept,
+/// because published files never change.
 ///
 /// # Errors
 ///
 /// Fails when the tree cannot be packed or the archive cannot be written.
 pub(crate) fn write(repo: &Repository, source: &Path) -> Result<RecipeSnapshot> {
     let tar = repo.path("recipes/.packing.tar");
-    if let Some(parent) = tar.parent() {
-        std::fs::create_dir_all(parent).map_err(crate::error::io(&tar))?;
-    }
+    fsx::ensure_dir(tar.parent().unwrap_or_else(|| std::path::Path::new(".")))?;
     if fsx::size(&tar)?.is_some() {
         fsx::remove(&tar)?;
     }
@@ -42,9 +43,7 @@ pub(crate) fn write(repo: &Repository, source: &Path) -> Result<RecipeSnapshot> 
     let file = format!("recipes/{blake3}.tar.zst");
     let path = repo.path(&file);
     if fsx::size(&path)?.is_none() {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(crate::error::io(&path))?;
-        }
+        fsx::ensure_dir(path.parent().unwrap_or_else(|| std::path::Path::new(".")))?;
         fsx::write_atomic(&path, &bytes, fsx::FILE_MODE)?;
     }
     Ok(RecipeSnapshot {

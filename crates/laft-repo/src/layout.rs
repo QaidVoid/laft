@@ -8,8 +8,10 @@
 //! ├── recipes/<blake3>.tar.zst
 //! └── channels/<channel>/<arch>/
 //!     ├── index.json.zst, index.json.zst.minisig
-//!     ├── profiles/<profile>/  index.json.zst, index.json.zst.minisig
-//!     └── snapshots/<generation>.json.zst, <generation>.json.zst.minisig
+//!     ├── snapshots/<generation>.json.zst, <generation>.json.zst.minisig
+//!     └── profiles/<profile>/
+//!         ├── index.json.zst, index.json.zst.minisig
+//!         └── snapshots/<generation>.json.zst, <generation>.json.zst.minisig
 //! ```
 
 use std::path::{Path, PathBuf};

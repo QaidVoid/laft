@@ -123,8 +123,7 @@ pub(crate) fn hash_file(path: &Path) -> Result<(u64, Blake3Hash)> {
 }
 
 /// The names of the entries of `dir`, sorted, or nothing when it does not
-/// exist. Names that are not UTF-8 are skipped, because no repository file
-/// has one.
+/// exist. Names that are not UTF-8 convert lossily.
 pub(crate) fn list(dir: &Path) -> Result<Vec<String>> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -134,9 +133,7 @@ pub(crate) fn list(dir: &Path) -> Result<Vec<String>> {
     let mut names = Vec::new();
     for entry in entries {
         let entry = entry.map_err(io(dir))?;
-        if let Ok(name) = entry.file_name().into_string() {
-            names.push(name);
-        }
+        names.push(entry.file_name().to_string_lossy().into_owned());
     }
     names.sort();
     Ok(names)
