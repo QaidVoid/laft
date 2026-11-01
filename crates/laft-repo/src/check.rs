@@ -18,8 +18,8 @@
 //! | KR009 | error | A package file that is missing or differs in size or hash from its entry. |
 //! | KR010 | error | An entry whose metadata or store id differs from its package file. |
 //! | KR011 | error | A payload that ships a file a trigger generates. |
-//! | KR012 | warning | An option whose every other value gives the recipe the plan its default gives. |
-//! | KR013 | error | A publish block or profile that names a recipe without options, an option the recipe does not declare, or a value the option does not take. |
+//! | KR012 | warning | The options of a recipe where no combination of their other values gives the recipe the plan the defaults give. Runs only with `--recipes`; it evaluates at most 64 combinations, and each one re-evaluates the recipe. |
+//! | KR013 | error | A publish block or profile that names a recipe without options, an option the recipe does not declare, or a value the option does not take. Runs only with `--recipes`. |
 //! | KR014 | error | A package whose metadata sets an option its recipe does not declare, misses one it declares, or sets one to a value its type does not take. |
 //! | KR015 | error | A dependency whose option constraints name an option the target recipe does not declare, or a value the option does not take, or whose constraints cannot be verified. |
 //! | KR016 | error | The `recipes` member names an archive the repository lacks, or one of another size or hash. |
@@ -940,9 +940,35 @@ fn option_constraints(input: &Input<'_>, findings: &mut Vec<Finding>) {
                     .packages([meta])
                     .detail(format!("the dependency: {dep}"))
             };
-            let Some(decls) = input.index.options.get(target) else {
+            let index_decls = input.index.options.get(target).map(Vec::as_slice);
+            let recipe_decls = match input.recipes {
+                Some(repos) if index_decls.is_none() => match repos.options(target) {
+                    Ok(decls) => decls.map(|decls| decls.declarations),
+                    Err(e) => {
+                        findings.push(
+                            kr015(format!(
+                                "option constraints: {} requires options of {target}, but the index records no option declarations for {target}, so they cannot be verified",
+                                label(meta)
+                            ))
+                            .detail(e.to_string()),
+                        );
+                        continue;
+                    }
+                },
+                _ => None,
+            };
+            let Some(decls) = index_decls.or(recipe_decls.as_deref()) else {
+                let why = match input.recipes {
+                    Some(repos) if repos.packages().any(|name| name == target) => {
+                        format!("{target} declares no options")
+                    }
+                    Some(_) => format!("no repository defines the package {target}"),
+                    None => format!(
+                        "the index records no option declarations for {target}, so they cannot be verified"
+                    ),
+                };
                 findings.push(kr015(format!(
-                    "option constraints: {} requires options of {target}, but the index records no option declarations for {target}, so they cannot be verified",
+                    "option constraints: {} requires options of {target}, but {why}",
                     label(meta)
                 )));
                 continue;
@@ -1013,7 +1039,13 @@ fn option_set(
         }
     };
     let Some(decls) = declared else {
-        findings.push(kr013(format!("{what}: the recipe declares no options")));
+        let defined = repos.packages().any(|name| name == recipe);
+        let why = if defined {
+            "the recipe declares no options".to_owned()
+        } else {
+            format!("no repository defines the recipe {recipe}")
+        };
+        findings.push(kr013(format!("{what}: {why}")));
         return;
     };
     for (option, text) in set {
@@ -1040,13 +1072,37 @@ fn plan_hashes(recipes: &[laft_build::Recipe]) -> Vec<laft_core::Blake3Hash> {
     recipes.iter().map(|recipe| recipe.plan_hash()).collect()
 }
 
-/// KR012: an option whose every other value gives the plan the default
-/// gives.
+/// The most value combinations KR012 evaluates for one recipe. Each
+/// combination re-evaluates the recipe, so the cap bounds the cost of the
+/// check.
+const KR012_COMBINATIONS: usize = 64;
+
+/// KR012: options whose combinations of other values all give the recipe
+/// the plan the defaults give.
+///
+/// The check enumerates the cross product of the non-default values of
+/// every declared option, because an effect can need several values
+/// together, and evaluates the recipe with each of the first
+/// [`KR012_COMBINATIONS`] of them. A recipe whose default evaluation is
+/// empty, because it builds nothing for this architecture, has no plan to
+/// compare and is skipped with a note.
 fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
     let repos = input.recipes.expect("the check runs with recipes");
     for name in repos.packages() {
-        let Some(decls) = repos.options(name).ok().flatten() else {
-            continue;
+        let decls = match repos.options(name) {
+            Ok(Some(decls)) => decls,
+            Ok(None) => continue,
+            Err(e) => {
+                findings.push(
+                    finding(
+                        "KR012",
+                        Level::Error,
+                        format!("cannot read the option declarations of {name}"),
+                    )
+                    .detail(e.to_string()),
+                );
+                continue;
+            }
         };
         let default = match repos.evaluate_with(name, &BTreeMap::new()) {
             Ok(evaluation) => plan_hashes(&evaluation.recipes),
@@ -1062,52 +1118,92 @@ fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
                 continue;
             }
         };
-        for decl in &decls.declarations {
-            let alternatives: Vec<OptionValue> = match &decl.kind {
-                OptionType::Bool(_) => vec![OptionValue::Bool(decl.default == OptionValue::FALSE)],
-                OptionType::Tags(tags) => tags
-                    .iter()
-                    .filter(|tag| Some(tag.as_str()) != default_tag(&decl.default))
-                    .map(|tag| OptionValue::Tag(tag.clone()))
-                    .collect(),
-            };
-            let mut changes = false;
-            let mut broken = false;
-            for value in &alternatives {
-                let mut set = BTreeMap::new();
-                set.insert(decl.name.clone(), value.clone());
-                match repos.evaluate_with(name, &set) {
-                    Ok(evaluation) if plan_hashes(&evaluation.recipes) != default => {
-                        changes = true;
-                        break;
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        findings.push(
-                            finding(
-                                "KR012",
-                                Level::Error,
-                                format!(
-                                    "cannot evaluate {name} with {}={} to check its options",
-                                    decl.name, value
-                                ),
-                            )
-                            .detail(e.to_string()),
-                        );
-                        broken = true;
-                        break;
-                    }
+        if default.is_empty() {
+            findings.push(finding(
+                "KR012",
+                Level::Warning,
+                format!(
+                    "option effect unchecked: {name} builds nothing on {}, so its options have no plan to compare",
+                    input.index.arch
+                ),
+            ));
+            continue;
+        }
+        let combinations = value_combinations(&decls.declarations);
+        let mut changes = false;
+        let mut broken = false;
+        for set in &combinations {
+            match repos.evaluate_with(name, set) {
+                Ok(evaluation) if plan_hashes(&evaluation.recipes) != default => {
+                    changes = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    let shown = set
+                        .iter()
+                        .map(|(option, value)| format!("{option}={value}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    findings.push(
+                        finding(
+                            "KR012",
+                            Level::Error,
+                            format!("cannot evaluate {name} with {shown} to check its options"),
+                        )
+                        .detail(e.to_string()),
+                    );
+                    broken = true;
+                    break;
                 }
             }
-            if !changes && !broken {
-                findings.push(finding(
-                    "KR012",
-                    Level::Warning,
-                    format!("option without effect: {name}: {}", decl.name),
-                ));
-            }
+        }
+        if !changes && !broken {
+            let options = decls
+                .declarations
+                .iter()
+                .map(|decl| decl.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            findings.push(finding(
+                "KR012",
+                Level::Warning,
+                format!("option without effect: {name}: {options}"),
+            ));
         }
     }
+}
+
+/// The cross product of the non-default values of `decls`, as option sets,
+/// without the all-defaults combination and capped at
+/// [`KR012_COMBINATIONS`] entries.
+fn value_combinations(decls: &[laft_index::OptionDecl]) -> Vec<BTreeMap<String, OptionValue>> {
+    let mut combinations: Vec<BTreeMap<String, OptionValue>> = vec![BTreeMap::new()];
+    for decl in decls {
+        let values: Vec<OptionValue> = match &decl.kind {
+            OptionType::Bool(_) => vec![OptionValue::Bool(decl.default == OptionValue::FALSE)],
+            OptionType::Tags(tags) => tags
+                .iter()
+                .filter(|tag| Some(tag.as_str()) != default_tag(&decl.default))
+                .map(|tag| OptionValue::Tag(tag.clone()))
+                .collect(),
+        };
+        if values.is_empty() {
+            continue;
+        }
+        let mut next: Vec<BTreeMap<String, OptionValue>> =
+            Vec::with_capacity(combinations.len() * values.len());
+        for combination in &combinations {
+            for value in &values {
+                let mut set = combination.clone();
+                set.insert(decl.name.clone(), value.clone());
+                next.push(set);
+            }
+        }
+        combinations = next;
+    }
+    combinations.truncate(KR012_COMBINATIONS);
+    combinations
 }
 
 /// The tag of a default value, for a tag option.

@@ -931,6 +931,222 @@ fn kr012_an_option_that_does_not_change_the_plan() {
     assert!(success);
 }
 
+/// Writes a recipe repository for `hello` with the Bool options `names`
+/// and a summary that uses all of them together.
+fn pair_repo(dir: &Path, names: &[&str], body: &str) -> PathBuf {
+    let recipes = dir.join("recipes-src");
+    fs::create_dir_all(recipes.join("recipes/hello")).expect("writable");
+    fs::write(recipes.join("recipes.stav"), "recipe_repo core {}\n").expect("writable");
+    let mut options = String::from("struct Options {\n");
+    for name in names {
+        options.push_str(&format!(
+            "  ## The {name} switch.\n  {name}: Bool = false\n"
+        ));
+    }
+    options.push_str("}\n");
+    fs::write(recipes.join("recipes/hello/options.stav"), options).expect("writable");
+    fs::write(recipes.join("recipes/hello/package.stav"), body).expect("writable");
+    recipes
+}
+
+#[test]
+fn kr012_reports_an_effect_that_needs_two_options() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let packages = [pkg("app", "1.0").file("usr/bin/app", "app").write(&out)];
+    let repo = dir.path().join("repo");
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let recipes = pair_repo(
+        dir.path(),
+        &["alpha", "beta"],
+        "import \"laft/options\" as opt\n\npackage hello {\n  version = \"1.0\"\n  summary = if opt.alpha && opt.beta { \"both on\" } else { \"plain\" }\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    );
+    let (codes, report, success) = check(&repo, &["--recipes", s(&recipes)]);
+    assert!(
+        codes.is_empty(),
+        "the effect needs both values together: {report}"
+    );
+    assert!(success);
+}
+
+#[test]
+fn kr012_skips_a_recipe_that_builds_nothing_here() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let packages = [pkg("app", "1.0").file("usr/bin/app", "app").write(&out)];
+    let repo = dir.path().join("repo");
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let recipes = pair_repo(
+        dir.path(),
+        &["alpha"],
+        "package hello {\n  version = \"1.0\"\n  summary = \"Hello\"\n  arch = [\"aarch64\"]\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    );
+    let (codes, report, success) = check(&repo, &["--recipes", s(&recipes)]);
+    assert_eq!(codes, ["KR012"], "{report}");
+    assert!(success, "a warning does not fail the check");
+    let message = report["findings"][0]["message"].as_str().unwrap();
+    assert!(message.contains("builds nothing"), "{report}");
+    assert!(!message.contains("option without effect"), "{report}");
+}
+
+#[test]
+fn kr012_reports_declarations_it_cannot_read() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let packages = [pkg("app", "1.0").file("usr/bin/app", "app").write(&out)];
+    let repo = dir.path().join("repo");
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let recipes = pair_repo(
+        dir.path(),
+        &["alpha"],
+        "package hello {\n  version = \"1.0\"\n  summary = \"Hello\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    );
+    // The declaration lost the doc comment its grammar requires.
+    fs::write(
+        recipes.join("recipes/hello/options.stav"),
+        "struct Options {\n  alpha: Bool = false\n}\n",
+    )
+    .expect("writable");
+    let (codes, report, success) = check(&repo, &["--recipes", s(&recipes)]);
+    assert_eq!(codes, ["KR012"], "{report}");
+    assert!(!success, "a load error is an error, not a silent skip");
+    assert!(
+        report["findings"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot read the option declarations"),
+        "{report}"
+    );
+}
+
+#[test]
+fn kr013_names_a_recipe_no_repository_defines() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let packages = [pkg("app", "1.0").file("usr/bin/app", "app").write(&out)];
+    let repo = dir.path().join("repo");
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let recipes = dir.path().join("recipes-src");
+    fs::create_dir_all(recipes.join("recipes/hello")).expect("writable");
+    fs::write(
+        recipes.join("recipes.stav"),
+        "recipe_repo core {}\n\npublish ghost {\n  options {\n    tool = false\n  }\n}\n",
+    )
+    .expect("writable");
+    fs::write(
+        recipes.join("recipes/hello/package.stav"),
+        "package hello {\n  version = \"1.0\"\n  summary = \"Hello\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+    let (codes, report, _) = check(&repo, &["--recipes", s(&recipes)]);
+    assert_eq!(codes, ["KR013"], "{report}");
+    let message = report["findings"][0]["message"].as_str().unwrap();
+    assert!(message.contains("no repository defines"), "{report}");
+}
+
+#[test]
+fn kr015_names_the_unverifiable_target_precisely() {
+    let dir = laft_test::tempdir();
+    let repo = dir.path().join("repo");
+    let recipes = dir.path().join("recipes-src");
+    fs::create_dir_all(recipes.join("recipes/zlib")).expect("writable");
+    fs::write(recipes.join("recipes.stav"), "recipe_repo core {}\n").expect("writable");
+    fs::write(
+        recipes.join("recipes/zlib/package.stav"),
+        "package zlib {\n  version = \"1.2\"\n  summary = \"Deflate\"\n  license = [Zlib]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+
+    // No repository defines the target at all.
+    let out = dir.path().join("out-ghost");
+    let packages = [
+        pkg("zlib", "1.2").write(&out),
+        pkg("app", "1.0")
+            .depends("ghost{tool}")
+            .file("usr/bin/app", "app")
+            .write(&out),
+    ];
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let (codes, report, _) = check(&repo, &["--recipes", s(&recipes)]);
+    assert_eq!(codes, ["KR002", "KR015"], "{report}");
+    let message = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["code"] == "KR015")
+        .expect("the KR015 finding")["message"]
+        .as_str()
+        .unwrap();
+    assert!(
+        message.contains("no repository defines the package ghost"),
+        "{report}"
+    );
+
+    // The target exists but declares no options.
+    let out = dir.path().join("out-plain");
+    let packages = [
+        pkg("zlib", "1.2").write(&out),
+        pkg("app", "1.0")
+            .depends("zlib{tool}")
+            .file("usr/bin/app", "app")
+            .write(&out),
+    ];
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let (codes, report, _) = check(&repo, &["--recipes", s(&recipes)]);
+    assert_eq!(codes, ["KR015"], "{report}");
+    let message = report["findings"][0]["message"].as_str().unwrap();
+    assert!(message.contains("declares no options"), "{report}");
+}
+
+#[test]
+fn kr015_verifies_the_constraints_the_recipes_declare() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let repo = dir.path().join("repo");
+    let recipes = dir.path().join("recipes-src");
+    fs::create_dir_all(recipes.join("recipes/zlib")).expect("writable");
+    fs::write(recipes.join("recipes.stav"), "recipe_repo core {}\n").expect("writable");
+    fs::write(
+        recipes.join("recipes/zlib/options.stav"),
+        "struct Options {\n  ## Ship the extra tools.\n  tool: Bool = true\n}\n",
+    )
+    .expect("writable");
+    fs::write(
+        recipes.join("recipes/zlib/package.stav"),
+        "import \"laft/options\" as opt\n\npackage zlib {\n  version = \"1.2\"\n  summary = if opt.tool { \"with tools\" } else { \"plain\" }\n  license = [Zlib]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+
+    // The index records no declarations, but the recipe does, so the
+    // constraint is verified against it and holds. The listed zlib sets no
+    // option, so KR014 has nothing to compare.
+    let packages = [
+        pkg("zlib", "1.2").write(&out),
+        pkg("app", "1.0")
+            .depends("zlib{tool}")
+            .file("usr/bin/app", "app")
+            .write(&out),
+    ];
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let (codes, report, _) = check(&repo, &["--recipes", s(&recipes)]);
+    assert!(codes.is_empty(), "{report}");
+
+    // A constraint the recipe does not declare is named precisely.
+    let packages = [
+        pkg("zlib", "1.2").write(&out),
+        pkg("app", "1.0")
+            .depends("zlib{nope}")
+            .file("usr/bin/app", "app")
+            .write(&out),
+    ];
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let (codes, report, _) = check(&repo, &["--recipes", s(&recipes)]);
+    assert_eq!(codes, ["KR015"], "{report}");
+    let message = report["findings"][0]["message"].as_str().unwrap();
+    assert!(message.contains("does not declare"), "{report}");
+    assert!(!message.contains("cannot be verified"), "{report}");
+}
+
 #[test]
 fn kr013_a_publish_block_or_profile_the_recipes_do_not_declare() {
     let dir = laft_test::tempdir();
