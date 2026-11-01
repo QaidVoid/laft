@@ -2,9 +2,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
-use laft_build::{BuildRoot, Repos, SourceCache, Stage, StageOptions, run_stage};
+use laft_build::{BuildRoot, Repos, SourceCache, Stage, StageEvent, StageOptions, run_stage};
 use laft_fetch::{Config, Fetcher};
 
 const RECIPE: &str = r#"package greet {
@@ -60,6 +62,10 @@ fn write_stage(dir: &Path) -> PathBuf {
 
 #[test]
 fn an_interrupt_ends_the_wait_for_memory() {
+    if !Path::new("/bin/sh").exists() {
+        println!("skipping: /bin/sh is missing");
+        return;
+    }
     laft_sandbox::catch_termination();
     let dir = laft_test::tempdir();
     let stage = Stage::load(&write_stage(dir.path())).expect("the stage is valid");
@@ -70,23 +76,33 @@ fn an_interrupt_ends_the_wait_for_memory() {
         ..Config::new(dir.path().join("cache"))
     };
     let cache = SourceCache::new(build_root.sources(), Fetcher::new(config));
-    // Ask the process to stop before the run starts, so the wait for the
-    // memory of the big build sees the request at its first check.
-    std::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!("kill -TERM {}", std::process::id()))
-        .status()
-        .expect("the signal is sent");
-    std::thread::sleep(Duration::from_millis(100));
+    // The signal goes out while the wait for the memory of the big build
+    // is actually running, at the latest after a minute, so the test
+    // stays bounded when the wait never comes.
+    let (waiting, waited) = mpsc::channel();
+    let sender = thread::spawn(move || {
+        let _ = waited.recv_timeout(Duration::from_secs(60));
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("kill -TERM {}", std::process::id()))
+            .status()
+            .expect("the signal is sent");
+        assert!(status.success(), "the signal is sent");
+    });
     let error = run_stage(
         &stage,
         &repos,
         &cache,
         &build_root,
         &options(dir.path()),
-        &|_| {},
+        &move |event| {
+            if let StageEvent::Waiting { .. } = event {
+                let _ = waiting.send(());
+            }
+        },
     )
     .expect_err("the interrupted run fails instead of waiting");
+    sender.join().expect("the signal thread ends");
     assert_eq!(
         error.code(),
         Some("B045"),
