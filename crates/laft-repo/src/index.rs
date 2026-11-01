@@ -134,8 +134,14 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
         }
         if let Some(other) = index.packages.iter().find(|e| {
             let m = &e.meta;
-            (&m.name, &m.version, m.rev, m.variant)
-                == (&meta.name, &meta.version, meta.rev, meta.variant)
+            (&m.name, &m.version, m.rev, m.variant, &m.options)
+                == (
+                    &meta.name,
+                    &meta.version,
+                    meta.rev,
+                    meta.variant,
+                    &meta.options,
+                )
         }) {
             return Err(Error::new(format!(
                 "KR005 revision not bumped: {} is already listed with id {}, the new build has id {id}",

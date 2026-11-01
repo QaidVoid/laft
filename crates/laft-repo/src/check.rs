@@ -11,7 +11,7 @@
 //! | KR002 | error | A dependency that no package of the index or of a base index satisfies. |
 //! | KR003 | error | A package that the resolver cannot install on its own. |
 //! | KR004 | error | An alternatives group whose default is not a member, that has no default while the newest versions of several members share the highest priority, whose members ship different paths, or that lists a path its member does not ship. |
-//! | KR005 | error | A package whose name, version, revision and variant are already published with another store id. |
+//! | KR005 | error | A package whose name, version, revision, variant and option values are already published with another store id. |
 //! | KR006 | warning | The newest version of a name is older than the newest one previously published. |
 //! | KR007 | error | Packages of several names that can share a view provide the same `so:` or `virtual:` value, and no provider default chooses one of them. |
 //! | KR008 | error | A package file whose metadata or manifest is invalid. |
@@ -677,25 +677,37 @@ fn alternatives(index: &Index, packages: &[Loaded<'_>], findings: &mut Vec<Findi
     }
 }
 
-/// The identity a revision must not be reused for.
-type Identity<'a> = (&'a Name, &'a Version, u32, Variant);
+/// The identity a revision must not be reused for: the name, version,
+/// revision, variant and option values of a build.
+type Identity<'a> = (
+    &'a Name,
+    &'a Version,
+    u32,
+    Variant,
+    &'a BTreeMap<String, OptionValue>,
+);
 
 /// KR005: a published identity keeps its store id.
 fn revisions(input: &Input<'_>, findings: &mut Vec<Finding>) {
     let mut published: HashMap<Identity<'_>, StoreId> = HashMap::new();
+    let mut withdrawn: HashMap<(&Name, &Version, u32, Variant), StoreId> = HashMap::new();
     for index in input.published.into_iter().chain(input.others) {
         for e in &index.packages {
             let m = &e.meta;
-            published.insert((&m.name, &m.version, m.rev, m.variant), e.id);
+            published.insert((&m.name, &m.version, m.rev, m.variant, &m.options), e.id);
         }
         for y in &index.yanked {
-            published.insert((&y.name, &y.version, y.rev, y.variant), y.id);
+            withdrawn.insert((&y.name, &y.version, y.rev, y.variant), y.id);
         }
     }
     for entry in &input.index.packages {
         let m = &entry.meta;
-        if let Some(id) = published.get(&(&m.name, &m.version, m.rev, m.variant))
-            && *id != entry.id
+        let published_id = published
+            .get(&(&m.name, &m.version, m.rev, m.variant, &m.options))
+            .or_else(|| withdrawn.get(&(&m.name, &m.version, m.rev, m.variant)))
+            .copied();
+        if let Some(id) = published_id
+            && id != entry.id
         {
             findings.push(
                 finding(

@@ -308,6 +308,27 @@ fn kr005_a_rebuild_without_a_revision_bump() {
 }
 
 #[test]
+fn kr005_the_same_revision_with_other_option_values_is_another_build() {
+    let dir = laft_test::tempdir();
+    let repo = dir.path().join("repo");
+    let first = pkg("hello", "1.0")
+        .option("tool", laft_core::OptionValue::TRUE)
+        .file("usr/bin/hello", "one")
+        .write(&dir.path().join("a"));
+    let second = pkg("hello", "1.0")
+        .option("tool", laft_core::OptionValue::FALSE)
+        .file("usr/bin/hello", "two")
+        .write(&dir.path().join("b"));
+    fixture(&repo, "testing", 0, &[first], |_| {});
+    fixture(&repo, "current", 0, &[second], |_| {});
+    let (codes, report, _) = check(&repo, &[]);
+    assert!(
+        !codes.contains(&"KR005".to_owned()),
+        "different option values are different builds: {report}"
+    );
+}
+
+#[test]
 fn kr006_a_downgrade_is_only_a_warning() {
     let dir = laft_test::tempdir();
     let out = dir.path().join("out");
