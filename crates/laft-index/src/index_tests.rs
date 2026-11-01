@@ -105,6 +105,18 @@ fn an_option_declaration_must_fit_its_own_fields() {
 }
 
 #[test]
+fn a_compressed_format_1_index_is_rejected() {
+    let mut stale = index(T0);
+    stale.format = 1;
+    let json = serde_json::to_vec(&stale).expect("the sample index serializes");
+    let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 3).expect("zstd");
+    encoder.write_all(&json).expect("zstd");
+    let frame = encoder.finish().expect("zstd");
+    let err = Index::decode(&frame).expect_err("format 1 predates this reader");
+    assert!(err.to_string().contains("format 1"), "{err}");
+}
+
+#[test]
 fn a_recipe_snapshot_has_a_serializable_size() {
     let hash = "b3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let mut original = index(1);

@@ -20,9 +20,13 @@ pub(crate) const PRELUDE_NAME: &str = "<prelude>/system.stav";
 /// The name of the base part in diagnostics.
 pub(crate) const BASE_NAME: &str = "std/base.stav";
 
-/// Returns the host of a system configuration in `root_dir`.
-pub(crate) fn host(root_dir: &Path) -> Host {
+/// Returns the host of a system configuration in `root_dir`, with the
+/// generated `PackageOptions` module `package_module` in front of the
+/// prelude.
+pub(crate) fn host(root_dir: &Path, package_module: &str) -> Host {
     let mut host = Host::new(DiskLoader::new(root_dir));
+    host.prelude
+        .push(Source::new(crate::options::MODULE_NAME, package_module));
     host.prelude.push(Source::new(PRELUDE_NAME, PRELUDE));
     host.implicit_parts.push(Source::new(BASE_NAME, BASE));
     host.symbols = vec![SymbolType {

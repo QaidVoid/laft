@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::Path;
 
-use laft_config::{Loaded, PkgError, Report};
+use laft_config::{IndexOptions, Loaded, PkgError, Report};
 use laft_core::PkgRef;
 use laft_test::TempDir;
 
@@ -40,9 +40,19 @@ pub(crate) fn any_package(pkg: &PkgRef) -> Result<(), PkgError> {
     Ok(())
 }
 
+/// The empty option declarations, as when no repository publishes any.
+pub(crate) fn no_options() -> IndexOptions {
+    IndexOptions::default()
+}
+
+/// Loads the configuration in `dir` with [`any_package`] and `options`.
+pub(crate) fn load_with(dir: &Path, options: &IndexOptions) -> Result<Loaded, Report> {
+    laft_config::load(dir, &any_package, options)
+}
+
 /// Loads the configuration in `dir` with [`any_package`].
 pub(crate) fn load(dir: &Path) -> Result<Loaded, Report> {
-    laft_config::load(dir, &any_package)
+    load_with(dir, &no_options())
 }
 
 /// Loads a configuration whose entry file is `system { <body> }` with

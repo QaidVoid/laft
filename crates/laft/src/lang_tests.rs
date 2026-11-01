@@ -2,7 +2,9 @@ use super::*;
 
 #[test]
 fn options_reach_nested_structs_with_their_paths() {
-    let options = options_of(&laft_config::schema().expect("the prelude checks"));
+    let options = options_of(
+        &laft_config::schema(&laft_config::IndexOptions::default()).expect("the prelude checks"),
+    );
     let paths: Vec<&str> = options.iter().map(|o| o.path.as_str()).collect();
     assert!(paths.contains(&"hostname"), "{paths:?}");
     assert!(paths.contains(&"gc.keep_generations"), "{paths:?}");
@@ -20,7 +22,9 @@ fn options_reach_nested_structs_with_their_paths() {
 
 #[test]
 fn a_reference_to_a_struct_is_an_option_of_its_own() {
-    let options = options_of(&laft_config::schema().expect("the prelude checks"));
+    let options = options_of(
+        &laft_config::schema(&laft_config::IndexOptions::default()).expect("the prelude checks"),
+    );
     let paths: Vec<&str> = options.iter().map(|o| o.path.as_str()).collect();
     assert!(paths.contains(&"users.accounts.<name>.group"), "{paths:?}");
     assert!(

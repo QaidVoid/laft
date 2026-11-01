@@ -16,7 +16,8 @@ fn a_location_inside_a_character_names_that_character() {
         entries: vec![entry.clone()],
         import_roots: vec![ImportRoot::new(dir.path())],
     };
-    let checked = stav::check(&host::host(dir.path()), &root).expect("the file checks");
+    let module = crate::options::module(&crate::IndexOptions::default());
+    let checked = stav::check(&host::host(dir.path(), &module), &root).expect("the file checks");
     let evaluated = checked
         .eval(&Limits::default())
         .expect("the file evaluates");

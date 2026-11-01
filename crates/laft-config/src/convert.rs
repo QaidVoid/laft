@@ -41,7 +41,11 @@ impl<'a> Cx<'a> {
             .collect();
         let host_files = checked
             .files()
-            .filter(|&(_, name)| name == host::PRELUDE_NAME || name == host::BASE_NAME)
+            .filter(|&(_, name)| {
+                name == host::PRELUDE_NAME
+                    || name == host::BASE_NAME
+                    || name == crate::options::MODULE_NAME
+            })
             .map(|(file, _)| file)
             .collect();
         let base_files = checked

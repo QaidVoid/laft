@@ -22,9 +22,13 @@ fn config() -> SystemConfig {
          view bare { inherit = none, packages = [cmake] }\n}\n",
     )
     .expect("writable");
-    laft_config::load(dir.path(), &|_| Ok(()))
-        .expect("valid")
-        .config
+    laft_config::load(
+        dir.path(),
+        &|_| Ok(()),
+        &laft_config::IndexOptions::default(),
+    )
+    .expect("valid")
+    .config
 }
 
 #[test]

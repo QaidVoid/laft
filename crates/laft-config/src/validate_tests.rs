@@ -5,7 +5,8 @@ fn missing_immutable_root_points_at_the_mutable_assignment() {
     let dir = laft_test::tempdir();
     let source = "system { users { mutable = false } }\n";
     std::fs::write(dir.path().join("system.stav"), source).expect("can write configuration");
-    let mut host = crate::host::host(dir.path());
+    let empty = crate::options::module(&crate::IndexOptions::default());
+    let mut host = crate::host::host(dir.path(), &empty);
     host.implicit_parts.clear();
     let root = stav::RootSpec {
         root_struct: "Root".to_owned(),

@@ -6,7 +6,10 @@
 //! schema, the base part that every system includes, the std catalog
 //! (`std/services` and `std/desktop`), the symbol type `Pkg`, the
 //! implicit primary groups and a loader confined to the configuration
-//! directory. [`load`] evaluates the configuration, validates it and
+//! directory. From the option declarations the enabled repositories
+//! publish, it renders the `PackageOptions` module, so that
+//! `package.<name>.<option>` is type checked like any other attribute.
+//! [`load`] evaluates the configuration, validates it and
 //! converts it into the plain values the rest of Laft works with.
 //! [`evaluate`] only type checks and evaluates a file with the same prelude,
 //! base part and catalog, for tools that print or inspect the value.
@@ -76,14 +79,15 @@
 mod convert;
 mod host;
 mod loader;
+mod options;
 mod validate;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use laft_activate::{BootConfig, EtcConfig, Security};
-use laft_core::{Blake3Hash, Name, PkgRef};
-use laft_index::PublicKey;
+use laft_core::{Blake3Hash, Name, OptionValue, PkgRef};
+use laft_index::{OptionDecl, PublicKey};
 use laft_resolve::Request;
 use laft_store::{ConfigFile, GcPolicy};
 use laft_svc::ServiceConfig;
@@ -124,6 +128,23 @@ pub struct SystemConfig {
     pub repos: BTreeMap<Name, Repo>,
 }
 
+/// The option declarations and profile values the enabled repositories
+/// publish, as their indexes record them.
+///
+/// A repository that publishes no option declarations and follows no
+/// profile contributes nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IndexOptions {
+    /// The option declarations of every package that declares options,
+    /// by package name. When several repositories declare options for
+    /// one name, the caller keeps the declarations of the repository
+    /// with the highest priority.
+    pub options: BTreeMap<Name, Vec<OptionDecl>>,
+    /// The values of the profiles the client follows, by package name
+    /// and option name. They act as preferred values.
+    pub profile: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+}
+
 /// A configuration that passed every check, and what was suspicious but
 /// allowed.
 #[derive(Debug, Clone)]
@@ -138,6 +159,10 @@ pub struct Loaded {
     /// Every file of the configuration directory that was read, with the
     /// hash of its content, sorted by path.
     pub files: Vec<ConfigFile>,
+    /// The Stav source of the generated `PackageOptions` module, which a
+    /// generation keeps so that later tools can explain the package
+    /// options of the configuration.
+    pub package_module: String,
 }
 
 /// A configuration file that was type checked and evaluated, but neither
@@ -241,7 +266,9 @@ pub struct Repo {
 /// `<root_dir>/system.stav`.
 ///
 /// The configuration is type checked and evaluated together with the
-/// prelude, the base part and the std catalog. Files can be imported or
+/// prelude, the base part and the std catalog. The package options of
+/// `options` are part of the prelude, so that `package.<name>.<option>`
+/// is type checked. Files can be imported or
 /// included only from inside `root_dir`, and never from its `secrets/`
 /// directory. Every package reference is passed to `packages`, which
 /// resolves it against an index snapshot. Then the configuration is
@@ -264,7 +291,8 @@ pub struct Repo {
 ///     "system {\n  hostname = \"forge\"\n  fs \"/\" { device = \"UUID=3f1c\", fstype = ext4 }\n  \
 ///      fs \"/boot\" { device = \"UUID=1A2B\", fstype = vfat }\n}\n",
 /// )?;
-/// let loaded = laft_config::load(dir.path(), &|_| Ok(())).expect("the configuration is valid");
+/// let loaded = laft_config::load(dir.path(), &|_| Ok(()), &laft_config::IndexOptions::default())
+///     .expect("the configuration is valid");
 /// assert_eq!(loaded.config.etc.hostname, "forge");
 /// assert!(loaded.config.services.services.contains_key("boot-complete"));
 /// # Ok::<(), std::io::Error>(())
@@ -272,10 +300,12 @@ pub struct Repo {
 pub fn load(
     root_dir: &Path,
     packages: &dyn Fn(&PkgRef) -> Result<(), PkgError>,
+    options: &IndexOptions,
 ) -> Result<Loaded, Report> {
+    let package_module = options::module(options);
     let Evaluation {
         checked, evaluated, ..
-    } = evaluate(root_dir, &root_dir.join("system.stav"))?;
+    } = evaluate_with(root_dir, &root_dir.join("system.stav"), &package_module)?;
     let cx = convert::Cx::new(&checked, &evaluated);
     let mut found = checked.warnings().iter().cloned().collect::<Vec<_>>();
     let config = validate::validate(&cx, packages, &mut found);
@@ -294,6 +324,7 @@ pub fn load(
             warnings: report,
             value: system_json(&evaluated),
             files,
+            package_module,
         }),
         _ => Err(report),
     }
@@ -313,8 +344,9 @@ fn system_json(evaluated: &stav::Evaluated) -> Vec<u8> {
 }
 
 /// The schema of the system configuration: the types of the prelude,
-/// checked without any configuration file, so that tools which describe
-/// the options need no configuration.
+/// with the package options the indexes declare, checked without any
+/// configuration file, so that tools which describe the options need no
+/// configuration.
 ///
 /// # Errors
 ///
@@ -324,23 +356,26 @@ fn system_json(evaluated: &stav::Evaluated) -> Vec<u8> {
 /// # Examples
 ///
 /// ```
-/// let schema = laft_config::schema().expect("the prelude checks");
+/// let schema =
+///     laft_config::schema(&laft_config::IndexOptions::default()).expect("the prelude checks");
 /// assert!(schema.structs.iter().any(|s| s.name == "System"));
 /// ```
-pub fn schema() -> Result<stav::SchemaIndex, Report> {
+pub fn schema(options: &IndexOptions) -> Result<stav::SchemaIndex, Report> {
     let root = stav::RootSpec {
         root_struct: "Root".to_owned(),
         entries: Vec::new(),
         import_roots: Vec::new(),
     };
-    Ok(stav::check(&host::host(Path::new("/")), &root)?.schema())
+    let module = options::module(options);
+    Ok(stav::check(&host::host(Path::new("/"), &module), &root)?.schema())
 }
 
 /// Type checks and evaluates the file `entry` of the configuration
 /// directory `root_dir`, with the prelude, the base part and the std
 /// catalog, as [`load`] does, but resolves no package and applies none of
-/// the rules of the crate documentation. Files can be imported or included
-/// only from inside `root_dir`.
+/// the rules of the crate documentation. The package options of `options`
+/// are part of the prelude. Files can be imported or included only from
+/// inside `root_dir`.
 ///
 /// # Errors
 ///
@@ -352,7 +387,8 @@ pub fn schema() -> Result<stav::SchemaIndex, Report> {
 /// ```
 /// let dir = laft_test::tempdir();
 /// std::fs::write(dir.path().join("part.stav"), "system { hostname = \"forge\" }\n")?;
-/// let evaluation = laft_config::evaluate(dir.path(), &dir.path().join("part.stav"))
+/// let options = laft_config::IndexOptions::default();
+/// let evaluation = laft_config::evaluate(dir.path(), &dir.path().join("part.stav"), &options)
 ///     .expect("the file evaluates");
 /// let hostname: String = evaluation
 ///     .evaluated
@@ -361,8 +397,22 @@ pub fn schema() -> Result<stav::SchemaIndex, Report> {
 /// assert_eq!(hostname, "forge");
 /// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn evaluate(root_dir: &Path, entry: &Path) -> Result<Evaluation, Report> {
-    let host = host::host(root_dir);
+pub fn evaluate(
+    root_dir: &Path,
+    entry: &Path,
+    options: &IndexOptions,
+) -> Result<Evaluation, Report> {
+    let module = options::module(options);
+    evaluate_with(root_dir, entry, &module)
+}
+
+/// As [`evaluate`], with the module of package options already rendered.
+fn evaluate_with(
+    root_dir: &Path,
+    entry: &Path,
+    package_module: &str,
+) -> Result<Evaluation, Report> {
+    let host = host::host(root_dir, package_module);
     let root = stav::RootSpec {
         root_struct: "Root".to_owned(),
         entries: vec![entry.to_path_buf()],

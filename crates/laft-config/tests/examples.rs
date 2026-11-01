@@ -79,7 +79,8 @@ fn fixture(name: &str) -> PathBuf {
 /// `/etc/laft`.
 fn added_to_base(name: &str) -> String {
     let dir = fixture(name);
-    let loaded = laft_config::load(&dir, &in_index).unwrap_or_else(|e| panic!("{name}:\n{e}"));
+    let loaded = laft_config::load(&dir, &in_index, &support::no_options())
+        .unwrap_or_else(|e| panic!("{name}:\n{e}"));
     assert!(loaded.warnings.is_empty(), "{}", loaded.warnings);
     let base = support::load_body("")
         .expect("an empty system is valid")
@@ -141,7 +142,9 @@ fn the_wayland_laptop_example_converts() {
 #[test]
 fn package_requests_point_at_their_source() {
     let dir = fixture("server");
-    let config = laft_config::load(&dir, &in_index).expect("valid").config;
+    let config = laft_config::load(&dir, &in_index, &support::no_options())
+        .expect("valid")
+        .config;
     let origins: BTreeSet<(String, String)> = config
         .packages
         .iter()
@@ -159,13 +162,17 @@ fn package_requests_point_at_their_source() {
 #[test]
 fn a_package_missing_from_the_index_is_reported_where_it_is_written() {
     let dir = fixture("server");
-    let report = laft_config::load(&dir, &|pkg| match pkg.name().as_str() {
-        "htop" => Err(PkgError {
-            message: "no package `htop` in the index".into(),
-            help: Some("did you mean `btop`?".into()),
-        }),
-        _ => Ok(()),
-    })
+    let report = laft_config::load(
+        &dir,
+        &|pkg| match pkg.name().as_str() {
+            "htop" => Err(PkgError {
+                message: "no package `htop` in the index".into(),
+                help: Some("did you mean `btop`?".into()),
+            }),
+            _ => Ok(()),
+        },
+        &support::no_options(),
+    )
     .unwrap_err();
     assert_eq!(support::codes(&report), ["C0901"]);
     assert_eq!(support::pointed_at(&report, 0), "htop");

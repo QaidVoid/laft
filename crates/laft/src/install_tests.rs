@@ -60,7 +60,12 @@ fn the_generated_configuration_loads_with_its_hardware() {
         ..Probe::default()
     };
     fs::write(dir.path().join("hardware.stav"), hardware_stav(&probe)).expect("writable");
-    let loaded = laft_config::load(dir.path(), &|_| Ok(())).expect("the template is valid");
+    let loaded = laft_config::load(
+        dir.path(),
+        &|_| Ok(()),
+        &laft_config::IndexOptions::default(),
+    )
+    .expect("the template is valid");
     assert_eq!(loaded.config.etc.hostname, "laft");
     assert_eq!(loaded.config.boot.fs["/"].fstype, "ext4");
 }

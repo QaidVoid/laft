@@ -1,5 +1,10 @@
 use super::*;
 
+/// The rendered module of the empty option declarations.
+fn empty_module() -> String {
+    crate::options::module(&crate::IndexOptions::default())
+}
+
 #[test]
 fn package_references_are_written_canonically() {
     assert_eq!(parse_pkg("llvm@19:dynamic").as_deref(), Ok("llvm@19"));
@@ -18,7 +23,7 @@ fn base_services() -> String {
         entries: vec![entry],
         import_roots: vec![stav::ImportRoot::new(dir.path())],
     };
-    let evaluated = stav::check(&host(dir.path()), &root)
+    let evaluated = stav::check(&host(dir.path(), &empty_module()), &root)
         .and_then(|checked| checked.eval(&stav::Limits::default()))
         .unwrap_or_else(|e| panic!("the base part evaluates:\n{e}"));
     let services = evaluated

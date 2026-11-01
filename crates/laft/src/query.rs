@@ -534,7 +534,8 @@ fn etc_owner(
 /// in the configuration, as `file:line:column`.
 fn file_block_location(env: &Env, path: &str) -> Option<String> {
     let dir = env.config_dir();
-    let evaluation = laft_config::evaluate(&dir, &env.config).ok()?;
+    let evaluation =
+        laft_config::evaluate(&dir, &env.config, &laft_config::IndexOptions::default()).ok()?;
     let attr = stav::AttrPath::new(["system", "files", path]);
     let span = evaluation.evaluated.spans(&attr).into_iter().next()?;
     let name = evaluation

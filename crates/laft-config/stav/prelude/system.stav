@@ -43,6 +43,9 @@ struct System {
   views:         Map<Str, View> = {} block view
   ## Retention of generations and automatic collection.
   gc:            Gc = Gc {}
+  ## The package options of the enabled repositories. The schema of this
+  ## block is rendered from the `options` members of their indexes.
+  package:       PackageOptions = PackageOptions {}
   ## The boot loader, kernel, boot counting and initramfs.
   boot:          Boot = Boot {}
   ## Mounted filesystems. Block label: the mountpoint.
@@ -214,6 +217,9 @@ struct View {
   users:        Set<Str> = []
   ## Members of these groups may enter the view.
   groups:       Set<Str> = ["wheel"]
+  ## Package options for this view alone. Every option the view sets
+  ## merges over the value the system view has.
+  package:      PackageOptions = PackageOptions {}
 }
 
 ## The boot loader.

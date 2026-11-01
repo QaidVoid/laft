@@ -189,8 +189,9 @@ impl Env {
                 format!("{} does not exist", self.config.display()),
             ));
         }
+        let options = laft_config::IndexOptions::default();
         let mut loaded =
-            laft_config::load(&self.config_dir(), packages).map_err(Failure::config)?;
+            laft_config::load(&self.config_dir(), packages, &options).map_err(Failure::config)?;
         if !loaded.warnings.is_empty() && !self.ui.json {
             crate::report::emit(&self.ui, &loaded.warnings);
         }

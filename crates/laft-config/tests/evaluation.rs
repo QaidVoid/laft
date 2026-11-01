@@ -15,7 +15,8 @@ fn the_files_read_are_listed_with_their_hashes_and_nothing_else() {
         ("net.stav", "hostname = \"forge\"\n"),
         ("unused.stav", "hostname = \"never\"\n"),
     ]);
-    let loaded = laft_config::load(dir.path(), &any_package).expect("valid");
+    let loaded =
+        laft_config::load(dir.path(), &any_package, &support::no_options()).expect("valid");
     let paths: Vec<&str> = loaded.files.iter().map(|f| f.path.as_str()).collect();
     let expected = [dir.path().join("net.stav"), dir.path().join("system.stav")];
     let expected: Vec<String> = expected
@@ -35,11 +36,12 @@ fn the_value_is_canonical_json_of_the_evaluated_system() {
         "system.stav",
         &format!("system {{\n  hostname = \"forge\"\n{DISKS}\n}}\n"),
     )]);
-    let loaded = laft_config::load(dir.path(), &any_package).expect("valid");
+    let loaded =
+        laft_config::load(dir.path(), &any_package, &support::no_options()).expect("valid");
     let value: serde_json::Value = serde_json::from_slice(&loaded.value).expect("JSON");
     assert_eq!(value["hostname"], "forge");
     assert!(value["boot"]["tries"].is_number(), "{value}");
-    let again = laft_config::load(dir.path(), &any_package).expect("valid");
+    let again = laft_config::load(dir.path(), &any_package, &support::no_options()).expect("valid");
     assert_eq!(
         loaded.value, again.value,
         "the same input gives the same bytes"
@@ -50,8 +52,12 @@ fn the_value_is_canonical_json_of_the_evaluated_system() {
 fn evaluation_skips_validation_and_package_resolution() {
     let body = format!("system {{\n  packages = [missing-tool]\n{DISKS}\n}}\n");
     let dir = config_dir(&[("system.stav", &body)]);
-    let evaluation =
-        laft_config::evaluate(dir.path(), &dir.path().join("system.stav")).expect("evaluates");
+    let evaluation = laft_config::evaluate(
+        dir.path(),
+        &dir.path().join("system.stav"),
+        &support::no_options(),
+    )
+    .expect("evaluates");
     let rendered = evaluation
         .evaluated
         .render_at(
@@ -60,7 +66,7 @@ fn evaluation_skips_validation_and_package_resolution() {
         )
         .expect("renders");
     assert!(rendered.contains("missing-tool"), "{rendered}");
-    let Err(report) = laft_config::load(dir.path(), &any_package) else {
+    let Err(report) = laft_config::load(dir.path(), &any_package, &support::no_options()) else {
         panic!("loading resolves packages");
     };
     assert!(
@@ -74,7 +80,11 @@ fn evaluation_skips_validation_and_package_resolution() {
 #[test]
 fn evaluation_reports_type_errors() {
     let dir = config_dir(&[("part.stav", "system { hostname = 3 }\n")]);
-    let report = laft_config::evaluate(dir.path(), &dir.path().join("part.stav"))
-        .expect_err("a hostname is a string");
+    let report = laft_config::evaluate(
+        dir.path(),
+        &dir.path().join("part.stav"),
+        &support::no_options(),
+    )
+    .expect_err("a hostname is a string");
     assert!(report.has_errors());
 }
