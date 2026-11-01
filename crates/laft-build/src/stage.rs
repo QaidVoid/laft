@@ -805,7 +805,7 @@ impl StageRun<'_> {
         let mut big = BTreeSet::new();
         let estimates: BTreeMap<Item, u64> = items
             .iter()
-            .map(|item| {
+            .map(|item| -> Result<(Item, u64), BuildError> {
                 let recipe = graph
                     .recipe(item)
                     .expect("the graph holds every recipe of the step");
@@ -814,29 +814,23 @@ impl StageRun<'_> {
                     big.insert(item.clone());
                 }
                 let peak = db
-                    .latest(item)
-                    .ok()
-                    .flatten()
+                    .latest(item)?
                     .map_or(0, |latest| latest.record.peak_memory);
                 let estimate = match peak {
                     0 if wants => self.options.min_available,
                     0 => DEFAULT_MEMORY,
                     peak => peak,
                 };
-                (item.clone(), estimate)
+                Ok((item.clone(), estimate))
             })
-            .collect();
+            .collect::<Result<_, BuildError>>()?;
         let durations: BTreeMap<Item, u64> = items
             .iter()
-            .map(|item| {
-                let seconds = db
-                    .latest(item)
-                    .ok()
-                    .flatten()
-                    .map_or(0, |latest| latest.record.seconds);
-                (item.clone(), seconds)
+            .map(|item| -> Result<(Item, u64), BuildError> {
+                let seconds = db.latest(item)?.map_or(0, |latest| latest.record.seconds);
+                Ok((item.clone(), seconds))
             })
-            .collect();
+            .collect::<Result<_, BuildError>>()?;
         let workers = crate::build::resolved_workers(self.options.workers, self.builder.jobs);
         let memory = Memory {
             estimates,

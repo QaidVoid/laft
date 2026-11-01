@@ -1174,6 +1174,29 @@ fn mirror_stage(dir: &Path, served: bool) -> Stage {
 }
 
 #[test]
+fn a_corrupt_build_record_stops_the_stage() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = host_tools_stage(dir.path(), r#"    { name = "build", packages = [greet] },"#);
+    store_with_host_tools(dir.path());
+    let result = run_with(dir.path(), &stage, &store_options(dir.path()));
+    if refused(&result) {
+        return;
+    }
+    result.expect("the first run builds");
+    // The stage weighs its builds with the records of the database, so a
+    // record it cannot read stops the run instead of a run that pretends
+    // the record is not there.
+    fs::write(dir.path().join("build/db/latest/greet+dynamic"), "not json")
+        .expect("the test setup works");
+    fs::remove_file(dir.path().join("build/stages/demo/build")).expect("the test setup works");
+    let error = run_with(dir.path(), &stage, &store_options(dir.path())).unwrap_err();
+    assert_eq!(error.code(), Some("B044"), "{error}");
+}
+
+#[test]
 fn a_dry_run_fetches_no_sources_and_makes_no_jobserver() {
     let dir = laft_test::tempdir();
     let stage = mirror_stage(dir.path(), false);
