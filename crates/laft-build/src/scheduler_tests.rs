@@ -193,6 +193,34 @@ fn the_build_with_the_longest_chain_ahead_starts_first() {
 }
 
 #[test]
+fn a_panicking_prepare_fails_the_run_and_wakes_the_workers() {
+    let mut scheduler = scheduler(&["a", "b"], &[], &[("a", 0), ("b", 0)], 2);
+    let mut message = Some(String::from("the plan went away"));
+    let failed = scheduler
+        .run(
+            ["a", "b"].iter().map(|name| item(name)),
+            &mut |_: &Item| {
+                if let Some(message) = message.take() {
+                    panic!("{message}");
+                }
+            },
+            &|item, (): ()| Ok(format!("built {item}")),
+            &mut |_, _| Ok(Vec::new()),
+            None,
+        )
+        .expect_err("the run fails instead of hanging");
+    let Failed::Build { item, error } = failed else {
+        panic!("the run fails with a build, not {failed:?}");
+    };
+    assert_eq!(
+        item,
+        Item::new("a".parse().unwrap(), Variant::Dynamic),
+        "the first build that had not finished"
+    );
+    assert!(error.to_string().contains("the plan went away"), "{error}");
+}
+
+#[test]
 fn a_failure_stops_the_builds_that_wait_for_it() {
     let mut scheduler = scheduler(
         &["a", "b", "c"],

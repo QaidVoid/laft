@@ -1,5 +1,6 @@
 //! The builds of one run, which start by readiness and run side by side.
 
+use std::any::Any;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::AssertUnwindSafe;
@@ -158,7 +159,9 @@ impl<'a> Scheduler<'a> {
     /// which join the run unless they already ran. When a build joins a
     /// `jobserver`, the pipe is drained and refilled whenever no build
     /// runs, which restores the tokens a killed build lost. A build starts
-    /// only when `memory` says the host holds what it needs.
+    /// only when `memory` says the host holds what it needs. A panic of
+    /// `prepare` or `settled` fails the run with the panic's message
+    /// instead of leaving the workers waiting.
     ///
     /// Returns every build it built, in the order they finished.
     pub(crate) fn run<J, T>(
@@ -179,10 +182,10 @@ impl<'a> Scheduler<'a> {
         let (jobs, waiting_queue) = mpsc::channel::<(Item, J)>();
         let waiting_queue = Mutex::new(waiting_queue);
         let (finished, results) = mpsc::channel::<(Item, Result<T, BuildError>)>();
-        let mut jobs = Some(jobs);
         let mut outcomes = Vec::new();
         let mut failures: Vec<(usize, Item, Box<BuildError>)> = Vec::new();
         let mut lost = None;
+        let mut panicking = None;
         std::thread::scope(|scope| {
             for _ in 0..self.workers {
                 scope.spawn(|| {
@@ -198,10 +201,13 @@ impl<'a> Scheduler<'a> {
                                 let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
                                     build(&item, data)
                                 }))
-                                .unwrap_or_else(|_| {
+                                .unwrap_or_else(|payload| {
                                     Err(BuildError::problem(
                                         "B040",
-                                        format!("the build of {item} panicked"),
+                                        format!(
+                                            "the build of {item} panicked{}",
+                                            panic_reason(payload)
+                                        ),
                                     ))
                                 });
                                 let _ = finished.send((item, result));
@@ -211,54 +217,81 @@ impl<'a> Scheduler<'a> {
                     }
                 });
             }
-            loop {
-                if let Err(error) = self.dispatch(
-                    prepare,
-                    jobs.as_ref()
-                        .expect("the job sender runs until the run ends"),
-                ) {
-                    self.stopped = true;
-                    lost = Some(error);
-                    break;
-                }
-                if self.running.is_empty() {
-                    break;
-                }
-                let Ok((item, result)) = results.recv() else {
-                    break;
-                };
-                self.running.remove(&item);
-                self.running_big.remove(&item);
-                if self.running.is_empty()
-                    && let Some(jobserver) = jobserver
-                {
-                    jobserver.refill();
-                }
-                match result {
-                    Ok(outcome) => {
-                        match settled(&item, &outcome) {
-                            Ok(made) => {
-                                for item in made {
-                                    self.admit(item);
+            // The sender lives in the scope, so unwinding closes the
+            // channel before the workers are joined, which wakes them.
+            let mut jobs = Some(jobs);
+            let mut settling_item = None;
+            let finished_loop = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                loop {
+                    if let Err(error) = self.dispatch(
+                        prepare,
+                        jobs.as_ref()
+                            .expect("the job sender runs until the run ends"),
+                    ) {
+                        self.stopped = true;
+                        lost = Some(error);
+                        break;
+                    }
+                    if self.running.is_empty() {
+                        break;
+                    }
+                    let Ok((item, result)) = results.recv() else {
+                        break;
+                    };
+                    self.running.remove(&item);
+                    self.running_big.remove(&item);
+                    if self.running.is_empty()
+                        && let Some(jobserver) = jobserver
+                    {
+                        jobserver.refill();
+                    }
+                    match result {
+                        Ok(outcome) => {
+                            settling_item = Some(item.clone());
+                            match settled(&item, &outcome) {
+                                Ok(made) => {
+                                    for item in made {
+                                        self.admit(item);
+                                    }
+                                }
+                                Err(error) => {
+                                    self.stopped = true;
+                                    failures.push((
+                                        self.place(&item),
+                                        item.clone(),
+                                        Box::new(error),
+                                    ));
                                 }
                             }
-                            Err(error) => {
-                                self.stopped = true;
-                                failures.push((self.place(&item), item.clone(), Box::new(error)));
-                            }
+                            self.built.insert(item.clone());
+                            self.settled.insert(item.clone());
+                            outcomes.push((item, outcome));
                         }
-                        self.built.insert(item.clone());
-                        self.settled.insert(item.clone());
-                        outcomes.push((item, outcome));
-                    }
-                    Err(error) => {
-                        self.stopped = true;
-                        failures.push((self.place(&item), item, Box::new(error)));
+                        Err(error) => {
+                            self.stopped = true;
+                            failures.push((self.place(&item), item, Box::new(error)));
+                        }
                     }
                 }
-            }
+            }));
             drop(jobs.take());
+            if let Err(payload) = finished_loop {
+                let item = self
+                    .unfinished()
+                    .or(settling_item)
+                    .expect("the run panicked over a build it held");
+                panicking = Some((item, panic_reason(payload)));
+            }
         });
+        if let Some((item, reason)) = panicking {
+            return Err(Failed::Build {
+                item,
+                error: Box::new(BuildError::problem(
+                    "B040",
+                    format!("the run panicked{reason}"),
+                )),
+            });
+        }
         if let Some(error) = lost {
             return Err(Failed::Memory(error));
         }
@@ -442,6 +475,14 @@ impl<'a> Scheduler<'a> {
         self.position.get(item).copied().unwrap_or(usize::MAX)
     }
 
+    /// The first build that has not finished, in the plan order.
+    fn unfinished(&self) -> Option<Item> {
+        self.pending
+            .union(&self.running)
+            .min_by_key(|item| self.place(item))
+            .cloned()
+    }
+
     /// Adds `item` to the run, unless it already ran or runs.
     fn admit(&mut self, item: Item) {
         if self.built.contains(&item) || self.running.contains(&item) {
@@ -449,5 +490,17 @@ impl<'a> Scheduler<'a> {
         }
         self.settled.remove(&item);
         self.pending.insert(item);
+    }
+}
+
+/// The message of a panic payload, when it carries one.
+fn panic_reason(payload: Box<dyn Any + Send>) -> String {
+    let message = payload
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned());
+    match message {
+        Some(message) => format!(": {message}"),
+        None => String::new(),
     }
 }
