@@ -778,18 +778,44 @@ fn available_gib() -> u64 {
         .map_or(0, |kib| kib / (1 << 20))
 }
 
-/// The highest number of jobs one `make` ran at once, read from the meter
-/// of every kept working tree.
-fn meter_peaks(root: &BuildRoot) -> Vec<u32> {
-    let mut peaks = Vec::new();
+/// The `(time, change)` events of the metered jobs of every kept working
+/// tree, one timeline per build.
+fn meter_timelines(root: &BuildRoot) -> Vec<Vec<(u64, i64)>> {
+    let mut timelines = Vec::new();
     for entry in fs::read_dir(root.work()).expect("the working trees are kept") {
-        let path = entry.expect("a work tree").path().join("build/tmp/m");
+        let path = entry.expect("a work tree").path().join("build/tmp/events");
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
-        peaks.push(text.trim().parse().expect("the meter holds a number"));
+        let timeline = text
+            .lines()
+            .map(|line| {
+                let (time, change) = line.split_once(' ').expect("an event names a time");
+                (
+                    time.parse().expect("the time is a number"),
+                    change.parse().expect("the change is a number"),
+                )
+            })
+            .collect();
+        timelines.push(timeline);
     }
-    peaks
+    timelines
+}
+
+/// The most jobs that ran at once over the `timelines` of one or more
+/// builds.
+fn peak_of(timelines: &[Vec<(u64, i64)>]) -> i64 {
+    let mut events: Vec<(u64, i64)> = timelines.iter().flatten().copied().collect();
+    // A job that ends when another starts counts once, not twice, so a
+    // handing-over ends before the next job starts.
+    events.sort_by_key(|(time, change)| (*time, *change));
+    let mut running = 0;
+    let mut peak = 0;
+    for (_, change) in events {
+        running += change;
+        peak = peak.max(running);
+    }
+    peak
 }
 
 #[test]
@@ -927,14 +953,20 @@ fn a_run_gives_the_same_records_with_one_and_four_workers() {
 
 /// The `make` recipe of the job meter: eight jobs that each count
 /// themselves up under a `flock` guard, sleep, and count themselves down
-/// again, so the highest count is the most jobs `make` ran at once.
+/// again, writing each change with the time of `/proc/uptime`, so the
+/// highest count is the most jobs `make` ran at once.
 const METER_MAKEFILE: &str = "all: job1 job2 job3 job4 job5 job6 job7 job8
 job1 job2 job3 job4 job5 job6 job7 job8:
-\t@flock \"$$TMPDIR/lock\" sh -c 'n=$$(cat \"$$TMPDIR/n\" 2>/dev/null || echo 0); \
-n=$$((n+1)); echo $$n > \"$$TMPDIR/n\"; m=$$(cat \"$$TMPDIR/m\" 2>/dev/null || echo 0); \
+\t@flock \"$$TMPDIR/lock\" sh -c 'u=$$(cat /proc/uptime); u=$${u%% *}; e=$${u%.*}$${u#*.}; \
+echo \"$$e +1\" >> \"$$TMPDIR/events\"; \
+n=$$(cat \"$$TMPDIR/n\" 2>/dev/null || echo 0); \
+n=$$((n+1)); echo $$n > \"$$TMPDIR/n\"; \
+m=$$(cat \"$$TMPDIR/m\" 2>/dev/null || echo 0); \
 if [ $$n -gt $$m ]; then echo $$n > \"$$TMPDIR/m\"; fi'
 \t@sleep 0.2
-\t@flock \"$$TMPDIR/lock\" sh -c 'echo $$(( $$(cat \"$$TMPDIR/n\") - 1 )) > \"$$TMPDIR/n\"'
+\t@flock \"$$TMPDIR/lock\" sh -c 'u=$$(cat /proc/uptime); u=$${u%% *}; e=$${u%.*}$${u#*.}; \
+echo \"$$e -1\" >> \"$$TMPDIR/events\"; \
+echo $$(( $$(cat \"$$TMPDIR/n\") - 1 )) > \"$$TMPDIR/n\"'
 .PHONY: all job1 job2 job3 job4 job5 job6 job7 job8
 ";
 
@@ -948,6 +980,15 @@ fn the_builds_of_a_store_run_share_one_job_budget() {
     for tool in ["make", "flock"] {
         if !Path::new("/usr/bin").join(tool).exists() {
             println!("skipping: /usr/bin/{tool} is missing");
+            return;
+        }
+    }
+    // GNU make 4.3 and earlier do not take the spare tokens of a
+    // jobserver, so their meter stays flat.
+    match make_version() {
+        Some(version) if version >= (4, 4) => {}
+        other => {
+            println!("skipping: make {other:?} shares no jobserver tokens");
             return;
         }
     }
@@ -979,15 +1020,39 @@ fn the_builds_of_a_store_run_share_one_job_budget() {
     if let Err(e) = builder.run(&graph, &mut schedule, &db, &|_| {}) {
         panic!("the run fails: {}", e.error);
     }
-    let peaks = meter_peaks(&root);
-    assert_eq!(peaks.len(), packages.len(), "every build keeps a meter");
-    for peak in peaks {
+    let timelines = meter_timelines(&root);
+    assert_eq!(timelines.len(), packages.len(), "every build keeps a meter");
+    for timeline in &timelines {
+        let peak = peak_of(std::slice::from_ref(timeline));
         assert!(peak >= 2, "make runs more than one job at once: {peak}");
         assert!(
             peak <= 4,
             "make sees more than its one job and the three spare tokens: {peak}"
         );
     }
+    // Every build draws its jobs from the one jobserver of the run, so
+    // the jobs of all builds together never exceed the budget, and the
+    // builds do run side by side.
+    let shared = peak_of(&timelines);
+    assert!(shared >= 2, "two builds run side by side: {shared}");
+    assert!(
+        shared <= 6,
+        "the builds together run more than the six jobs of the run: {shared}"
+    );
+}
+
+/// The version of the host `make`, as `(major, minor)`.
+fn make_version() -> Option<(u32, u32)> {
+    let output = std::process::Command::new("/usr/bin/make")
+        .arg("--version")
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let version = text.strip_prefix("GNU Make ")?.split([' ', '-']).next()?;
+    let mut numbers = version.split('.');
+    let major = numbers.next()?.parse().ok()?;
+    let minor = numbers.next()?.parse().ok()?;
+    Some((major, minor))
 }
 
 /// The install phase of a package that writes its own marker file.
