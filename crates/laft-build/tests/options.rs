@@ -111,6 +111,16 @@ fn a_set_that_names_an_unknown_option_or_tag_is_r073() {
         .expect_err("the tag does not exist");
     assert!(err.to_string().contains("R073"), "{err}");
 
+    let err = repos
+        .evaluate_with(&name, &set(&[("tool", OptionValue::tag("amd"))]))
+        .expect_err("the option is a Bool");
+    assert!(err.to_string().contains("R073"), "{err}");
+
+    let err = repos
+        .evaluate_with(&name, &set(&[("drivers", OptionValue::TRUE)]))
+        .expect_err("the option is a sum type");
+    assert!(err.to_string().contains("R073"), "{err}");
+
     let plain = repo(
         dir.path(),
         "core",
@@ -263,6 +273,22 @@ fn options_files_that_break_a_rule_are_r072() {
             "a file that does not parse",
             "struct Options {\n".to_owned(),
         ),
+        (
+            "a sum type named like the struct",
+            "## The modes.\ntype Options = fast | slow\n\nstruct Options {\n  ## The speed.\n  fast: Bool = true\n}\n".to_owned(),
+        ),
+        (
+            "a sum type named like a built-in type",
+            "## The modes.\ntype Bool = fast | slow\n\nstruct Options {\n  ## The speed.\n  fast: Bool = true\n}\n".to_owned(),
+        ),
+        (
+            "a sum type named like a type of the recipe language",
+            "## The shells.\ntype Shell = sh | bash\n\nstruct Options {\n  ## The shell.\n  fast: Bool = true\n}\n".to_owned(),
+        ),
+        (
+            "a tag written like a bool",
+            "## The modes.\ntype Modes = true | slow\n\nstruct Options {\n  ## The speed.\n  fast: Modes = slow\n}\n".to_owned(),
+        ),
     ];
     let package = (
         "recipes/optpkg/package.stav",
@@ -280,6 +306,57 @@ fn options_files_that_break_a_rule_are_r072() {
         let err = repos.evaluate(&support::name("optpkg")).expect_err(why);
         assert!(err.to_string().contains("R072"), "{why}: {err}");
     }
+}
+
+#[test]
+fn a_broken_options_file_is_reported_before_the_set_is() {
+    let dir = laft_test::tempdir();
+    let repo = repo(
+        dir.path(),
+        "core",
+        &[
+            ("recipes/optpkg/options.stav", "struct Options {\n"),
+            (
+                "recipes/optpkg/package.stav",
+                "import \"laft/options\" as opt\n\npackage optpkg {\n  version = \"1.0\"\n  summary = \"The options package\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+            ),
+        ],
+    );
+    let repos = Repos::open(&[repo]).expect("the repository opens");
+    let err = repos
+        .evaluate_with(
+            &support::name("optpkg"),
+            &set(&[("speed", OptionValue::TRUE)]),
+        )
+        .expect_err("the file does not parse");
+    assert!(err.to_string().contains("R072"), "{err}");
+    assert!(!err.to_string().contains("R073"), "{err}");
+}
+
+#[test]
+fn a_rejected_declaration_names_the_file_and_the_place() {
+    let dir = laft_test::tempdir();
+    let repo = repo(
+        dir.path(),
+        "core",
+        &[
+            (
+                "recipes/optpkg/options.stav",
+                "## Gr\u{f6}\u{df}e\nstruct Options {\n  ## The speed.\n  fast: Bool\n}\n",
+            ),
+            (
+                "recipes/optpkg/package.stav",
+                "package optpkg {\n  version = \"1.0\"\n  summary = \"The options package\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+            ),
+        ],
+    );
+    let repos = Repos::open(&[repo]).expect("the repository opens");
+    let err = repos
+        .evaluate(&support::name("optpkg"))
+        .expect_err("the option has no default");
+    let text = err.to_string();
+    assert!(text.contains("recipes/optpkg/options.stav"), "{text}");
+    assert!(text.contains("line 4, column 3"), "{text}");
 }
 
 #[test]

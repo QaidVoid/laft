@@ -163,6 +163,39 @@ fn every_trigger_fires_exactly_when_its_input_changes() {
 }
 
 #[test]
+fn an_options_change_fires_the_plan_trigger() {
+    let base = foo("foo:static");
+    let links = vec![link("zlib", 0, &["libz.so.1"])];
+    let statics = vec![StaticInput {
+        name: name("zlib"),
+        id: id(1),
+    }];
+    let before = KeyInputs::new(&base, links.clone(), statics.clone());
+
+    let mut tuned = base.clone();
+    tuned
+        .option_values
+        .insert("speed".into(), OptionValue::TRUE);
+    assert_eq!(
+        fired(
+            &before,
+            &KeyInputs::new(&tuned, links.clone(), statics.clone())
+        ),
+        ["T1"]
+    );
+
+    let mut linked = link("zlib", 0, &["libz.so.1"]);
+    linked.options.insert("speed".into(), OptionValue::TRUE);
+    assert_eq!(
+        fired(
+            &before,
+            &KeyInputs::new(&base, vec![linked], statics.clone())
+        ),
+        ["T1"]
+    );
+}
+
+#[test]
 fn dynamic_builds_ignore_static_packages_in_their_view() {
     let base = foo("foo");
     let statics = |byte| {

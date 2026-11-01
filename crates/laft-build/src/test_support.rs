@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use laft_core::{PkgRef, Variant};
+use laft_core::{OptionValue, PkgRef, Variant};
 
 use crate::recipe::{
     BuildOptions, Ci, Metadata, Operations, Outputs, Phases, Recipe, Runner, Subpackage,
@@ -169,6 +169,10 @@ pub(crate) struct TestPkg<'a> {
     pub(crate) origin: Option<&'a str>,
     /// An alternatives group with the paths it ships and its priority.
     pub(crate) alternative: Option<(&'a str, &'a [&'a str], i64)>,
+    /// The version of the package, `1.0` when unset.
+    pub(crate) version: &'a str,
+    /// The option values the package was built with.
+    pub(crate) options: BTreeMap<String, OptionValue>,
 }
 
 impl<'a> TestPkg<'a> {
@@ -183,6 +187,8 @@ impl<'a> TestPkg<'a> {
             provides: &[],
             origin: None,
             alternative: None,
+            version: "1.0",
+            options: BTreeMap::new(),
         }
     }
 
@@ -224,7 +230,7 @@ impl<'a> TestPkg<'a> {
         let meta = laft_pkg::Meta {
             format: laft_pkg::FORMAT,
             name: self.name.parse().expect("a valid name"),
-            version: "1.0".parse().expect("a valid version"),
+            version: self.version.parse().expect("a valid version"),
             rev: 1,
             variant: self.variant,
             arch: laft_pkg::Arch::X86_64V3,
@@ -260,7 +266,7 @@ impl<'a> TestPkg<'a> {
             triggers: vec![],
             static_deps: vec![],
             abi: Default::default(),
-            options: BTreeMap::new(),
+            options: self.options.clone(),
             abi_epoch: 2,
             requested_privileges: vec![],
             installed_size: 0,

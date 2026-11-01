@@ -202,6 +202,14 @@ impl Repos {
         let repos: Vec<&RecipeRepo> = indices.iter().map(|&i| &self.repos[i]).collect();
         let all: Vec<&RecipeRepo> = self.repos.iter().collect();
         let (declared, found) = options::declarations(&all, name);
+        if !found.is_empty() {
+            return Err(Error::Problems(
+                found
+                    .into_iter()
+                    .map(|f| Problem::new(f.diagnostic.code, f.diagnostic.message))
+                    .collect(),
+            ));
+        }
         let bad = match &declared {
             Some(decls) => decls.problems(&format!("the build of {name}"), set),
             None if set.is_empty() => Vec::new(),
@@ -212,14 +220,6 @@ impl Repos {
         if !bad.is_empty() {
             return Err(Error::Problems(
                 bad.into_iter().map(|m| Problem::new("R073", m)).collect(),
-            ));
-        }
-        if !found.is_empty() {
-            return Err(Error::Problems(
-                found
-                    .into_iter()
-                    .map(|f| Problem::new(f.diagnostic.code, f.diagnostic.message))
-                    .collect(),
             ));
         }
         let roots: Vec<PathBuf> = repos.iter().map(|r| r.path.clone()).collect();
@@ -361,7 +361,7 @@ pub(crate) fn own_codes(report: &Report) -> Report {
             diagnostic: Diagnostic::error(
                 "R070",
                 item.diagnostic.span,
-                format!("the recipe imports {OPTIONS_MODULE}, which it declares no options for"),
+                format!("the file imports {OPTIONS_MODULE}, which its package declares no options for"),
             )
             .with_help(format!(
                 "declare the options in {RECIPES}/<name>/options.stav, or drop the import"

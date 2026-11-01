@@ -1,13 +1,15 @@
 //! The options a recipe declares: `options.stav`, the host module
 //! `laft/options` and the checks of both.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
 use laft_core::{MAX_OPTIONS, Name, OptionValue, is_valid_name};
 use stav::ast::{self, Expr, Field, Item, LiteralKind, StructDecl, Type, TypeDecl};
 use stav::{Diagnostic, FileDiagnostic, HostModule, HostValues, Span, Value, parse};
 
 use crate::RecipeRepo;
+use crate::host::PRELUDE;
 
 /// The import path of the options module.
 pub(crate) const OPTIONS_MODULE: &str = "laft/options";
@@ -77,16 +79,26 @@ impl Declarations {
                 ));
                 continue;
             };
-            if let (Kind::Sum(sum), OptionValue::Tag(tag)) = (&field.kind, value)
-                && !self
-                    .sums
-                    .iter()
-                    .find(|s| &s.name == sum)
-                    .is_some_and(|s| s.tags.iter().any(|t| t == tag))
-            {
-                found.push(format!(
-                    "{what} sets the option `{name}` to `{tag}`, which is no tag of `{sum}`"
-                ));
+            match (&field.kind, value) {
+                (Kind::Bool, OptionValue::Bool(_)) => {}
+                (Kind::Bool, OptionValue::Tag(tag)) => found.push(format!(
+                    "{what} sets the option `{name}` to the tag `{tag}`, which a `Bool` option does not take"
+                )),
+                (Kind::Sum(_), OptionValue::Bool(bool)) => found.push(format!(
+                    "{what} sets the option `{name}` to `{bool}`, which a tag option does not take"
+                )),
+                (Kind::Sum(sum), OptionValue::Tag(tag)) => {
+                    if !self
+                        .sums
+                        .iter()
+                        .find(|s| &s.name == sum)
+                        .is_some_and(|s| s.tags.iter().any(|t| t == tag))
+                    {
+                        found.push(format!(
+                            "{what} sets the option `{name}` to `{tag}`, which is no tag of `{sum}`"
+                        ));
+                    }
+                }
             }
         }
         found
@@ -120,8 +132,9 @@ impl Declarations {
     ///
     /// # Panics
     ///
-    /// Panics when `set` names an option the package does not declare,
-    /// which [`Declarations::problems`] rules out.
+    /// Panics when `set` names an option the package does not declare, or
+    /// a value of a kind the option does not take, which
+    /// [`Declarations::problems`] rules out.
     pub(crate) fn apply(&self, values: &mut HostValues, set: &BTreeMap<String, OptionValue>) {
         for (name, value) in set {
             let value = match value {
@@ -148,7 +161,9 @@ impl Declarations {
 
     /// The Stav source of the `laft/options` module: the sum types, the
     /// `Options` struct and one annotated binding per option, which one
-    /// evaluation replaces with [`Declarations::values`].
+    /// evaluation replaces with [`Declarations::values`]. A tag default is
+    /// written qualified as `Sum.tag`, so a tag that shares its name with
+    /// a variant of another sum type cannot be read as that one.
     pub(crate) fn module(&self) -> HostModule {
         let mut source = String::new();
         for sum in &self.sums {
@@ -161,7 +176,7 @@ impl Declarations {
                 field.doc,
                 field.name,
                 type_text(&field.kind),
-                field.default
+                default_text(&field.kind, &field.default),
             ));
         }
         source.push_str("}\n");
@@ -171,7 +186,7 @@ impl Declarations {
                 field.doc,
                 field.name,
                 type_text(&field.kind),
-                field.default
+                default_text(&field.kind, &field.default),
             ));
         }
         HostModule {
@@ -187,6 +202,49 @@ fn type_text(kind: &Kind) -> &str {
         Kind::Bool => "Bool",
         Kind::Sum(name) => name,
     }
+}
+
+/// The source text of a default: a tag qualified by its sum type, so a
+/// tag that shadows a variant of another sum type stays unambiguous.
+fn default_text(kind: &Kind, default: &OptionValue) -> String {
+    match (kind, default) {
+        (Kind::Sum(sum), OptionValue::Tag(tag)) => format!("{sum}.{tag}"),
+        _ => default.to_string(),
+    }
+}
+
+/// The type names a sum type in `options.stav` cannot take, with what
+/// each name collides with: `Options`, which the generated module
+/// declares, the built-in types of the recipe language, and the types its
+/// prelude declares, which every file sees unqualified.
+fn reserved_type_name(name: &str) -> Option<&'static str> {
+    if name == STRUCT_NAME {
+        return Some("the struct of the options module");
+    }
+    if stav::is_builtin_type_name(name) {
+        return Some("a built-in type");
+    }
+    if prelude_type_names().contains(name) {
+        return Some("a type of the recipe language");
+    }
+    None
+}
+
+/// Every type name the recipe prelude declares, parsed once.
+fn prelude_type_names() -> &'static BTreeSet<String> {
+    static NAMES: OnceLock<BTreeSet<String>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        let parsed = parse(PRELUDE);
+        parsed
+            .file()
+            .items()
+            .filter_map(|item| match item {
+                Item::Type(decl) => decl.name().map(|n| n.text().to_owned()),
+                Item::Struct(decl) => decl.name().map(|n| n.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    })
 }
 
 /// Reads the `options.stav` of every repository that contributes to
@@ -224,9 +282,17 @@ pub(crate) fn declarations(
             }
         };
         any = true;
+        let file = format!("recipes/{}/options.stav", name.as_str());
         let mut repo_sums = Vec::new();
         let mut repo_fields: Vec<Declaration> = Vec::new();
-        read_file(&text, &sums, &mut repo_sums, &mut repo_fields, &mut found);
+        read_file(
+            &file,
+            &text,
+            &sums,
+            &mut repo_sums,
+            &mut repo_fields,
+            &mut found,
+        );
         for sum in repo_sums {
             if sums.iter().any(|s| s.name == sum.name) {
                 found.push(problem(
@@ -266,10 +332,12 @@ pub(crate) fn declarations(
     (Some(Declarations { sums, fields }), found)
 }
 
-/// Checks one `options.stav` and adds its sum types and fields. `known`
+/// Checks one `options.stav` and adds its sum types and fields. `file`
+/// names the file in the diagnostics and `text` is its source. `known`
 /// holds the sum types of the earlier repositories, which the fields of
 /// this file may use too.
 fn read_file(
+    file: &str,
     text: &str,
     known: &[Sum],
     sums: &mut Vec<Sum>,
@@ -279,13 +347,12 @@ fn read_file(
     let parsed = parse(text);
     if !parsed.diagnostics.is_empty() {
         for diagnostic in &parsed.diagnostics {
-            found.push(problem(
+            found.push(problem_at(
+                file,
+                text,
+                diagnostic.span,
                 "R072",
-                format!(
-                    "options.stav does not parse at {}: {}",
-                    position(text, diagnostic.span.start),
-                    diagnostic.message
-                ),
+                format!("options.stav does not parse: {}", diagnostic.message),
             ));
         }
         return;
@@ -294,13 +361,15 @@ fn read_file(
     let mut structs = Vec::new();
     for item in parsed.file().items() {
         match item {
-            Item::Type(decl) => read_sum(decl, &mut own_sums, found),
+            Item::Type(decl) => read_sum(file, text, decl, &mut own_sums, found),
             Item::Struct(decl) => structs.push(decl),
-            Item::Import(_) => found.push(problem(
+            Item::Import(_) => found.push(problem_in(
+                file,
                 "R072",
                 "options.stav holds no imports: the options read nothing else",
             )),
-            Item::Fn(_) | Item::Stmt(_) => found.push(problem(
+            Item::Fn(_) | Item::Stmt(_) => found.push(problem_in(
+                file,
                 "R072",
                 "options.stav holds only sum types and the struct `Options`",
             )),
@@ -309,23 +378,40 @@ fn read_file(
     let mut all_sums: Vec<&Sum> = own_sums.iter().chain(known.iter()).collect();
     for decl in &structs {
         if decl.name().is_some_and(|n| n.text() == STRUCT_NAME) {
-            read_fields(*decl, &mut all_sums, fields, found);
+            read_fields(file, text, *decl, &mut all_sums, fields, found);
         } else {
-            let name = decl.name().map(|n| n.text()).unwrap_or("unnamed");
-            found.push(problem(
-                "R072",
-                format!("the struct `{name}` does not belong in options.stav: only `{STRUCT_NAME}` and sum types do"),
-            ));
+            let problem = match decl.name() {
+                Some(name) => problem_at(
+                    file,
+                    text,
+                    name.span(),
+                    "R072",
+                    format!(
+                        "the struct `{}` does not belong in options.stav: only `{STRUCT_NAME}` and sum types do",
+                        name.text()
+                    ),
+                ),
+                None => problem_in(
+                    file,
+                    "R072",
+                    format!(
+                        "a struct without a name does not belong in options.stav: only `{STRUCT_NAME}` and sum types do"
+                    ),
+                ),
+            };
+            found.push(problem);
         }
     }
     if structs.is_empty() {
-        found.push(problem(
+        found.push(problem_in(
+            file,
             "R072",
             format!("options.stav declares no struct `{STRUCT_NAME}`"),
         ));
     }
     if structs.len() > 1 {
-        found.push(problem(
+        found.push(problem_in(
+            file,
             "R072",
             "options.stav declares more than one struct, only `Options` belongs there",
         ));
@@ -334,50 +420,89 @@ fn read_file(
 }
 
 /// Checks one sum type declaration and adds it.
-fn read_sum(decl: TypeDecl<'_>, sums: &mut Vec<Sum>, found: &mut Vec<FileDiagnostic>) {
+fn read_sum(
+    file: &str,
+    text: &str,
+    decl: TypeDecl<'_>,
+    sums: &mut Vec<Sum>,
+    found: &mut Vec<FileDiagnostic>,
+) {
     let Some(name) = decl.name() else {
         return;
     };
-    let name = name.text();
+    let name_text = name.text();
+    if let Some(reserved) = reserved_type_name(name_text) {
+        found.push(problem_at(
+            file,
+            text,
+            name.span(),
+            "R072",
+            format!("the sum type `{name_text}` is named like {reserved}"),
+        ));
+        return;
+    }
     let mut tags = Vec::new();
     for variant in decl.variants() {
         let Some(tag) = variant.name() else {
             continue;
         };
-        let tag = tag.text();
-        if !is_valid_name(tag) {
-            found.push(problem(
+        let tag_text = tag.text();
+        if tag_text == "true" || tag_text == "false" {
+            found.push(problem_at(
+                file,
+                text,
+                tag.span(),
+                "R072",
+                format!("the tag `{tag_text}` of `{name_text}` is spelled like a bool"),
+            ));
+            continue;
+        }
+        if !is_valid_name(tag_text) {
+            found.push(problem_at(
+                file,
+                text,
+                tag.span(),
                 "R072",
                 format!(
-                    "the tag `{tag}` of `{name}` is not a name of lowercase letters, digits and `_`"
+                    "the tag `{tag_text}` of `{name_text}` is not a name of lowercase letters, digits and `_`"
                 ),
             ));
             continue;
         }
         if variant.params().is_some() {
-            found.push(problem(
+            found.push(problem_at(
+                file,
+                text,
+                tag.span(),
                 "R072",
-                format!("the tag `{tag}` of `{name}` carries a value, but an option is a bare tag"),
+                format!(
+                    "the tag `{tag_text}` of `{name_text}` carries a value, but an option is a bare tag"
+                ),
             ));
             continue;
         }
-        tags.push(tag.to_owned());
+        tags.push(tag_text.to_owned());
     }
-    if sums.iter().any(|s| s.name == name) {
-        found.push(problem(
+    if sums.iter().any(|s| s.name == name_text) {
+        found.push(problem_at(
+            file,
+            text,
+            name.span(),
             "R072",
-            format!("the sum type `{name}` is declared twice"),
+            format!("the sum type `{name_text}` is declared twice"),
         ));
         return;
     }
     sums.push(Sum {
-        name: name.to_owned(),
+        name: name_text.to_owned(),
         tags,
     });
 }
 
 /// Checks the fields of the `Options` struct and adds them.
 fn read_fields(
+    file: &str,
+    text: &str,
     decl: StructDecl<'_>,
     sums: &mut Vec<&Sum>,
     fields: &mut Vec<Declaration>,
@@ -388,48 +513,39 @@ fn read_fields(
         let Some(name) = field.name() else {
             continue;
         };
-        let name = name.text();
+        let name_text = name.text();
+        let at = |message: String| problem_at(file, text, name.span(), "R072", message);
         let Some(doc) = ast::doc_comment(field.syntax()) else {
-            found.push(problem(
-                "R072",
-                format!("the option `{name}` has no doc comment saying what it does"),
-            ));
+            found.push(at(format!(
+                "the option `{name_text}` has no doc comment saying what it does"
+            )));
             continue;
         };
         let first = doc.lines().next().unwrap_or_default();
         if first.chars().count() > DOC_LINE_CHARS {
-            found.push(problem(
-                "R072",
-                format!(
-                    "the first line of the doc comment of `{name}` is longer than {DOC_LINE_CHARS} characters"
-                ),
-            ));
+            found.push(at(format!(
+                "the first line of the doc comment of `{name_text}` is longer than {DOC_LINE_CHARS} characters"
+            )));
             continue;
         }
-        let Some(kind) = field_kind(&field, sums, name, found) else {
+        let Some(kind) = field_kind(&field, sums, name_text, &at, found) else {
             continue;
         };
-        let Some(default) = default_value(&field, &kind, sums, name, found) else {
+        let Some(default) = default_value(&field, &kind, sums, name_text, &at, found) else {
             continue;
         };
-        if !is_valid_name(name) {
-            found.push(problem(
-                "R072",
-                format!(
-                    "the option name `{name}` is not a name of lowercase letters, digits and `_`"
-                ),
-            ));
+        if !is_valid_name(name_text) {
+            found.push(at(format!(
+                "the option name `{name_text}` is not a name of lowercase letters, digits and `_`"
+            )));
             continue;
         }
-        if own.iter().any(|f| f.name == name) {
-            found.push(problem(
-                "R072",
-                format!("the option `{name}` is declared twice"),
-            ));
+        if own.iter().any(|f| f.name == name_text) {
+            found.push(at(format!("the option `{name_text}` is declared twice")));
             continue;
         }
         own.push(Declaration {
-            name: name.to_owned(),
+            name: name_text.to_owned(),
             kind,
             default,
             doc: first.to_owned(),
@@ -443,19 +559,18 @@ fn field_kind(
     field: &Field<'_>,
     sums: &[&Sum],
     name: &str,
+    at: &dyn Fn(String) -> FileDiagnostic,
     found: &mut Vec<FileDiagnostic>,
 ) -> Option<Kind> {
     let Type::Named(named) = field.ty()? else {
-        found.push(problem(
-            "R072",
-            format!("the type of `{name}` is not `Bool` or a sum type of bare tags"),
-        ));
+        found.push(at(format!(
+            "the type of `{name}` is not `Bool` or a sum type of bare tags"
+        )));
         return None;
     };
     if named.args().next().is_some() {
-        found.push(problem(
-            "R072",
-            "an option is `Bool` or a sum type of bare tags, without type arguments",
+        found.push(at(
+            "an option is `Bool` or a sum type of bare tags, without type arguments".to_owned(),
         ));
         return None;
     }
@@ -467,13 +582,10 @@ fn field_kind(
     if segments.len() == 1 && sums.iter().any(|s| s.name == segments[0]) {
         return Some(Kind::Sum(segments[0].to_owned()));
     }
-    found.push(problem(
-        "R072",
-        format!(
-            "the type `{}` of `{name}` is neither `Bool` nor a sum type declared in options.stav",
-            segments.join(".")
-        ),
-    ));
+    found.push(at(format!(
+        "the type `{}` of `{name}` is neither `Bool` nor a sum type declared in options.stav",
+        segments.join(".")
+    )));
     None
 }
 
@@ -483,15 +595,13 @@ fn default_value(
     kind: &Kind,
     sums: &[&Sum],
     name: &str,
+    at: &dyn Fn(String) -> FileDiagnostic,
     found: &mut Vec<FileDiagnostic>,
 ) -> Option<OptionValue> {
     let bad = |found: &mut Vec<FileDiagnostic>| {
-        found.push(problem(
-            "R072",
-            format!(
-                "the option `{name}` has no default written as `true`, `false` or a bare tag of its type"
-            ),
-        ));
+        found.push(at(format!(
+            "the option `{name}` has no default written as `true`, `false` or a bare tag of its type"
+        )));
     };
     let Some(default) = field.default() else {
         bad(found);
@@ -519,10 +629,9 @@ fn default_value(
             if known {
                 Some(OptionValue::Tag(tag.to_owned()))
             } else {
-                found.push(problem(
-                    "R072",
-                    format!("the default `{tag}` of `{name}` is no tag of `{sum}`"),
-                ));
+                found.push(at(format!(
+                    "the default `{tag}` of `{name}` is no tag of `{sum}`"
+                )));
                 None
             }
         }
@@ -533,8 +642,8 @@ fn default_value(
     }
 }
 
-/// An error with `code` and `message` about the options file as a whole,
-/// which carries no source of its own in the report.
+/// An error with `code` and `message` about the options of a package as
+/// a whole, which no single file or place explains.
 fn problem(code: &'static str, message: impl Into<String>) -> FileDiagnostic {
     FileDiagnostic {
         file: None,
@@ -542,11 +651,49 @@ fn problem(code: &'static str, message: impl Into<String>) -> FileDiagnostic {
     }
 }
 
-/// The line and column of `at` bytes into `text`.
+/// An error with `code` and `message` about the whole options `file`,
+/// which names no place within it.
+fn problem_in(file: &str, code: &'static str, message: impl Into<String>) -> FileDiagnostic {
+    FileDiagnostic {
+        file: None,
+        diagnostic: Diagnostic::error(
+            code,
+            Span { start: 0, end: 0 },
+            format!("{} ({file})", message.into()),
+        ),
+    }
+}
+
+/// An error with `code` and `message` about the options `file` at `span`
+/// of `text`, which names the place in the message.
+fn problem_at(
+    file: &str,
+    text: &str,
+    span: Span,
+    code: &'static str,
+    message: impl Into<String>,
+) -> FileDiagnostic {
+    FileDiagnostic {
+        file: None,
+        diagnostic: Diagnostic::error(
+            code,
+            span,
+            format!(
+                "{} ({file}, {})",
+                message.into(),
+                position(text, span.start)
+            ),
+        ),
+    }
+}
+
+/// The line and column of `at` bytes into `text`, the column counted in
+/// characters.
 fn position(text: &str, at: usize) -> String {
     let at = at.min(text.len());
     let before = &text[..at];
     let line = before.matches('\n').count() + 1;
-    let column = before.rfind('\n').map_or(at, |i| at - i - 1) + 1;
+    let start = before.rfind('\n').map_or(0, |i| i + 1);
+    let column = before[start..].chars().count() + 1;
     format!("line {line}, column {column}")
 }

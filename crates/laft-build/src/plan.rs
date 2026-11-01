@@ -169,8 +169,10 @@ impl KeyInputs {
     ///
     /// A link dependency whose set of sonames changed is
     /// [`Trigger::Import`], the same as one that appeared or went away.
-    /// The finer check of what a build imports needs the new outputs and
-    /// happens in [`Schedule::finish`].
+    /// A link dependency built with other option values only changes the
+    /// build key, which is [`Trigger::Plan`]. The finer check of what a
+    /// build imports needs the new outputs and happens in
+    /// [`Schedule::finish`].
     pub fn triggers(&self, previous: Option<&BuildRecord>, forced: bool) -> BTreeSet<Trigger> {
         let mut out = BTreeSet::new();
         if forced {
@@ -209,6 +211,9 @@ impl KeyInputs {
             }
             if link.sonames != before.sonames {
                 out.insert(Trigger::Import);
+            }
+            if link.options != before.options {
+                out.insert(Trigger::Plan);
             }
         }
         out

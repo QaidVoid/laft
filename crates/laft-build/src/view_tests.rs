@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_support::{TestPkg, recipe, refs};
+use laft_core::OptionValue;
 
 fn none() -> BTreeSet<StoreId> {
     BTreeSet::new()
@@ -361,6 +362,33 @@ fn key_inputs_follow_the_usable_packages() {
         inputs.links[0].sonames.iter().collect::<Vec<_>>(),
         ["libz.so.2"]
     );
+}
+
+#[test]
+fn the_newest_entry_decides_the_options_of_a_link_dependency() {
+    let dir = laft_test::tempdir();
+    let store = Store::at(dir.path().join("store"));
+    let old = BTreeMap::from([("ssl".to_owned(), OptionValue::Bool(false))]);
+    TestPkg {
+        version: "1.0",
+        options: old,
+        provides: &["so:libz.so.1"],
+        ..TestPkg::new("zlib")
+    }
+    .add(&store, dir.path());
+    std::fs::remove_dir_all(dir.path().join("payload-zlib-dynamic")).unwrap();
+    let new = BTreeMap::from([("ssl".to_owned(), OptionValue::TRUE)]);
+    TestPkg {
+        version: "2.0",
+        options: new,
+        provides: &["so:libz.so.1"],
+        ..TestPkg::new("zlib")
+    }
+    .add(&store, dir.path());
+    let mut recipe = recipe("app");
+    recipe.link_deps = refs(&["zlib"]);
+    let inputs = key_inputs(&recipe, &store, &none()).unwrap();
+    assert_eq!(inputs.links[0].options.get("ssl"), Some(&OptionValue::TRUE));
 }
 
 #[test]
