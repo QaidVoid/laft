@@ -15,6 +15,25 @@ use crate::loader::{COMMON, DESCRIPTOR, RECIPE_FILE, RECIPES, Scope};
 use crate::options::{self, OPTIONS_MODULE};
 use crate::{Error, Problem, Recipe, Report, Target, schema};
 
+/// One option value of a `publish` block or a profile: the Bool literal of
+/// a `Bool` option, or the tag of its type as a string.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(untagged)]
+pub enum OptionText {
+    /// The option is on or off.
+    Bool(bool),
+    /// The option takes the tag, written as a string.
+    Tag(String),
+}
+
+/// A profile: the option values of every recipe it changes, under the
+/// recipe name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Profile {
+    /// The option values, under the recipe name.
+    pub package: BTreeMap<Name, BTreeMap<String, OptionText>>,
+}
+
 /// A recipe repository: a directory with a `recipes.stav` descriptor and a
 /// `recipes/<name>/package.stav` file per package.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +53,11 @@ pub struct RecipeRepo {
     pub toolchain_epoch: u32,
     /// Content addressed source mirrors, tried after a source's own URLs.
     pub source_mirrors: Vec<String>,
+    /// The extra option sets the repository publishes, under the name of
+    /// the recipe each set builds.
+    pub publish: BTreeMap<Name, BTreeMap<String, OptionText>>,
+    /// The profiles the repository declares, under the profile name.
+    pub profiles: BTreeMap<String, Profile>,
 }
 
 /// An ordered set of recipe repositories, lowest priority first, and the
@@ -448,14 +472,67 @@ fn descriptor(path: &Path) -> Result<RecipeRepo, Error> {
                 .map_err(|err| problem(format!("{name} extends {e}, which is invalid: {err}")))
         })
         .collect::<Result<_, _>>()?;
-    Ok(RecipeRepo {
+    let publish = publish_sets(
+        &name,
+        evaluated
+            .get(&AttrPath::new(["publish"]))
+            .map_err(Error::Report)?,
+    )?;
+    let profiles = profiles(
+        &name,
+        evaluated
+            .get(&AttrPath::new(["profiles"]))
+            .map_err(Error::Report)?,
+    )?;    Ok(RecipeRepo {
         name,
         path: path.to_path_buf(),
         arch: repo.arch.into_iter().collect(),
         extends,
         toolchain_epoch: repo.toolchain_epoch,
         source_mirrors: repo.source_mirrors,
+        publish,
+        profiles,
     })
+}
+
+/// The extra option sets of a descriptor, under the recipe each set
+/// builds, with every recipe name checked.
+fn publish_sets(
+    repo: &Name,
+    sets: BTreeMap<String, schema::PublishSet>,
+) -> Result<BTreeMap<Name, BTreeMap<String, OptionText>>, Error> {
+    let problem = |message: String| Error::Problems(vec![Problem::new("R004", message)]);
+    let mut out = BTreeMap::new();
+    for (recipe, set) in sets {
+        let recipe: Name = recipe
+            .parse()
+            .map_err(|e| problem(format!("{repo} publishes {recipe}, which is invalid: {e}")))?;
+        out.insert(recipe, set.options);
+    }
+    Ok(out)
+}
+
+/// The profiles of a descriptor, with every profile and recipe name
+/// checked.
+fn profiles(
+    repo: &Name,
+    raw: BTreeMap<String, schema::Profile>,
+) -> Result<BTreeMap<String, Profile>, Error> {
+    let problem = |message: String| Error::Problems(vec![Problem::new("R004", message)]);
+    let mut out = BTreeMap::new();
+    for (name, profile) in raw {
+        let mut package = BTreeMap::new();
+        for (recipe, set) in profile.package {
+            let recipe: Name = recipe.parse().map_err(|e| {
+                problem(format!(
+                    "{repo} declares the profile {name} for {recipe}, which is invalid: {e}"
+                ))
+            })?;
+            package.insert(recipe, set.options);
+        }
+        out.insert(name, Profile { package });
+    }
+    Ok(out)
 }
 
 /// Returns the names of the recipe directories of the repository `path`.

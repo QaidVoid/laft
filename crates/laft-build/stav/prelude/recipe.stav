@@ -12,6 +12,12 @@ struct Recipes {
 struct RecipeRepos {
   ## The descriptor. Block label: the repository name.
   repos: Map<Str, RecipeRepo> = {} block recipe_repo
+  ## Extra option sets the repository publishes. Block label: the recipe
+  ## the set is of. An option left out keeps its declared default.
+  publish: Map<Str, PublishSet> = {} block publish
+  ## Named option sets across many recipes, published as complete
+  ## indexes. Block label: the profile name.
+  profiles: Map<Str, Profile> = {} block profile
 }
 
 ## The root of a bootstrap stage file.
@@ -81,6 +87,21 @@ struct RecipeRepo {
   toolchain_epoch: Int where 0..=1000000 = 0
   ## Content addressed source mirrors, tried after a source's own URLs.
   source_mirrors:  List<Str> = []
+}
+
+## One extra option set of one recipe, or the values of a profile for
+## one recipe. Each entry sets one option: the Bool literal of a `Bool`
+## option, or the tag of its type as a string.
+struct PublishSet {
+  ## The option values of the set.
+  options: Map<Str, Data> = {}
+}
+
+## A profile: the option values of one recipe. Block label: the recipe
+## name.
+struct Profile {
+  ## The option values of the recipe.
+  package: Map<Str, PublishSet> = {} block package
 }
 
 ## A build configuration of a package.

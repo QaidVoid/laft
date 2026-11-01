@@ -182,7 +182,7 @@ pub use recipe::{
     Alternative, BuildOptions, Ci, Fetch, FileRef, Metadata, Operations, Outputs, Phases, Recipe,
     Runner, Shell, Source, Split, Subpackage, Update, Vendor, VendorKind,
 };
-pub use repo::{Evaluation, RecipeRepo, Repos};
+pub use repo::{Evaluation, OptionText, Profile, RecipeRepo, Repos};
 pub use repro::{
     DifferingFile, ReproReport, check_repro, compare, differing_packages, record_repro,
 };

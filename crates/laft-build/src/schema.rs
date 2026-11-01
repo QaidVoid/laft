@@ -19,6 +19,20 @@ pub(crate) struct RecipeRepo {
     pub(crate) source_mirrors: Vec<String>,
 }
 
+/// A `publish` block or the `package` entry of a `profile` block.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PublishSet {
+    pub(crate) options: BTreeMap<String, crate::repo::OptionText>,
+}
+
+/// A `profile` block.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Profile {
+    pub(crate) package: BTreeMap<String, PublishSet>,
+}
+
 /// A `package` block.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
