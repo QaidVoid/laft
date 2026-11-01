@@ -349,7 +349,7 @@ fn bootstrap_mode_builds_without_a_sandbox_and_says_so() {
     let cache = SourceCache::new(root.sources(), Fetcher::new(config));
     let builder = Builder::new(&repos, &cache, &root, Mode::Bootstrap("/".into()));
     let inputs = builder.key_inputs(&recipe).unwrap();
-    let outcome = match builder.build(&recipe, &inputs) {
+    let outcome = match builder.build(&recipe, &inputs, None) {
         Ok(outcome) => outcome,
         Err(e) => panic!("the bootstrap build fails: {e}"),
     };
@@ -1155,7 +1155,7 @@ fn the_check_phase_installs_nothing_into_the_packages() {
     let (root, cache) = offline_cache(dir.path());
     let builder = Builder::new(&repos, &cache, &root, Mode::View("/usr".into()));
     let inputs = builder.key_inputs(&recipe).unwrap();
-    if let Err(e) = builder.build(&recipe, &inputs) {
+    if let Err(e) = builder.build(&recipe, &inputs, None) {
         panic!("the build fails: {e}");
     }
 }

@@ -22,6 +22,7 @@ use crate::exec::{Executor, tail, wait};
 use crate::graph::BuildGraph;
 use crate::loader::Scope;
 use crate::scheduler::{DEFAULT_MEMORY, Failed, Memory, Scheduler};
+use crate::view::StoreEntry;
 use crate::{
     BuildRoot, Builder, Error, Item, KeyInputs, Mode, Problem, Recipe, Repos, Runner, SourceCache,
     fsx, host, installed, repo, schema, view,
@@ -744,7 +745,7 @@ impl StageRun<'_> {
                 self.wait_for_memory(progress)?;
             }
             forget_key(&record)?;
-            self.package(step, tag, recipe, &inputs, progress)?;
+            self.package(step, tag, recipe, &inputs, None, progress)?;
             write_key(&record, &done)?;
         }
         Ok(())
@@ -838,15 +839,13 @@ impl StageRun<'_> {
             available: &|| available_memory(),
             waiting: &|needed, available| progress(StageEvent::Waiting { available, needed }),
         };
-        // The key of a package is taken from the store the step started
-        // with, plus the built packages of the earlier packages of the
-        // step it links on: a package that starts late must not see what
-        // its peers have added since, or its key would depend on the
-        // scheduling.
-        let snapshot = view::usable(
-            view::store_entries(&self.builder.store)?,
-            &self.builder.seeds()?,
-        );
+        // Every package of the step builds against the same entries its
+        // key was computed from: the store as the step started it, plus
+        // the packages of the step that precede it, and never a package
+        // the step built for a later one, or its key and its view would
+        // depend on the scheduling.
+        let seed_ids = self.builder.seeds()?;
+        let snapshot = view::usable(view::store_entries(&self.builder.store)?, &seed_ids);
         let mut scheduler = Scheduler::new(order, deps, durations, workers, memory);
         let built = scheduler.run(
             items,
@@ -856,26 +855,21 @@ impl StageRun<'_> {
                     .recipe(item)
                     .expect("the graph holds every recipe of the step");
                 let at = stage_position.get(item).copied().unwrap_or(usize::MAX);
+                // The step started from the snapshot, and the packages it
+                // has finished since stand beside it, but only for the
+                // packages that precede this one, which it waits for. A
+                // package that follows it keeps the entries its key saw.
                 let mut entries = snapshot.clone();
-                for link in &recipe.link_deps {
-                    let dep = Item::new(link.name().clone(), link.variant());
-                    if !stage_position.get(&dep).is_some_and(|d| *d < at) {
-                        continue;
-                    }
-                    // The package waits for the dependency, so the store
-                    // holds the package the step built for it, which
-                    // stands in for the seed it started from.
-                    entries.retain(|entry| {
-                        entry.meta.name != *link.name() || entry.meta.variant != link.variant()
-                    });
-                    let current = view::usable(
-                        view::store_entries(&self.builder.store)?,
-                        &self.builder.seeds()?,
-                    );
-                    entries.extend(current.into_iter().filter(|entry| {
-                        entry.meta.name == *link.name() && entry.meta.variant == link.variant()
-                    }));
-                }
+                entries.extend(
+                    view::usable(view::store_entries(&self.builder.store)?, &seed_ids)
+                        .into_iter()
+                        .filter(|entry| {
+                            let mate = Item::new(entry.meta.name.clone(), entry.meta.variant);
+                            !stage_position.get(&mate).is_some_and(|p| *p > at)
+                        }),
+                );
+                let mut seen = BTreeSet::new();
+                entries.retain(|entry| seen.insert(entry.id));
                 let inputs = view::key_inputs_from(recipe, &entries);
                 let built = inputs.build_key().to_string();
                 let done = step_key(
@@ -906,7 +900,7 @@ impl StageRun<'_> {
                     return Ok(built);
                 }
                 forget_key(&record)?;
-                self.package(step, tag, recipe, &inputs, progress)?;
+                self.package(step, tag, recipe, &inputs, Some(&entries), progress)?;
                 write_key(&record, &done)?;
                 Ok(built)
             },
@@ -944,6 +938,7 @@ impl StageRun<'_> {
         tag: &str,
         recipe: &Recipe,
         inputs: &KeyInputs,
+        entries: Option<&[StoreEntry]>,
         progress: &(dyn Fn(StageEvent<'_>) + Sync),
     ) -> Result<(), BuildError> {
         let item = Item::of(recipe);
@@ -961,7 +956,7 @@ impl StageRun<'_> {
                     self.build_root.db().record(&outcome.stored)?;
                 }
                 Install::Store => {
-                    let outcome = self.builder.build(recipe, inputs)?;
+                    let outcome = self.builder.build(recipe, inputs, entries)?;
                     self.build_root.db().record(&outcome.stored)?;
                 }
             },

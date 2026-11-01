@@ -1623,6 +1623,81 @@ fn a_store_step_takes_the_keys_of_its_packages_before_it_starts() {
     );
 }
 
+#[test]
+fn a_forward_link_dependency_builds_against_the_entries_of_its_key() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let dir = dir.path();
+    let stage = host_tools_stage(
+        dir,
+        r#"    { name = "build", packages = [slow, alpha, omega] },"#,
+    );
+    for (name, extra, install) in [
+        (
+            "slow",
+            "",
+            "i=0; while [ \"$i\" -lt 30000000 ]; do i=$((i+1)); done",
+        ),
+        (
+            "alpha",
+            "  build_deps = [slow]\n  link_deps = [omega]\n",
+            "read seen < /usr/share/omega/file || true; test \"$seen\" = omega",
+        ),
+        (
+            "omega",
+            "  abi_epoch = 3\n",
+            "mkdir -p \"$DESTDIR/usr/share/omega\" && echo fresh > \"$DESTDIR/usr/share/omega/file\"",
+        ),
+    ] {
+        fs::create_dir_all(stage.recipes.join(format!("recipes/{name}")))
+            .expect("the test setup works");
+        let version = if name == "omega" { "2" } else { "1" };
+        fs::write(
+            stage.recipes.join(format!("recipes/{name}/package.stav")),
+            format!(
+                r#"package {name} {{
+  version = "{version}"
+  summary = "{name}"
+  license = [MIT]
+  empty   = true
+  build custom {{}}
+  env = {{ LD_LIBRARY_PATH = "/usr/lib" }}
+{extra}  phases {{
+    install = """
+      {install}
+      """
+  }}
+}}
+"#
+            ),
+        )
+        .expect("the test setup works");
+    }
+    store_with_host_tools(dir);
+    let root = BuildRoot::new(dir.join("build"));
+    let (file, _) = crate::test_support::TestPkg::new("omega").write(dir);
+    crate::seed::seed(&root, &file).expect("the seed enters the store");
+    let result = run_with(
+        dir,
+        &stage,
+        &StageOptions {
+            jobs: 2,
+            workers: 2,
+            ..store_options(dir)
+        },
+    );
+    if refused(&result) {
+        return;
+    }
+    let states = result.expect("the run builds");
+    assert!(
+        states.iter().all(|(_, s)| *s == StageState::Done),
+        "{states:?}"
+    );
+}
+
 /// Builds `slow, alpha, gamma, omega` in one store step with `workers` in
 /// a fresh build root below `dir`, and returns the recorded key of
 /// `alpha`. `alpha` links against `omega`, which the stage file lists

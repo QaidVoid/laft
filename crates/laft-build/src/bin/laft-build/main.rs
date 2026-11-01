@@ -575,7 +575,7 @@ fn shell(
     let recipe = one(recipes(cx, &[package.to_owned()])?, package)?;
     let builder = builder(cx, Mode::Store, Some(options));
     let key = builder.key_inputs(&recipe)?.build_key();
-    let session = builder.session(&recipe, &key)?;
+    let session = builder.session(&recipe, &key, None)?;
     if let Some(after) = after {
         builder.phases(&session, &recipe, Some(after))?;
     }
@@ -788,7 +788,7 @@ fn bootstrap(
                 }
                 Target::Packages => {
                     eprintln!("building {item} in bootstrap mode");
-                    let outcome = builder.build(&recipe, &inputs)?;
+                    let outcome = builder.build(&recipe, &inputs, None)?;
                     record(&db, &item, &outcome)?;
                     "built"
                 }

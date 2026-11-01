@@ -581,7 +581,7 @@ impl<'a> Builder<'a> {
                     triggers: &triggers,
                 });
                 let inputs = self.key_inputs(recipe)?;
-                self.build(recipe, &inputs)
+                self.build(recipe, &inputs, None)
             },
             &mut |item, outcome| {
                 db.record(&outcome.stored)?;
@@ -676,7 +676,10 @@ impl<'a> Builder<'a> {
     }
 
     /// Builds `recipe`, whose build key covers `inputs`, as the type
-    /// documentation describes.
+    /// documentation describes. The build view is assembled from `entries`
+    /// when they are given, instead of from the store, so that a stage
+    /// pins the view of a package to the entries its key was computed
+    /// from.
     ///
     /// # Errors
     ///
@@ -684,9 +687,14 @@ impl<'a> Builder<'a> {
     /// `B030` for a phase that ran out of time, `B040` for a phase that
     /// failed, `B050` for a view that cannot be resolved, and the codes of
     /// [`post`]. A failed build keeps its working tree.
-    pub fn build(&self, recipe: &Recipe, inputs: &KeyInputs) -> Result<Outcome, BuildError> {
+    pub fn build(
+        &self,
+        recipe: &Recipe,
+        inputs: &KeyInputs,
+        entries: Option<&[StoreEntry]>,
+    ) -> Result<Outcome, BuildError> {
         let started = Timestamp::now();
-        let session = self.session(recipe, &inputs.build_key())?;
+        let session = self.session(recipe, &inputs.build_key(), entries)?;
         self.phases(&session, recipe, None)?;
         let outcome = self.finish(&session, recipe, inputs, started)?;
         if !self.keep_work {
@@ -731,7 +739,7 @@ impl<'a> Builder<'a> {
         };
         fs::create_dir_all(dest).map_err(io(dest))?;
         let key = inputs.build_key();
-        let mut session = self.session(recipe, &key)?;
+        let mut session = self.session(recipe, &key, None)?;
         session.exec = Executor::direct(root, &session.build, dest, session.exec.logs())
             .search_first(self.search.clone())
             .timeout(self.timeout)
@@ -783,7 +791,7 @@ impl<'a> Builder<'a> {
                 "only bootstrap mode unpacks packages into a directory",
             ));
         }
-        let outcome = self.build(recipe, inputs)?;
+        let outcome = self.build(recipe, inputs, None)?;
         let record = installed_record(dest, &Item::of(recipe));
         forget_key(&record)?;
         let outputs = &recipe.outputs;
@@ -806,7 +814,12 @@ impl<'a> Builder<'a> {
     /// # Errors
     ///
     /// Fails like [`Builder::build`].
-    pub fn session(&self, recipe: &Recipe, key: &Blake3Hash) -> Result<Session, BuildError> {
+    pub fn session(
+        &self,
+        recipe: &Recipe,
+        key: &Blake3Hash,
+        entries: Option<&[StoreEntry]>,
+    ) -> Result<Session, BuildError> {
         let key_hash = *key;
         let key = key.to_string();
         let key = key.trim_start_matches("b3:");
@@ -836,8 +849,13 @@ impl<'a> Builder<'a> {
         }
 
         let check = self.check && recipe.options.check;
+        let pool = match entries {
+            Some(entries) => entries.to_vec(),
+            None => view::store_entries(&self.store)?,
+        };
         let view = match &self.mode {
-            Mode::Store => Some(view::assemble(
+            Mode::Store => Some(view::assemble_from(
+                &pool,
                 &self.store,
                 &self.seeds()?,
                 recipe,

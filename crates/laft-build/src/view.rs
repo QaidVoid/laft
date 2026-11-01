@@ -171,7 +171,34 @@ pub fn assemble(
     tree: &Path,
     pinned: Option<&BTreeSet<StoreId>>,
 ) -> Result<BuildView, BuildError> {
-    let mut entries = store_entries(store)?;
+    assemble_from(
+        &store_entries(store)?,
+        store,
+        seeds,
+        recipe,
+        check,
+        tree,
+        pinned,
+    )
+}
+
+/// [`assemble`] against `entries` as the pool the view is resolved from,
+/// instead of the store, so that a build sees the entries its build key
+/// was computed from and not the packages later builds have added since.
+///
+/// # Errors
+///
+/// Fails like [`assemble`].
+pub fn assemble_from(
+    entries: &[StoreEntry],
+    store: &Store,
+    seeds: &BTreeSet<StoreId>,
+    recipe: &Recipe,
+    check: bool,
+    tree: &Path,
+    pinned: Option<&BTreeSet<StoreId>>,
+) -> Result<BuildView, BuildError> {
+    let mut entries = entries.to_vec();
     if let Some(pinned) = pinned {
         entries.retain(|e| pinned.contains(&e.id));
         if let Some(gone) = pinned

@@ -69,7 +69,7 @@ pub fn check_repro(
     previous: &Stored,
     previous_out: &Path,
 ) -> Result<ReproReport, BuildError> {
-    let outcome = builder.build(recipe, &previous.record.inputs)?;
+    let outcome = builder.build(recipe, &previous.record.inputs, None)?;
     let first: Vec<PathBuf> = previous
         .files
         .iter()
