@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use laft_core::Blake3Hash;
 use serde_json::Value;
-use support::{DAY, at, fixture, pkg, run, s};
+use support::{DAY, HOUR, at, fixture, pkg, run, s};
 
 /// Runs `laft-repo check --json` on channel `current` and returns the
 /// codes it reports, its report and whether it exited successfully.
@@ -630,6 +630,193 @@ fn kr014_option_metadata_that_is_not_what_the_recipe_declares() {
     let (codes, report, success) = check(&repo, &[]);
     assert_eq!(codes, ["KR014"], "{report}");
     assert!(!success);
+}
+
+#[test]
+fn kr005_an_identity_shared_with_a_sibling_profile_keeps_its_store_id() {
+    let dir = laft_test::tempdir();
+    let first = dir.path().join("first");
+    let second = dir.path().join("second");
+    let a = pkg("hello", "1.0").file("usr/bin/hello", "a").write(&first);
+    let b = pkg("hello", "1.0")
+        .file("usr/bin/hello", "b")
+        .write(&second);
+    assert_ne!(support::entry(&a).id, support::entry(&b).id);
+
+    // The base channel lists the first build, the sibling profile the
+    // second, with the same name, version, revision, variant and options.
+    let repo = dir.path().join("repo");
+    fixture(&repo, "current", 0, &[a], |_| {});
+    let mut profile = support::read_index(&repo, "current");
+    profile.generation += HOUR;
+    profile.timestamp = laft_core::Timestamp::from_secs(profile.generation);
+    profile.expires = laft_core::Timestamp::from_secs(profile.generation + DAY);
+    profile.packages = vec![support::entry(&b)];
+    profile.profile = Some(laft_index::ProfileMember {
+        name: "minimal".to_owned(),
+        values: Default::default(),
+    });
+    let profile_dir = repo.join("channels/current/x86_64-v3/profiles/minimal");
+    fs::create_dir_all(&profile_dir).unwrap();
+    fs::write(
+        profile_dir.join("index.json.zst"),
+        profile.encode().unwrap(),
+    )
+    .unwrap();
+
+    let (codes, report, success) = check(&repo, &[]);
+    assert!(codes.contains(&"KR005".to_owned()), "{report}");
+    assert!(!success);
+
+    let output = support::run(&[
+        "check",
+        "--repo",
+        s(&repo),
+        "--channel",
+        "current",
+        "--profile",
+        "minimal",
+        "--json",
+    ]);
+    assert!(matches!(output.status.code(), Some(0 | 1)));
+    let report: Value =
+        serde_json::from_slice(&output.stdout).expect("check --json prints a report");
+    let codes: Vec<String> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["code"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(codes.contains(&"KR005".to_owned()), "{report}");
+}
+
+#[test]
+fn kr016_a_recipe_snapshot_the_repository_does_not_hold() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let content = b"archive";
+    let hash = laft_core::Blake3Hash::of(content);
+    let member = |snapshot: laft_index::RecipeSnapshot| {
+        move |index: &mut laft_index::Index| {
+            index.recipes = Some(snapshot);
+        }
+    };
+
+    // The repository holds the archive the member names.
+    let repo = dir.path().join("repo");
+    let archive = laft_index::RecipeSnapshot {
+        file: format!("recipes/{hash}.tar.zst"),
+        size: content.len() as u64,
+        blake3: hash,
+    };
+    let packages = [pkg("hello", "1.0").write(&out)];
+    fs::create_dir_all(repo.join("recipes")).unwrap();
+    fs::write(repo.join(&archive.file), content).unwrap();
+    fixture(&repo, "current", 0, &packages, member(archive));
+    let (codes, report, success) = check(&repo, &[]);
+    assert!(codes.is_empty(), "{report}");
+    assert!(success);
+
+    // The archive is missing.
+    let repo = dir.path().join("repo2");
+    let packages = [pkg("hello", "1.0").write(&out)];
+    let dangling = laft_index::RecipeSnapshot {
+        file: format!("recipes/{hash}.tar.zst"),
+        size: content.len() as u64,
+        blake3: hash,
+    };
+    fixture(&repo, "current", 0, &packages, member(dangling));
+    let (codes, report, success) = check(&repo, &[]);
+    assert_eq!(codes, ["KR016"], "{report}");
+    assert!(!success);
+
+    // The archive holds other bytes than its hash.
+    let repo = dir.path().join("repo3");
+    let packages = [pkg("hello", "1.0").write(&out)];
+    fs::create_dir_all(repo.join("recipes")).unwrap();
+    fs::write(repo.join(format!("recipes/{hash}.tar.zst")), b"other").unwrap();
+    let swapped = laft_index::RecipeSnapshot {
+        file: format!("recipes/{hash}.tar.zst"),
+        size: 5,
+        blake3: hash,
+    };
+    fixture(&repo, "current", 0, &packages, member(swapped));
+    let (codes, report, success) = check(&repo, &[]);
+    assert_eq!(codes, ["KR016"], "{report}");
+    assert!(!success);
+    assert!(
+        report["findings"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("differs from"),
+        "{report}"
+    );
+}
+
+#[test]
+fn kr014_a_package_that_does_not_match_the_profile_member() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let declarations = |index: &mut laft_index::Index| {
+        index.options.insert(
+            "hello".parse().unwrap(),
+            vec![bool_decl("strip", true, "Strip binaries.")],
+        );
+        index.profile = Some(laft_index::ProfileMember {
+            name: "minimal".to_owned(),
+            values: [(
+                "hello".parse::<laft_core::Name>().unwrap(),
+                [("strip".to_owned(), laft_core::OptionValue::FALSE)]
+                    .into_iter()
+                    .collect(),
+            )]
+            .into_iter()
+            .collect(),
+        });
+    };
+
+    // The build carries exactly the values the profile promises.
+    let repo = dir.path().join("repo");
+    let packages = [pkg("hello", "1.0")
+        .option("strip", laft_core::OptionValue::FALSE)
+        .write(&out)];
+    fixture(&repo, "current", 0, &packages, declarations);
+    let (codes, report, _) = check(&repo, &[]);
+    assert!(codes.is_empty(), "{report}");
+
+    // A build with another value breaks the promise of the profile.
+    let broken = dir.path().join("broken");
+    let packages = [pkg("hello", "1.1")
+        .option("strip", laft_core::OptionValue::TRUE)
+        .write(&broken)];
+    fixture(&repo, "current", HOUR, &packages, declarations);
+    let (codes, report, success) = check(&repo, &[]);
+    assert_eq!(codes, ["KR014"], "{report}");
+    assert!(!success);
+    assert!(
+        report["findings"][0]["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.as_str().unwrap().contains("the profile minimal sets")),
+        "{report}"
+    );
+
+    // A build that does not set the option breaks it too.
+    let unset = dir.path().join("unset");
+    let packages = [pkg("hello", "1.2").write(&unset)];
+    fixture(&repo, "current", HOUR, &packages, declarations);
+    let (codes, report, success) = check(&repo, &[]);
+    assert_eq!(codes, ["KR014"], "{report}");
+    assert!(!success);
+    assert!(
+        report["findings"][0]["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.as_str().unwrap().contains("the profile minimal sets")),
+        "{report}"
+    );
 }
 
 #[test]

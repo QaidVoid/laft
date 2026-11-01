@@ -22,6 +22,7 @@
 //! | KR013 | error | A publish block or profile that names a recipe without options, an option the recipe does not declare, or a value the option does not take. |
 //! | KR014 | error | A package whose metadata sets an option its recipe does not declare, misses one it declares, or sets one to a value its type does not take. |
 //! | KR015 | error | A dependency whose option constraints name an option the target recipe does not declare, or a value the option does not take, or whose constraints cannot be verified. |
+//! | KR016 | error | The `recipes` member names an archive the repository lacks, or one of another size or hash. |
 //! | CI001 | error | A package built from a dirty recipe tree or by a bootstrap build, unless allowed. |
 //! | CI003 | error | A package without readable buildinfo. |
 //!
@@ -168,6 +169,7 @@ pub(crate) fn check(input: &Input<'_>) -> Report {
     buildinfo(input, &mut findings);
     option_metadata(input, &mut findings);
     option_constraints(input, &mut findings);
+    recipe_snapshot(input, &mut findings);
     if input.recipes.is_some() {
         publish_blocks(input, &mut findings);
         option_effect(input, &mut findings);
@@ -687,28 +689,39 @@ type Identity<'a> = (
     &'a BTreeMap<String, OptionValue>,
 );
 
-/// KR005: a published identity keeps its store id.
+/// KR005: a published identity keeps its store id, in the channel, in
+/// every sibling profile of it and in every other channel of the
+/// architecture.
 fn revisions(input: &Input<'_>, findings: &mut Vec<Finding>) {
-    let mut published: HashMap<Identity<'_>, StoreId> = HashMap::new();
-    let mut withdrawn: HashMap<(&Name, &Version, u32, Variant), StoreId> = HashMap::new();
+    let mut published: HashMap<Identity<'_>, BTreeSet<StoreId>> = HashMap::new();
+    let mut withdrawn: HashMap<(&Name, &Version, u32, Variant), BTreeSet<StoreId>> = HashMap::new();
     for index in input.published.into_iter().chain(input.others) {
         for e in &index.packages {
             let m = &e.meta;
-            published.insert((&m.name, &m.version, m.rev, m.variant, &m.options), e.id);
+            published
+                .entry((&m.name, &m.version, m.rev, m.variant, &m.options))
+                .or_default()
+                .insert(e.id);
         }
         for y in &index.yanked {
-            withdrawn.insert((&y.name, &y.version, y.rev, y.variant), y.id);
+            withdrawn
+                .entry((&y.name, &y.version, y.rev, y.variant))
+                .or_default()
+                .insert(y.id);
         }
     }
     for entry in &input.index.packages {
         let m = &entry.meta;
-        let published_id = published
-            .get(&(&m.name, &m.version, m.rev, m.variant, &m.options))
-            .or_else(|| withdrawn.get(&(&m.name, &m.version, m.rev, m.variant)))
-            .copied();
-        if let Some(id) = published_id
-            && id != entry.id
-        {
+        let identity = (&m.name, &m.version, m.rev, m.variant, &m.options);
+        let published_ids = published.get(&identity);
+        let withdrawn_ids = withdrawn.get(&(&m.name, &m.version, m.rev, m.variant));
+        let others: Vec<&StoreId> = published_ids
+            .into_iter()
+            .chain(withdrawn_ids)
+            .flat_map(|ids| ids.iter())
+            .filter(|id| **id != entry.id)
+            .collect();
+        if let [id, ..] = others[..] {
             findings.push(
                 finding(
                     "KR005",
@@ -838,7 +851,8 @@ fn fits(kind: &OptionType, value: &OptionValue) -> bool {
 }
 
 /// KR014: every package sets exactly the options its recipe declares, with
-/// values of the declared types.
+/// values of the declared types, and the values its index's profile member
+/// promises for it.
 fn option_metadata(input: &Input<'_>, findings: &mut Vec<Finding>) {
     for entry in &input.index.packages {
         let meta = &entry.meta;
@@ -875,6 +889,23 @@ fn option_metadata(input: &Input<'_>, findings: &mut Vec<Finding>) {
                     "the option {} is declared, which the package does not set",
                     decl.name
                 ));
+            }
+        }
+        if let Some(profile) = &input.index.profile
+            && let Some(values) = profile.values.get(&meta.name)
+        {
+            for (option, value) in values {
+                match meta.options.get(option) {
+                    None => problems.push(format!(
+                        "the profile {} sets the option {option}, which the build does not set",
+                        profile.name
+                    )),
+                    Some(set) if set != value => problems.push(format!(
+                        "the profile {} sets the option {option} to {value}, but the build sets {set}",
+                        profile.name
+                    )),
+                    _ => {}
+                }
             }
         }
         if !problems.is_empty() {
@@ -1084,6 +1115,51 @@ fn default_tag(default: &OptionValue) -> Option<&str> {
     match default {
         OptionValue::Tag(tag) => Some(tag),
         OptionValue::Bool(_) => None,
+    }
+}
+
+/// KR016: the recipe snapshot member names an archive the repository
+/// holds, with the size and hash the member records.
+fn recipe_snapshot(input: &Input<'_>, findings: &mut Vec<Finding>) {
+    let Some(snapshot) = &input.index.recipes else {
+        return;
+    };
+    let path = input.repo.path(&snapshot.file);
+    let kr016 =
+        |message: String| finding("KR016", Level::Error, message).paths([snapshot.file.clone()]);
+    match fsx::size(&path) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            findings.push(kr016(format!(
+                "the recipe snapshot {} is missing",
+                snapshot.file
+            )));
+            return;
+        }
+        Err(e) => {
+            findings.push(kr016(format!("the recipe snapshot is unreadable: {e}")));
+            return;
+        }
+    }
+    let (size, blake3) = match fsx::hash_file(&path) {
+        Ok(found) => found,
+        Err(e) => {
+            findings.push(kr016(format!("the recipe snapshot is unreadable: {e}")));
+            return;
+        }
+    };
+    if size != snapshot.size || blake3 != snapshot.blake3 {
+        findings.push(
+            kr016(format!(
+                "the recipe snapshot {} differs from its member",
+                snapshot.file
+            ))
+            .detail(format!("file: {size} bytes, {blake3}"))
+            .detail(format!(
+                "member: {} bytes, {}",
+                snapshot.size, snapshot.blake3
+            )),
+        );
     }
 }
 

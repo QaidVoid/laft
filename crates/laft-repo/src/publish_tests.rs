@@ -72,6 +72,18 @@ fn generation_in(
     packages: Vec<IndexEntry>,
     of: &Channel,
 ) {
+    generation_in_with(repo, signer, offset, packages, of, None);
+}
+
+/// [`generation_in`] with the `recipes` member of the index.
+fn generation_in_with(
+    repo: &Repository,
+    signer: &Signer,
+    offset: u64,
+    packages: Vec<IndexEntry>,
+    of: &Channel,
+    recipes: Option<laft_index::RecipeSnapshot>,
+) {
     let index = Index {
         format: Index::FORMAT,
         repo: "core".parse().unwrap(),
@@ -84,7 +96,7 @@ fn generation_in(
         packages,
         yanked: vec![],
         options: BTreeMap::new(),
-        recipes: None,
+        recipes,
         profile: None,
     };
     let options = Options {
@@ -183,6 +195,36 @@ fn the_recipe_archive_is_published_like_a_pool_file() {
     run(&repo, &published, None).unwrap();
     let archive = published.join(&snapshot.file);
     assert_eq!(fs::read(&archive).unwrap().len() as u64, snapshot.size);
+}
+
+#[test]
+fn a_recipe_snapshot_the_repository_lacks_stops_publishing() {
+    let dir = laft_test::tempdir();
+    keygen(&dir.path().join("online"), false, None).unwrap();
+    let signer = Signer::load(&dir.path().join("online.key"), None).unwrap();
+    let repo = Repository::new(dir.path().join("repo"));
+    let hello = package(&repo, "hello", b"hello");
+    let hash: Blake3Hash = "b3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        .parse()
+        .unwrap();
+    let member = laft_index::RecipeSnapshot {
+        file: format!("recipes/{hash}.tar.zst"),
+        size: 8,
+        blake3: hash,
+    };
+    generation_in_with(
+        &repo,
+        &signer,
+        0,
+        vec![hello],
+        &channel(),
+        Some(member.clone()),
+    );
+    let published = dir.path().join("published");
+    let error = run(&repo, &published, None).unwrap_err();
+    assert!(error.to_string().contains(&member.file), "{error}");
+
+    assert!(!published.join(channel().index()).exists());
 }
 
 #[test]

@@ -162,12 +162,14 @@ impl Repository {
         Ok(channels)
     }
 
-    /// The indexes of every other channel of the same architecture as
-    /// `channel`.
+    /// The indexes of every other channel, profile and architecture that
+    /// the checks of `channel` compare against: every channel of the same
+    /// architecture, including the sibling profiles and the base index of
+    /// the channel's own name.
     pub(crate) fn other_indexes(&self, channel: &Channel) -> Result<Vec<Index>> {
         let mut indexes = Vec::new();
         for other in self.channels()? {
-            if other.arch == channel.arch && other.name != channel.name {
+            if other.arch == channel.arch && other != *channel {
                 indexes.extend(self.read_index(&other)?);
             }
         }

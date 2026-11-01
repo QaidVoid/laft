@@ -7,8 +7,8 @@
 //!
 //! 1. Package files, buildinfo and recipe archives the target does not
 //!    have yet.
-//! 2. A check that the target now holds every package file the new
-//!    indexes reference, with the right size.
+//! 2. A check that the target now holds every package file and recipe
+//!    archive the new indexes reference, with the right size.
 //! 3. `keys.json`, before its signature, when it changed.
 //! 4. The snapshots of new generations, each before its signature.
 //! 5. Each changed entry point, then its signature.
@@ -124,6 +124,18 @@ pub(crate) fn plan(repo: &Repository, target: &Path, only: Option<&Name>) -> Res
                 }
             }
             referenced.push((entry.file.clone(), entry.size));
+        }
+        if let Some(snapshot) = &index.recipes {
+            match fsx::size(&repo.path(&snapshot.file))? {
+                Some(size) if size == snapshot.size => {}
+                _ => {
+                    return Err(Error::new(format!(
+                        "{channel} references {}, which the repository lacks or holds with another size",
+                        snapshot.file
+                    )));
+                }
+            }
+            referenced.push((snapshot.file.clone(), snapshot.size));
         }
         published.push((channel.clone(), index.generation));
         indexes.push(index);
