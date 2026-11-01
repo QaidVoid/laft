@@ -309,6 +309,33 @@ fn options_files_that_break_a_rule_are_r072() {
 }
 
 #[test]
+fn a_broken_options_file_names_its_repository() {
+    let dir = laft_test::tempdir();
+    let broken = (
+        "recipes/optpkg/options.stav",
+        "struct Options {\n  fast: Bool = true\n}\n",
+    );
+    let package = (
+        "recipes/optpkg/package.stav",
+        "package optpkg {\n  version = \"1.0\"\n  summary = \"The options package\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    );
+    let first = repo_at(&dir.path().join("first"), "first", "", &[broken, package]);
+    let second = repo_at(
+        &dir.path().join("second"),
+        "second",
+        "  extends = [\"first\"]\n",
+        &[broken, package],
+    );
+    let repos = Repos::open(&[first, second]).expect("the repositories open");
+    let err = repos
+        .evaluate(&support::name("optpkg"))
+        .expect_err("both options files break the same rule");
+    let text = err.to_string();
+    assert!(text.contains("repository first"), "{text}");
+    assert!(text.contains("repository second"), "{text}");
+}
+
+#[test]
 fn a_broken_options_file_is_reported_before_the_set_is() {
     let dir = laft_test::tempdir();
     let repo = repo(

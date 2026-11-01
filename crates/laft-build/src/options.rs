@@ -324,7 +324,11 @@ pub(crate) fn declarations(
             }
         };
         any = true;
-        let file = format!("recipes/{}/options.stav", name.as_str());
+        let file = format!(
+            "recipes/{}/options.stav of repository {}",
+            name.as_str(),
+            repo.name
+        );
         let mut repo_sums = Vec::new();
         let mut repo_fields: Vec<Declaration> = Vec::new();
         read_file(
