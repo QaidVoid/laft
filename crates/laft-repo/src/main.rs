@@ -2,11 +2,13 @@
 //! repositories.
 //!
 //! A repository is a directory of static files: package files in
-//! `pool/<id>.lpkg`, their buildinfo in `buildinfo/<id>.json`, one signed
+//! `pool/<id>.lpkg`, their buildinfo in `buildinfo/<id>.json`, the recipe
+//! snapshot of each generation in `recipes/<blake3>.tar.zst`, one signed
 //! index per channel and architecture in `channels/<channel>/<arch>/` with
-//! immutable snapshots of its recent generations, and optionally the
-//! root-signed list of online keys in `keys.json`. Mirror lists are not
-//! published yet, because no client reads them.
+//! immutable snapshots of its recent generations, the index of each
+//! published profile in `profiles/<profile>/` below the channel, and
+//! optionally the root-signed list of online keys in `keys.json`. Mirror
+//! lists are not published yet, because no client reads them.
 //!
 //! ```text
 //! laft-repo keygen --out keys/online --unencrypted

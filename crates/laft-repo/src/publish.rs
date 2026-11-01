@@ -5,7 +5,8 @@
 //! repository and the target's current state, then applies the steps in
 //! order and stops at the first failure:
 //!
-//! 1. Package files and buildinfo the target does not have yet.
+//! 1. Package files, buildinfo and recipe archives the target does not
+//!    have yet.
 //! 2. A check that the target now holds every package file the new
 //!    indexes reference, with the right size.
 //! 3. `keys.json`, before its signature, when it changed.
