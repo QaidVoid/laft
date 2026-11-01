@@ -363,6 +363,51 @@ fn a_big_build_waits_for_the_memory_of_an_idle_host() {
 }
 
 #[test]
+fn a_big_build_that_is_deferred_again_waits_before_it_looks() {
+    // The memory of the host oscillates between the reads, so the wait
+    // sees it free and the fill defers the build again. The dispatcher
+    // then waits before it reads the host again instead of spinning
+    // between the two reads.
+    let reads = [0u64, u64::MAX, 0, u64::MAX, 0, u64::MAX, u64::MAX];
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_look = calls.clone();
+    let look = move || {
+        let at = calls_look.fetch_add(1, Ordering::SeqCst);
+        Ok(reads[at.min(reads.len() - 1)])
+    };
+    let silent = |_: u64, _: u64| {};
+    let mut scheduler = scheduler_with(
+        &["a"],
+        &[],
+        &[("a", 0)],
+        1,
+        Memory {
+            estimates: BTreeMap::from([(item("a"), 100)]),
+            big: BTreeSet::from([item("a")]),
+            available: &look,
+            waiting: &silent,
+        },
+    )
+    .memory_wait(Duration::from_millis(100));
+    let started = std::time::Instant::now();
+    let built = scheduler
+        .run(
+            ["a"].iter().map(|name| item(name)),
+            &mut |_: &Item| (),
+            &|_, (): ()| Ok(()),
+            &mut |_, _| Ok(Vec::new()),
+            None,
+        )
+        .expect("the run builds");
+    assert_eq!(built.len(), 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 7, "every read happened");
+    assert!(
+        started.elapsed() >= Duration::from_millis(200),
+        "the dispatcher waits on the re-defer path"
+    );
+}
+
+#[test]
 fn only_one_big_build_runs_at_a_time() {
     let open = Arc::new(AtomicUsize::new(0));
     let most = Arc::new(AtomicUsize::new(0));

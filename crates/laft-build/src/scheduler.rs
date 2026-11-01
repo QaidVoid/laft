@@ -390,6 +390,13 @@ impl<'a> Scheduler<'a> {
                 break;
             }
             waits = self.fill(prepare, jobs)?;
+            // The host looked free a moment ago, but the read of the fill
+            // deferred the build again, so the memory came and went
+            // between the reads. A wait bounds the spin before the next
+            // look.
+            if self.running.is_empty() && waits && !self.stopped {
+                std::thread::sleep(self.memory_wait);
+            }
         }
         Ok(())
     }
