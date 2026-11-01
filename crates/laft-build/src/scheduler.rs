@@ -31,8 +31,9 @@ pub(crate) struct Memory<'a> {
     /// What each build is expected to need, in bytes: the peak memory of
     /// its latest build, or a default when it never ran.
     pub estimates: BTreeMap<Item, u64>,
-    /// The builds whose recipe names a runner that wants the host to
-    /// itself.
+    /// The builds that may not sit next to each other: no two of them
+    /// run at once, while other builds join whenever the memory check
+    /// passes.
     pub big: BTreeSet<Item>,
     /// The memory the host holds for new work, in bytes.
     pub available: &'a (dyn Fn() -> Result<u64, BuildError> + Sync),

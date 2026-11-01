@@ -248,7 +248,7 @@ pub struct StageOptions {
     /// The number of parallel jobs inside one build.
     pub jobs: u32,
     /// The number of packages of one step that may build at once. Zero
-    /// picks an eighth of the CPUs, at least one.
+    /// picks an eighth of the jobs, at least one.
     pub workers: usize,
     /// The longest one phase or script may run.
     pub timeout: Duration,
@@ -383,16 +383,24 @@ const ROOT_LINKS: [(&str, &str); 4] = [
 /// Once a step succeeded, its key is recorded in the root. A step whose
 /// recorded key matches is skipped unless [`StageOptions::rebuild`] is
 /// set, so a changed step runs again together with every step after it.
-/// Each package of a step is recorded too, with the key the step would
-/// have if it ended with that package, so a failed run continues with the
-/// package that failed. The build key of a package is taken right before
-/// it builds, so that it covers the packages that the step built before
-/// it. A record goes before the script or package it stands for runs, so
-/// work that fails partway never counts as done, even when a later run
-/// brings back the key it had before.
+/// Each package of a step is recorded too, with its build key, so a
+/// failed run continues with the package that failed. The build keys of
+/// a step's packages are all taken up front, in stage-file order, before
+/// any of them builds, so they do not depend on which build finishes
+/// first. A record goes before the script or package it stands for runs,
+/// so work that fails partway never counts as done, even when a later
+/// run brings back the key it had before.
 ///
-/// A build whose recipe has `ci.runner = big` first waits until the host
-/// has [`StageOptions::min_available`] of memory available. Every script
+/// The packages of an [`Install::Store`] step may build at once, as many
+/// as [`StageOptions::workers`] allows, while a step with a root runs its
+/// packages one after another.
+///
+/// A build whose recipe has `ci.runner = big` waits for memory before it
+/// starts: when it never ran, until the host has
+/// [`StageOptions::min_available`] of memory available, and after that
+/// until it has the peak memory of its latest build again. No two big
+/// builds run at once; other builds join while a big one waits whenever
+/// the memory check passes. Every script
 /// and every build inside the root logs to
 /// `logs/stage/<stage>/<nn>-<step>[-<package>].log` in the build root, and
 /// builds on the host log every phase as [`Builder`] does.

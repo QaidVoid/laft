@@ -259,7 +259,7 @@ pub struct Builder<'a> {
     /// The number of parallel jobs, `$JOBS`.
     pub jobs: u32,
     /// The number of builds of one run that may run at once. Zero picks
-    /// an eighth of the CPUs, at least one.
+    /// an eighth of the jobs, at least one.
     pub workers: usize,
     /// The memory, in bytes, that a build whose runner wants the host to
     /// itself waits for when it has no record of what it needed before.
@@ -288,7 +288,7 @@ pub struct Builder<'a> {
     pub(crate) jobserver: Option<Jobserver>,
 }
 
-/// The workers a run uses. Zero picks an eighth of the CPUs, at least
+/// The workers a run uses. Zero picks an eighth of the jobs, at least
 /// one, and the workers are never more than the jobs.
 pub(crate) fn resolved_workers(workers: usize, jobs: u32) -> usize {
     let jobs = usize::try_from(jobs.max(1)).unwrap_or(usize::MAX);
