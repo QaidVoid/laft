@@ -87,7 +87,7 @@
 //! | `R020` | a reference to a package of the run in a variant it does not build |
 //! | `R021` | a reference that no recipe of the run and no published package satisfies |
 //! | `R022` | more than one recipe of the run for the same package and variant, reported once with their repositories |
-//! | `R073` | a build that was asked for an option the recipe does not declare, or a tag the option does not have |
+//! | `R073` | a build that was asked for an option the recipe does not declare, or a tag the option does not have, or an option constraint in a dependency that the package it names does not declare |
 //! | `B010` | dirty items that depend on each other in a cycle |
 //!
 //! Fetching and unpacking sources reports [`SourceError`]s:

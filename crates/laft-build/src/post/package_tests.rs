@@ -130,6 +130,16 @@ fn the_main_package_combines_detected_and_declared_relations() {
 }
 
 #[test]
+fn declared_option_constraints_reach_the_dependencies() {
+    let mut recipe = recipe("v");
+    recipe.outputs.deps = crate::test_support::refs(&["zlib{ssl}"]);
+    let fixture = fixture(&recipe);
+    let main = part("v", None, &["usr/bin/program"]);
+    let package = package(fixture.payload(), &recipe, &main, Vec::new()).unwrap();
+    assert!(texts(&package.meta.depends).contains(&"zlib{ssl}".to_owned()));
+}
+
+#[test]
 fn automatic_subpackages_depend_on_the_exact_main_package() {
     let recipe = recipe("v");
     let fixture = fixture(&recipe);

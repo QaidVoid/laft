@@ -8,7 +8,8 @@ use stav::{AttrPath, Diagnostic, FileDiagnostic, Priority, Span};
 
 use crate::env::{self, EnvInput, RESERVED};
 use crate::fsx;
-use crate::loader::{COMMON, RECIPES};
+use crate::loader::{COMMON, RECIPE_FILE, RECIPES};
+use crate::options;
 use crate::recipe::{
     Alternative, BuildOptions, Fetch, FileRef, Metadata, Operations, Outputs, Recipe, Shell,
     Source, Split, Subpackage, Update, Vendor, VendorKind,
@@ -25,6 +26,9 @@ pub(crate) struct Cx<'a> {
     pub(crate) target: Target,
     /// The contributing repositories, lowest priority first.
     pub(crate) repos: &'a [&'a RecipeRepo],
+    /// Every repository of the run, lowest priority first, which the
+    /// options of any package this one depends on come from.
+    pub(crate) all_repos: &'a [&'a RecipeRepo],
     pub(crate) found: Vec<FileDiagnostic>,
 }
 
@@ -68,6 +72,15 @@ pub(crate) fn convert(cx: &mut Cx<'_>, p: schema::Package) -> Option<Recipe> {
     check_package_shape(cx, &p);
     check_paths(cx, &p);
     check_env(cx, &p.env);
+    check_constraints(cx, &["build_deps"], &p.build_deps);
+    check_constraints(cx, &["link_deps"], &p.link_deps);
+    check_constraints(cx, &["check_deps"], &p.check_deps);
+    check_constraints(cx, &["deps"], &p.deps);
+    for (suffix, s) in &p.subpackages {
+        check_constraints(cx, &["subpackages", suffix, "deps"], &s.deps);
+    }
+    reject_constraints(cx, &["conflicts"], &p.conflicts, "conflict");
+    reject_constraints(cx, &["replaces"], &p.replaces, "replace");
     if let Some(update) = &p.update {
         check_update(cx, update);
     }
@@ -168,7 +181,12 @@ pub(crate) fn convert(cx: &mut Cx<'_>, p: schema::Package) -> Option<Recipe> {
         .iter()
         .map(|r| match variant {
             Variant::Dynamic => r.clone(),
-            Variant::Static => PkgRef::new(r.name().clone(), r.prefix().cloned(), variant),
+            Variant::Static => PkgRef::new_with_options(
+                r.name().clone(),
+                r.prefix().cloned(),
+                variant,
+                r.options().clone(),
+            ),
         })
         .collect();
 
@@ -289,6 +307,60 @@ fn add_dep(deps: &mut Vec<PkgRef>, name: &str) {
         deps.push(dep);
         deps.sort_by_key(ToString::to_string);
     }
+}
+
+/// Checks the option constraints of `deps` against the options that the
+/// named packages declare: every constraint must name an option the target
+/// declares, and for a tag constraint a tag of that option's sum type.
+fn check_constraints(cx: &mut Cx<'_>, keys: &[&str], deps: &[PkgRef]) {
+    for dep in deps {
+        if dep.options().is_empty() || !declares_recipe(cx, dep.name()) {
+            continue;
+        }
+        let (decls, _) = options::declarations(cx.all_repos, dep.name());
+        for constraint in dep.options().as_slice() {
+            let problem = match &decls {
+                Some(decls) => decls.constraint_problem(dep.name(), constraint),
+                None => Some(format!(
+                    "the dependency on {} requires {}, which {} declares no options",
+                    dep.name(),
+                    constraint,
+                    dep.name()
+                )),
+            };
+            if let Some(message) = problem {
+                cx.error(keys, "R073", message);
+            }
+        }
+    }
+}
+
+/// Reports an option constraint on a `conflict` or a `replace`, which
+/// names packages, not what they build with.
+fn reject_constraints(cx: &mut Cx<'_>, keys: &[&str], refs: &[PkgRef], what: &str) {
+    for r in refs {
+        if !r.options().is_empty() {
+            cx.error(
+                keys,
+                "R073",
+                format!(
+                    "the {what} on {} carries option constraints, which a {what} does not take",
+                    r.name()
+                ),
+            );
+        }
+    }
+}
+
+/// Whether any repository of the run holds a recipe of `name`.
+fn declares_recipe(cx: &Cx<'_>, name: &Name) -> bool {
+    cx.all_repos.iter().any(|r| {
+        r.path
+            .join(RECIPES)
+            .join(name.as_str())
+            .join(RECIPE_FILE)
+            .exists()
+    })
 }
 
 /// Converts the sources, checking every rule a single field cannot express.

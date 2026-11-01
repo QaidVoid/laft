@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
-use laft_core::{MAX_OPTIONS, Name, OptionValue, is_valid_name};
+use laft_core::{MAX_OPTIONS, Name, OptionConstraint, OptionValue, is_valid_name};
 use stav::ast::{self, Expr, Field, Item, LiteralKind, StructDecl, Type, TypeDecl};
 use stav::{Diagnostic, FileDiagnostic, HostModule, HostValues, Span, Value, parse};
 
@@ -102,6 +102,48 @@ impl Declarations {
             }
         }
         found
+    }
+
+    /// What a dependency constraint on this package is missing, or `None`
+    /// when the package satisfies `constraint`.
+    pub(crate) fn constraint_problem(
+        &self,
+        target: &Name,
+        constraint: &OptionConstraint,
+    ) -> Option<String> {
+        let name = constraint.name();
+        let Some(field) = self.fields.iter().find(|f| f.name == name) else {
+            return Some(format!(
+                "the dependency on {target} requires the option `{name}`, which {target} does not declare"
+            ));
+        };
+        match constraint {
+            OptionConstraint::Tag { tag, .. } => match &field.kind {
+                Kind::Bool => Some(format!(
+                    "the dependency on {target} requires `{name}={tag}`, which is a `Bool` option"
+                )),
+                Kind::Sum(sum)
+                    if self
+                        .sums
+                        .iter()
+                        .find(|s| &s.name == sum)
+                        .is_some_and(|s| s.tags.iter().any(|t| t == tag)) =>
+                {
+                    None
+                }
+                Kind::Sum(sum) => Some(format!(
+                    "the dependency on {target} requires `{name}={tag}`, which is no tag of `{sum}`"
+                )),
+            },
+            OptionConstraint::True { .. } | OptionConstraint::False { .. }
+                if matches!(field.kind, Kind::Bool) =>
+            {
+                None
+            }
+            OptionConstraint::True { .. } | OptionConstraint::False { .. } => Some(format!(
+                "the dependency on {target} requires `{name}` as a bool, which is a tag option"
+            )),
+        }
     }
 
     /// Every value of `set` resolved over the defaults, so the map holds

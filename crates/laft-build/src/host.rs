@@ -28,7 +28,7 @@ pub(crate) fn host(roots: Vec<PathBuf>, scope: Scope) -> Host {
         SymbolType {
             name: "Pkg".to_owned(),
             words: true,
-            strings: false,
+            strings: true,
             constructor: "pkg".to_owned(),
             parse: parse_pkg,
         },

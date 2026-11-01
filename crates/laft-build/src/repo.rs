@@ -240,6 +240,7 @@ impl Repos {
             &checked,
             name,
             &repos,
+            &all,
             Variant::Dynamic,
             declared.as_ref(),
             set,
@@ -253,7 +254,16 @@ impl Repos {
             let recipe = if variant == Variant::Dynamic {
                 first.recipe.clone()
             } else {
-                evaluate_variant(&checked, name, &repos, variant, declared.as_ref(), set)?.recipe
+                evaluate_variant(
+                    &checked,
+                    name,
+                    &repos,
+                    &all,
+                    variant,
+                    declared.as_ref(),
+                    set,
+                )?
+                .recipe
             };
             recipes.push(recipe);
         }
@@ -263,12 +273,15 @@ impl Repos {
 }
 
 /// Evaluates the checked recipe of `name` for `variant`, checks it against
-/// the recipe rules and converts it. `declared` and `set` are the option
+/// the recipe rules and converts it. `repos` are the repositories that
+/// contribute to the package and `all` every repository of the run, whose
+/// recipes the dependencies may name. `declared` and `set` are the option
 /// declarations of the package and the values of this evaluation.
 fn evaluate_variant(
     checked: &Checked,
     name: &Name,
     repos: &[&RecipeRepo],
+    all: &[&RecipeRepo],
     variant: Variant,
     declared_options: Option<&options::Declarations>,
     set: &BTreeMap<String, OptionValue>,
@@ -331,6 +344,7 @@ fn evaluate_variant(
         name,
         target,
         repos,
+        all_repos: all,
         found: Vec::new(),
     };
     let recipe = convert::convert(&mut cx, package);

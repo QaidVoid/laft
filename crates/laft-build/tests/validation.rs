@@ -391,3 +391,148 @@ fn recipe_paths_are_relative_and_stay_below_their_tree() {
         assert_eq!(codes("foo", &body(field)), Vec::<String>::new(), "{field}");
     }
 }
+
+/// The errors of `app` in a repository that also holds `mesa` with the
+/// option declarations the constraints are checked against.
+fn constraint_errors(link_deps: &str) -> Vec<(String, String)> {
+    let mesa_options = "## How mesa builds.\ntype Vulkan = amd | intel\n\nstruct Options {\n  ## The Vulkan backend.\n  vulkan: Vulkan = intel\n  ## The X11 libraries.\n  x11: Bool = true\n}\n";
+    let mesa = [
+        ("recipes/mesa/options.stav", mesa_options),
+        (
+            "recipes/mesa/package.stav",
+            &recipe("mesa", "  build custom {}"),
+        ),
+    ];
+    let mut files = Vec::from(mesa);
+    let app = recipe(
+        "app",
+        &format!("{SOURCE}  link_deps = [{link_deps}]\n  build custom {{}}"),
+    );
+    files.push(("recipes/app/package.stav", &app));
+    errors("app", &files)
+}
+
+#[test]
+fn an_option_constraint_names_a_declared_option_and_tag() {
+    assert_eq!(constraint_errors("mesa{vulkan=amd,!x11}"), Vec::new());
+    assert_eq!(
+        constraint_errors("mesa{vdpau}")[0],
+        (
+            "R073".to_owned(),
+            "the dependency on mesa requires the option `vdpau`, which mesa does not declare"
+                .to_owned()
+        )
+    );
+    assert_eq!(
+        constraint_errors("mesa{vulkan=nvidia}")[0],
+        (
+            "R073".to_owned(),
+            "the dependency on mesa requires `vulkan=nvidia`, which is no tag of `Vulkan`"
+                .to_owned()
+        )
+    );
+    assert_eq!(
+        constraint_errors("mesa{vulkan}")[0],
+        (
+            "R073".to_owned(),
+            "the dependency on mesa requires `vulkan` as a bool, which is a tag option".to_owned()
+        )
+    );
+    assert_eq!(
+        constraint_errors("mesa{x11=on}")[0],
+        (
+            "R073".to_owned(),
+            "the dependency on mesa requires `x11=on`, which is a `Bool` option".to_owned()
+        )
+    );
+}
+
+#[test]
+fn a_constraint_on_a_package_without_options_is_r073() {
+    let errors = errors(
+        "app",
+        &[
+            (
+                "recipes/coreutils/package.stav",
+                &recipe("coreutils", "  build custom {}"),
+            ),
+            (
+                "recipes/app/package.stav",
+                &recipe(
+                    "app",
+                    &format!("{SOURCE}  link_deps = [coreutils{{ssl}}]\n  build custom {{}}"),
+                ),
+            ),
+        ],
+    );
+    assert_eq!(
+        errors[0],
+        (
+            "R073".to_owned(),
+            "the dependency on coreutils requires ssl, which coreutils declares no options"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn a_conflict_or_replace_takes_no_option_constraints() {
+    let conflicts = errors(
+        "app",
+        &[(
+            "recipes/app/package.stav",
+            &recipe(
+                "app",
+                &format!("{SOURCE}  conflicts = [mesa{{vulkan=amd}}]\n  build custom {{}}"),
+            ),
+        )],
+    );
+    assert_eq!(
+        conflicts[0],
+        (
+            "R073".to_owned(),
+            "the conflict on mesa carries option constraints, which a conflict does not take"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn a_computed_constraint_names_its_own_option() {
+    let dir = laft_test::tempdir();
+    let repo = support::write_repo(
+        &dir.path().join("core"),
+        "core",
+        "",
+        &[
+            (
+                "recipes/app/options.stav",
+                "## The Vulkan backend.\ntype Backend = amd | intel\n\nstruct Options {\n  ## The backend.\n  backend: Backend = intel\n}\n",
+            ),
+            (
+                "recipes/app/package.stav",
+                "import \"laft/options\" as opt\n\npackage app {\n  version = \"1.0\"\n  summary = \"The app package\"\n  license = [MIT]\n  source main {\n    url = [\"https://example.org/x-1.0.tar.gz\"]\n    sha256 = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n  }\n  link_deps = [pkg(\"mesa{vulkan=#{opt.backend}}\")]\n  build custom {}\n}\n",
+            ),
+            (
+                "recipes/mesa/options.stav",
+                "## How mesa builds.\ntype Vulkan = amd | intel\n\nstruct Options {\n  ## The Vulkan backend.\n  vulkan: Vulkan = intel\n  ## The X11 libraries.\n  x11: Bool = true\n}\n",
+            ),
+            (
+                "recipes/mesa/package.stav",
+                &recipe("mesa", "  build custom {}"),
+            ),
+        ],
+    );
+    let repos = Repos::open(&[repo]).expect("the repository opens");
+    let evaluation = repos
+        .evaluate_with(
+            &support::name("app"),
+            &std::collections::BTreeMap::from([(
+                "backend".to_owned(),
+                laft_core::OptionValue::Tag("amd".to_owned()),
+            )]),
+        )
+        .expect("the computed constraint is declared");
+    let link = &evaluation.recipes[0].link_deps[0];
+    assert_eq!(link.to_string(), "mesa{vulkan=amd}");
+}
