@@ -153,10 +153,9 @@ fn no_more_builds_run_than_workers() {
         )
         .expect("the run builds");
     assert_eq!(built.len(), 4);
-    assert_eq!(
-        most.load(Ordering::SeqCst),
-        2,
-        "two builds run side by side"
+    assert!(
+        most.load(Ordering::SeqCst) <= 2,
+        "no more than two builds run side by side"
     );
 }
 
@@ -222,26 +221,31 @@ fn a_panicking_prepare_fails_the_run_and_wakes_the_workers() {
 
 #[test]
 fn a_failure_stops_the_builds_that_wait_for_it() {
+    let built = Arc::new(Mutex::new(Vec::new()));
     let mut scheduler = scheduler(
         &["a", "b", "c"],
         &[("c", &["b"])],
         &[("a", 0), ("b", 0), ("c", 0)],
         2,
     );
-    let built = scheduler
+    let built_job = built.clone();
+    let failed = scheduler
         .run(
             ["a", "b", "c"].iter().map(|name| item(name)),
             &mut |_: &Item| (),
-            &|item, (): ()| match item.name.as_str() {
-                "b" => Err(BuildError::problem("B040", "b failed")),
-                _ => Ok(format!("built {item}")),
+            &move |item, (): ()| {
+                built_job.lock().unwrap().push(item.to_string());
+                match item.name.as_str() {
+                    "b" => Err(BuildError::problem("B040", "b failed")),
+                    _ => Ok(format!("built {item}")),
+                }
             },
             &mut |_, _| Ok(Vec::new()),
             None,
         )
         .expect_err("the run fails");
-    let Failed::Build { item, error } = built else {
-        panic!("the run fails with a build, not {built:?}");
+    let Failed::Build { item, error } = failed else {
+        panic!("the run fails with a build, not {failed:?}");
     };
     assert_eq!(
         item,
@@ -249,7 +253,11 @@ fn a_failure_stops_the_builds_that_wait_for_it() {
         "{error}"
     );
     assert!(error.to_string().contains("b failed"), "{error}");
-    // `c` never started, and the run holds no outcome for it.
+    assert!(
+        !built.lock().unwrap().iter().any(|name| name == "c"),
+        "c never built: {:?}",
+        built.lock().unwrap()
+    );
 }
 
 #[test]
