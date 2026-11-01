@@ -1574,3 +1574,115 @@ fn a_stage_made_in_code_cannot_build_where_its_kind_has_no_place() {
         assert!(error.to_string().contains(why), "{error}");
     }
 }
+
+#[test]
+fn a_store_step_takes_the_keys_of_its_packages_before_it_starts() {
+    if no_shell() {
+        return;
+    }
+    let serial_dir = laft_test::tempdir();
+    let parallel_dir = laft_test::tempdir();
+    let serial = keyed_alpha(serial_dir.path(), 1);
+    let parallel = keyed_alpha(parallel_dir.path(), 2);
+    assert_eq!(
+        parallel, serial,
+        "the key of alpha does not depend on the scheduling"
+    );
+}
+
+/// Builds `slow, alpha, gamma, omega` in one store step with `workers` in
+/// a fresh build root below `dir`, and returns the recorded key of
+/// `alpha`. `alpha` links against `omega`, which the stage file lists
+/// after it, so the seed of `omega` serves `alpha` when the keys are
+/// taken in stage-file order. `slow` holds `alpha` back long enough for
+/// `omega` to be built first, which is what made the key depend on the
+/// scheduling.
+fn keyed_alpha(dir: &Path, workers: usize) -> String {
+    let stage = host_tools_stage(
+        dir,
+        r#"    { name = "build", packages = [slow, alpha, gamma, omega] },"#,
+    );
+    for (name, extra, install) in [
+        (
+            "slow",
+            "",
+            "i=0; while [ \"$i\" -lt 30000000 ]; do i=$((i+1)); done",
+        ),
+        (
+            "alpha",
+            "  build_deps = [slow]\n  link_deps = [omega]\n",
+            "mkdir -p \"$DESTDIR/usr/share\" && echo hi > \"$DESTDIR/usr/share/alpha-file\"",
+        ),
+        (
+            "gamma",
+            "  link_deps = [alpha]\n",
+            "mkdir -p \"$DESTDIR/usr/share\" && echo hi > \"$DESTDIR/usr/share/gamma-file\"",
+        ),
+        // The package the step builds holds another ABI epoch than the
+        // seed, so the key of `alpha` names the `omega` it resolved.
+        (
+            "omega",
+            "  abi_epoch = 3\n",
+            "mkdir -p \"$DESTDIR/usr/share\" && echo hi > \"$DESTDIR/usr/share/omega-file\"",
+        ),
+    ] {
+        fs::create_dir_all(stage.recipes.join(format!("recipes/{name}")))
+            .expect("the test setup works");
+        // The `omega` of the step has a newer version than its seed, so
+        // the resolution prefers it as soon as it exists.
+        let version = if name == "omega" { "2" } else { "1" };
+        fs::write(
+            stage.recipes.join(format!("recipes/{name}/package.stav")),
+            format!(
+                r#"package {name} {{
+  version = "{version}"
+  summary = "{name}"
+  license = [MIT]
+  empty   = true
+  build custom {{}}
+  env = {{ LD_LIBRARY_PATH = "/usr/lib" }}
+{extra}  phases {{
+    install = """
+      {install}
+      """
+  }}
+}}
+"#
+            ),
+        )
+        .expect("the test setup works");
+    }
+    store_with_host_tools(dir);
+    // The seed of `omega`, whose version and ABI epoch stay behind the
+    // package the step builds, so the key of `alpha` names the `omega`
+    // it resolved.
+    let root = BuildRoot::new(dir.join("build"));
+    let (file, _) = crate::test_support::TestPkg::new("omega").write(dir);
+    crate::seed::seed(&root, &file).expect("the seed enters the store");
+    let result = run_with(
+        dir,
+        &stage,
+        &StageOptions {
+            jobs: workers as u32,
+            workers,
+            ..store_options(dir)
+        },
+    );
+    if refused(&result) {
+        return String::new();
+    }
+    let states = result.expect("the run builds");
+    assert!(
+        states.iter().all(|(_, s)| *s == StageState::Done),
+        "{states:?}"
+    );
+    let db = BuildRoot::new(dir.join("build")).db();
+    let alpha = db
+        .latest(&Item::new(
+            "alpha".parse().unwrap(),
+            laft_core::Variant::Dynamic,
+        ))
+        .unwrap()
+        .expect("the database records the build");
+    alpha.record.key.to_string()
+}

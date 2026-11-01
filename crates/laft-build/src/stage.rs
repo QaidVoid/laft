@@ -846,6 +846,15 @@ impl StageRun<'_> {
             available: &|| available_memory(),
             waiting: &|needed, available| progress(StageEvent::Waiting { available, needed }),
         };
+        // The key of a package is taken from the store the step started
+        // with, plus the built packages of the earlier packages of the
+        // step it links on: a package that starts late must not see what
+        // its peers have added since, or its key would depend on the
+        // scheduling.
+        let snapshot = view::usable(
+            view::store_entries(&self.builder.store)?,
+            &self.builder.seeds()?,
+        );
         let mut scheduler = Scheduler::new(order, deps, durations, workers, memory);
         let built = scheduler.run(
             items,
@@ -854,7 +863,28 @@ impl StageRun<'_> {
                 let recipe = graph
                     .recipe(item)
                     .expect("the graph holds every recipe of the step");
-                let inputs = self.builder.key_inputs(recipe)?;
+                let at = stage_position.get(item).copied().unwrap_or(usize::MAX);
+                let mut entries = snapshot.clone();
+                for link in &recipe.link_deps {
+                    let dep = Item::new(link.name().clone(), link.variant());
+                    if !stage_position.get(&dep).is_some_and(|d| *d < at) {
+                        continue;
+                    }
+                    // The package waits for the dependency, so the store
+                    // holds the package the step built for it, which
+                    // stands in for the seed it started from.
+                    entries.retain(|entry| {
+                        entry.meta.name != *link.name() || entry.meta.variant != link.variant()
+                    });
+                    let current = view::usable(
+                        view::store_entries(&self.builder.store)?,
+                        &self.builder.seeds()?,
+                    );
+                    entries.extend(current.into_iter().filter(|entry| {
+                        entry.meta.name == *link.name() && entry.meta.variant == link.variant()
+                    }));
+                }
+                let inputs = view::key_inputs_from(recipe, &entries);
                 let built = inputs.build_key().to_string();
                 let done = step_key(
                     step,
