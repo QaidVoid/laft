@@ -40,6 +40,36 @@ fn filetime_touch(path: &Path) {
 }
 
 #[test]
+fn vcs_directories_are_not_packed() {
+    let dir = laft_test::tempdir();
+    let root = tree(dir.path(), 0o700);
+    fs::create_dir_all(root.join(".git/objects")).unwrap();
+    fs::write(root.join(".git/HEAD"), b"ref: refs/heads/main").unwrap();
+    fs::create_dir_all(root.join(".jj/repo")).unwrap();
+    fs::write(root.join(".jj/repo/store"), b"store").unwrap();
+    let file = dir.path().join("v.tar");
+    normalized_tarball(&root, &file).unwrap();
+    let mut archive = tar::Archive::new(File::open(&file).unwrap());
+    let mut seen = Vec::new();
+    for entry in archive.entries().unwrap() {
+        let path = entry
+            .unwrap()
+            .path()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        seen.push(path);
+    }
+    assert!(
+        !seen
+            .iter()
+            .any(|path| path.contains(".git") || path.contains(".jj")),
+        "{seen:?}"
+    );
+    assert!(seen.contains(&"b/lib.rs".to_owned()), "{seen:?}");
+}
+
+#[test]
 fn entries_are_sorted_and_normalized() {
     let dir = laft_test::tempdir();
     let root = tree(dir.path(), 0o700);

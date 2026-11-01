@@ -16,12 +16,15 @@ use crate::{SOURCE_DATE_EPOCH, SourceCache, SourceError, Vendor, VendorKind};
 /// Writes the tree `dir` as a normalized tarball to `file`.
 ///
 /// Entries use the POSIX formats: ustar headers, with a pax `path` record
-/// for a path too long for them. They are sorted bytewise by path, so
-/// directories come before their contents. Every entry has the modification
-/// time [`SOURCE_DATE_EPOCH`], owner and group 0 and no names, and mode
-/// `0o755` for directories and executable files, `0o644` for other files
-/// and `0o777` for symlinks. Nothing else of the tree is recorded, so the
-/// same tree always gives the same bytes.
+/// for a path too long for them. The pax record is written before the
+/// header, whose name field also carries the longest prefix of the path
+/// that fits, so a reader without pax support still sees a name. The
+/// `.git` and `.jj` directories of the tree are not packed. Entries are
+/// sorted bytewise by path, so directories come before their contents.
+/// Every entry has the modification time [`SOURCE_DATE_EPOCH`], owner and
+/// group 0 and no names, and mode `0o755` for directories and executable
+/// files, `0o644` for other files and `0o777` for symlinks. Nothing else
+/// of the tree is recorded, so the same tree always gives the same bytes.
 ///
 /// # Errors
 ///
@@ -30,7 +33,7 @@ use crate::{SOURCE_DATE_EPOCH, SourceCache, SourceError, Vendor, VendorKind};
 pub fn normalized_tarball(dir: &Path, file: &Path) -> Result<(), BuildError> {
     let out = File::create(file).map_err(io(file))?;
     let mut builder = tar::Builder::new(BufWriter::new(out));
-    for (rel, kind) in fsx::walk(dir)? {
+    for (rel, kind) in fsx::walk(dir)?.into_iter().filter(|(rel, _)| !vcs(rel)) {
         let path = dir.join(&rel);
         let mut header = tar::Header::new_ustar();
         header.set_mtime(SOURCE_DATE_EPOCH);
@@ -60,13 +63,16 @@ pub fn normalized_tarball(dir: &Path, file: &Path) -> Result<(), BuildError> {
                     .map_err(io(file))?;
             }
             Kind::File => {
-                let metadata = fs::metadata(&path).map_err(io(&path))?;
+                // The header names the size of the open handle, so a file
+                // replaced between the open and the read never disagrees
+                // with the bytes the archive holds.
+                let content = File::open(&path).map_err(io(&path))?;
+                let metadata = content.metadata().map_err(io(&path))?;
                 let exec = metadata.permissions().mode() & 0o111 != 0;
                 header.set_entry_type(tar::EntryType::Regular);
                 header.set_mode(if exec { 0o755 } else { 0o644 });
                 header.set_size(metadata.len());
                 header.set_cksum();
-                let content = File::open(&path).map_err(io(&path))?;
                 builder.append(&header, content).map_err(io(file))?;
             }
             Kind::Symlink => {
@@ -94,6 +100,12 @@ pub fn normalized_tarball(dir: &Path, file: &Path) -> Result<(), BuildError> {
         .map_err(|e| io(file)(e.into_error()))?
         .sync_all()
         .map_err(io(file))
+}
+
+/// Whether a path below the packed root enters a version control
+/// directory, which never belongs into a reproducible archive.
+fn vcs(rel: &str) -> bool {
+    rel.split('/').any(|part| part == ".git" || part == ".jj")
 }
 
 /// The command that vendors the dependencies of `vendor` into
