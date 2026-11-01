@@ -1,6 +1,7 @@
 use proptest::prelude::*;
 
 use super::*;
+use crate::OptionConstraint;
 
 fn constraint(op: Op, version: &str, rev: Option<u32>) -> Constraint {
     Constraint {
@@ -12,6 +13,31 @@ fn constraint(op: Op, version: &str, rev: Option<u32>) -> Constraint {
 
 fn name(s: &str) -> Name {
     s.parse().expect("test name is valid")
+}
+
+/// The option constraints of a dependency: `("flag", "")` for a `true`
+/// constraint, `("!flag", "")` for `false`, and `("opt", "tag")` for a tag.
+fn options(constraints: &[(&str, &str)]) -> OptionConstraints {
+    constraints
+        .iter()
+        .map(|&(name, tag)| {
+            if tag.is_empty() && name.starts_with('!') {
+                OptionConstraint::False {
+                    name: name[1..].to_owned(),
+                }
+            } else if tag.is_empty() {
+                OptionConstraint::True {
+                    name: name.to_owned(),
+                }
+            } else {
+                OptionConstraint::Tag {
+                    name: name.to_owned(),
+                    tag: tag.to_owned(),
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .into()
 }
 
 #[test]
@@ -30,7 +56,10 @@ fn parses_every_dependency_form() {
             Dep::Pc("gtk+-3.0".parse().expect("valid"), vec![]),
         ),
         ("virtual:java-runtime", Dep::Virtual(name("java-runtime"))),
-        ("zlib", Dep::Pkg(name("zlib"), VersionReq::Any)),
+        (
+            "zlib",
+            Dep::Pkg(name("zlib"), VersionReq::Any, options(&[])),
+        ),
         (
             "zlib>=1.3,<2",
             Dep::Pkg(
@@ -39,6 +68,7 @@ fn parses_every_dependency_form() {
                     constraint(Op::Ge, "1.3", None),
                     constraint(Op::Lt, "2", None),
                 ]),
+                options(&[]),
             ),
         ),
         (
@@ -46,6 +76,7 @@ fn parses_every_dependency_form() {
             Dep::Pkg(
                 name("zlib"),
                 VersionReq::from_constraints(vec![constraint(Op::Eq, "1.3.1", Some(2))]),
+                options(&[]),
             ),
         ),
         (
@@ -53,6 +84,7 @@ fn parses_every_dependency_form() {
             Dep::Pkg(
                 name("llvm"),
                 VersionReq::Prefix("19".parse().expect("valid")),
+                options(&[]),
             ),
         ),
         (
@@ -60,6 +92,7 @@ fn parses_every_dependency_form() {
             Dep::Pkg(
                 name("openssl1.1"),
                 VersionReq::from_constraints(vec![constraint(Op::Le, "1.1.1w", None)]),
+                options(&[]),
             ),
         ),
     ];
@@ -67,6 +100,62 @@ fn parses_every_dependency_form() {
         let dep: Dep = input.parse().expect("test dependency is valid");
         assert_eq!(dep, expected, "{input}");
         assert_eq!(dep.to_string(), input);
+    }
+}
+
+#[test]
+fn parses_option_constraints_after_every_package_form() {
+    let cases = [
+        (
+            "mesa{llvm}",
+            Dep::Pkg(name("mesa"), VersionReq::Any, options(&[("llvm", "")])),
+        ),
+        (
+            "mesa{llvm,!x11}",
+            Dep::Pkg(
+                name("mesa"),
+                VersionReq::Any,
+                options(&[("llvm", ""), ("!x11", "")]),
+            ),
+        ),
+        (
+            "mesa{vulkan=amd}",
+            Dep::Pkg(name("mesa"), VersionReq::Any, options(&[("vulkan", "amd")])),
+        ),
+        (
+            "mesa>=25{llvm,vulkan=amd}",
+            Dep::Pkg(
+                name("mesa"),
+                VersionReq::from_constraints(vec![constraint(Op::Ge, "25", None)]),
+                options(&[("llvm", ""), ("vulkan", "amd")]),
+            ),
+        ),
+        (
+            "llvm@19{shlib}",
+            Dep::Pkg(
+                name("llvm"),
+                VersionReq::Prefix("19".parse().expect("valid")),
+                options(&[("shlib", "")]),
+            ),
+        ),
+    ];
+    for (input, expected) in cases {
+        let dep: Dep = input.parse().expect("test dependency is valid");
+        assert_eq!(dep, expected, "{input}");
+        assert_eq!(dep.to_string(), input);
+    }
+}
+
+#[test]
+fn rejects_option_constraints_outside_a_package_name() {
+    for bad in [
+        "so:libz.so.1{a}",
+        "pc:zlib{a}",
+        "virtual:java-runtime{a}",
+        "mesa{}",
+        "mesa{",
+    ] {
+        assert!(bad.parse::<Dep>().is_err(), "`{bad}` should not parse");
     }
 }
 
@@ -165,18 +254,25 @@ fn arb_dep() -> impl Strategy<Value = Dep> {
         )
             .prop_map(|(s, c)| Dep::Pc(s.parse().expect("generated module name is valid"), c)),
         arb_name().prop_map(Dep::Virtual),
-        arb_name().prop_map(|n| Dep::Pkg(n, VersionReq::Any)),
+        arb_name().prop_map(|n| Dep::Pkg(n, VersionReq::Any, OptionConstraints::default())),
         (arb_name(), "[0-9][0-9.]{0,6}").prop_map(|(n, p)| {
             Dep::Pkg(
                 n,
                 VersionReq::Prefix(p.parse().expect("generated prefix is valid")),
+                OptionConstraints::default(),
             )
         }),
         (
             arb_name(),
             proptest::collection::vec(arb_constraint(), 0..4)
         )
-            .prop_map(|(n, c)| Dep::Pkg(n, VersionReq::from_constraints(c))),
+            .prop_map(|(n, c)| {
+                Dep::Pkg(
+                    n,
+                    VersionReq::from_constraints(c),
+                    OptionConstraints::default(),
+                )
+            }),
     ]
 }
 

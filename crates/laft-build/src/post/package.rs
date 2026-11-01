@@ -48,7 +48,7 @@ fn dep(r: &PkgRef) -> Dep {
     let req = r
         .prefix()
         .map_or(VersionReq::Any, |p| VersionReq::Prefix(p.clone()));
-    Dep::Pkg(r.name().clone(), req)
+    Dep::Pkg(r.name().clone(), req, r.options().clone())
 }
 
 fn sorted_deps(deps: impl IntoIterator<Item = Dep>) -> Vec<Dep> {

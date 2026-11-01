@@ -2,6 +2,7 @@ use std::fmt;
 use std::num::NonZeroU32;
 use std::str::FromStr;
 
+use crate::opt_constraint::{OptionConstraints, split_tail_group};
 use crate::{Name, PackageVersion, ParseError, Version, VersionPrefix};
 
 /// A shared object name, as found in `DT_SONAME` and `DT_NEEDED`, for example
@@ -266,16 +267,19 @@ impl VersionReq {
 /// | `zlib>=1.3,<2` | `zlib` with a version in range, ignoring the revision |
 /// | `zlib=1.3.1-r2` | exactly that version and revision |
 /// | `llvm@19` | `llvm` whose version matches the prefix `19` |
+/// | `mesa{llvm,!x11}` | `mesa` built with `llvm` on and `x11` off |
+/// | `mesa{vulkan=amd}` | `mesa` built with `vulkan=amd` |
 ///
 /// ```
 /// use laft_core::{Dep, VersionReq};
 ///
 /// let dep: Dep = "zlib>=1.3,<2".parse()?;
-/// let Dep::Pkg(name, VersionReq::Constraints(constraints)) = &dep else {
+/// let Dep::Pkg(name, VersionReq::Constraints(constraints), options) = &dep else {
 ///     panic!("expected a package dependency with constraints");
 /// };
 /// assert_eq!(name.as_str(), "zlib");
 /// assert_eq!(constraints.as_slice().len(), 2);
+/// assert!(options.is_empty());
 /// assert_eq!(dep.to_string(), "zlib>=1.3,<2");
 /// # Ok::<(), laft_core::ParseError>(())
 /// ```
@@ -288,9 +292,11 @@ pub enum Dep {
     Pc(PcName, Vec<Constraint>),
     /// A virtual capability, written `virtual:<name>`.
     Virtual(Name),
-    /// A package by name, written `<name>`, `<name>@<prefix>` or
-    /// `<name><constraints>`.
-    Pkg(Name, VersionReq),
+    /// A package by name, written `<name>`, `<name>@<prefix>`,
+    /// `<name><constraints>` or any of these with `{opt=tag,...}` after it.
+    /// The option constraints are empty when the dependency names no
+    /// option.
+    Pkg(Name, VersionReq, OptionConstraints),
 }
 
 /// Splits `s` at the first constraint operator.
@@ -320,25 +326,52 @@ impl FromStr for Dep {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some(soname) = s.strip_prefix("so:") {
+            let (soname, group) = split_tail_group(soname);
+            if group.is_some() {
+                return Err(not_a_package(s));
+            }
             return Ok(Self::So(soname.parse()?));
         }
         if let Some(rest) = s.strip_prefix("pc:") {
+            let (rest, group) = split_tail_group(rest);
+            if group.is_some() {
+                return Err(not_a_package(s));
+            }
             let (name, constraints) = split_constraints(rest);
             return Ok(Self::Pc(name.parse()?, parse_constraints(constraints)?));
         }
         if let Some(name) = s.strip_prefix("virtual:") {
+            let (name, group) = split_tail_group(name);
+            if group.is_some() {
+                return Err(not_a_package(s));
+            }
             return Ok(Self::Virtual(name.parse()?));
         }
-        if let Some((name, prefix)) = s.split_once('@') {
+        let (rest, options) = match split_tail_group(s) {
+            (rest, Some(group)) => (rest, group.parse()?),
+            (rest, None) => (rest, OptionConstraints::default()),
+        };
+        if let Some((name, prefix)) = rest.split_once('@') {
             return Ok(Self::Pkg(
                 name.parse()?,
                 VersionReq::Prefix(prefix.parse()?),
+                options,
             ));
         }
-        let (name, constraints) = split_constraints(s);
+        let (name, constraints) = split_constraints(rest);
         let req = VersionReq::from_constraints(parse_constraints(constraints)?);
-        Ok(Self::Pkg(name.parse()?, req))
+        Ok(Self::Pkg(name.parse()?, req, options))
     }
+}
+
+/// The error for option constraints on a dependency that is not a package
+/// name.
+fn not_a_package(s: &str) -> ParseError {
+    ParseError::new(
+        "dependency",
+        s,
+        "option constraints belong on a package name",
+    )
 }
 
 impl fmt::Display for Dep {
@@ -350,11 +383,18 @@ impl fmt::Display for Dep {
                 write_constraints(f, constraints)
             }
             Self::Virtual(name) => write!(f, "virtual:{name}"),
-            Self::Pkg(name, VersionReq::Any) => write!(f, "{name}"),
-            Self::Pkg(name, VersionReq::Prefix(prefix)) => write!(f, "{name}@{prefix}"),
-            Self::Pkg(name, VersionReq::Constraints(constraints)) => {
+            Self::Pkg(name, VersionReq::Any, options) => {
                 write!(f, "{name}")?;
-                write_constraints(f, constraints.as_slice())
+                write!(f, "{options}")
+            }
+            Self::Pkg(name, VersionReq::Prefix(prefix), options) => {
+                write!(f, "{name}@{prefix}")?;
+                write!(f, "{options}")
+            }
+            Self::Pkg(name, VersionReq::Constraints(constraints), options) => {
+                write!(f, "{name}")?;
+                write_constraints(f, constraints.as_slice())?;
+                write!(f, "{options}")
             }
         }
     }

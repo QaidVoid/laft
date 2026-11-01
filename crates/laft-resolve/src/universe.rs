@@ -251,7 +251,7 @@ impl<'a> Universe<'a> {
                         .push(name);
                 }
                 for dep in &candidate.meta.replaces {
-                    if let Dep::Pkg(replaced, _) = dep {
+                    if let Dep::Pkg(replaced, _, _) = dep {
                         replaces.entry(replaced.as_str()).or_default().push(name);
                     }
                 }

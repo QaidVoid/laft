@@ -1,6 +1,5 @@
 ---
 source: crates/laft-config/tests/examples.rs
-assertion_line: 133
 expression: "added_to_base(\"server\")"
 ---
 SystemConfig {
@@ -552,43 +551,19 @@ SystemConfig {
     },
     packages: [
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "htop",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(htop),
             origin: "/etc/laft/system.stav:9:25",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "opendoas",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(opendoas),
             origin: "/etc/laft/system.stav:9:15",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "prometheus-node-exporter",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(prometheus-node-exporter),
             origin: "/etc/laft/system.stav:9:47",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "ripgrep",
-                ),
-                prefix: None,
-                variant: Static,
-            },
+            pkg: PkgRef(ripgrep:static),
             origin: "/etc/laft/system.stav:9:31",
         },
     ],

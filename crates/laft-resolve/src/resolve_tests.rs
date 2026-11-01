@@ -643,7 +643,7 @@ fn check_sound(r: &Resolution<'_>, requests: &[Request]) {
         assert_eq!(&meta.name, name);
         for dep in &meta.depends {
             let ok = match dep {
-                Dep::Pkg(n, req) => match r.packages.get(n) {
+                Dep::Pkg(n, req, _) => match r.packages.get(n) {
                     Some(s) => req.matches(&s.candidate.meta.version, s.candidate.meta.rev),
                     None => {
                         *req == VersionReq::Any
@@ -652,7 +652,7 @@ fn check_sound(r: &Resolution<'_>, requests: &[Request]) {
                                     .meta
                                     .replaces
                                     .iter()
-                                    .any(|d| matches!(d, Dep::Pkg(x, _) if x == n))
+                                    .any(|d| matches!(d, Dep::Pkg(x, _, _) if x == n))
                             })
                     }
                 },
@@ -662,7 +662,7 @@ fn check_sound(r: &Resolution<'_>, requests: &[Request]) {
         }
         for dep in meta.conflicts.iter().chain(&meta.replaces) {
             let hit = match dep {
-                Dep::Pkg(n, req) => {
+                Dep::Pkg(n, req, _) => {
                     n != name
                         && r.packages.get(n).is_some_and(|s| {
                             req.matches(&s.candidate.meta.version, s.candidate.meta.rev)

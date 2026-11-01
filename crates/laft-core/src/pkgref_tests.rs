@@ -30,6 +30,39 @@ fn display_round_trips_and_omits_the_default_variant() {
 }
 
 #[test]
+fn parses_and_prints_option_constraints() {
+    for input in [
+        "mesa{llvm}",
+        "mesa{llvm,!x11}",
+        "mesa{vulkan=amd}",
+        "mesa:static{pcre2}",
+        "llvm@19:static{shlib}",
+    ] {
+        let r: PkgRef = input.parse().expect("test reference is valid");
+        assert!(!r.options().is_empty(), "{input}");
+        assert_eq!(r.to_string(), input, "{input}");
+    }
+    let r: PkgRef = "mesa{vulkan=amd}".parse().expect("valid");
+    assert_eq!(r.options().as_slice()[0].name(), "vulkan");
+    assert_eq!(r.options().as_slice()[0].tag(), Some("amd"));
+}
+
+#[test]
+fn rejects_malformed_option_constraints() {
+    for bad in [
+        "mesa{}",
+        "mesa{",
+        "mesa{llvm,}",
+        "mesa{vulkan=true}",
+        "mesa{ llvm }",
+    ] {
+        assert!(bad.parse::<PkgRef>().is_err(), "{bad:?} should be rejected");
+    }
+    let plain: PkgRef = "mesa".parse().expect("valid");
+    assert!(plain.options().is_empty());
+}
+
+#[test]
 fn rejects_malformed_references() {
     for bad in [
         "",

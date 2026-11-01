@@ -361,7 +361,7 @@ fn excludes(by: &Meta, other: &Meta) -> bool {
         .iter()
         .chain(&by.replaces)
         .any(|dep| match dep {
-            Dep::Pkg(name, req) => *name == other.name && req.matches(&other.version, other.rev),
+            Dep::Pkg(name, req, _) => *name == other.name && req.matches(&other.version, other.rev),
             _ => provides(other, dep),
         })
 }
@@ -478,13 +478,13 @@ fn dangling_dependencies(input: &Input<'_>, findings: &mut Vec<Finding>) -> Hash
             by_key.entry(provide_key(provide)).or_default().push(meta);
         }
         for dep in &meta.replaces {
-            if let Dep::Pkg(name, _) = dep {
+            if let Dep::Pkg(name, _, _) = dep {
                 replaced.insert(name.as_str());
             }
         }
     }
     let satisfiable = |dep: &Dep| match dep {
-        Dep::Pkg(name, req) => {
+        Dep::Pkg(name, req, _) => {
             by_name
                 .get(name.as_str())
                 .is_some_and(|metas| metas.iter().any(|m| req.matches(&m.version, m.rev)))

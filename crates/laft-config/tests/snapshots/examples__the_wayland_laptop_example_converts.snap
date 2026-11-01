@@ -1,6 +1,5 @@
 ---
 source: crates/laft-config/tests/examples.rs
-assertion_line: 137
 expression: "added_to_base(\"laptop\")"
 ---
 SystemConfig {
@@ -408,253 +407,103 @@ SystemConfig {
     },
     packages: [
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "brightnessctl",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(brightnessctl),
             origin: "/etc/laft/system.stav:28:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "fd",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(fd),
             origin: "/etc/laft/system.stav:24:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "firefox",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(firefox),
             origin: "/etc/laft/system.stav:26:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "flatpak",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(flatpak),
             origin: "/etc/laft/system.stav:27:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "foot",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(foot),
             origin: "std/desktop:19:19",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "fuzzel",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(fuzzel),
             origin: "std/desktop:32:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "git",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(git),
             origin: "/etc/laft/system.stav:21:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "jujutsu",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(jujutsu),
             origin: "/etc/laft/system.stav:22:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "mako",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(mako),
             origin: "std/desktop:33:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "mesa",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(mesa),
             origin: "std/desktop:25:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "neovim",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(neovim),
             origin: "/etc/laft/system.stav:20:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "niri",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(niri),
             origin: "std/desktop:10:12",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "noto-fonts",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(noto-fonts),
             origin: "std/desktop:34:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "noto-fonts-cjk",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(noto-fonts-cjk),
             origin: "/etc/laft/system.stav:46:34",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "noto-fonts-emoji",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(noto-fonts-emoji),
             origin: "std/desktop:35:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "opendoas",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(opendoas),
             origin: "/etc/laft/system.stav:29:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "pipewire",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(pipewire),
             origin: "std/desktop:27:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "ripgrep",
-                ),
-                prefix: None,
-                variant: Static,
-            },
+            pkg: PkgRef(ripgrep:static),
             origin: "/etc/laft/system.stav:23:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "ttf-jetbrains-mono",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(ttf-jetbrains-mono),
             origin: "/etc/laft/system.stav:46:14",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "vulkan-icd-loader",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(vulkan-icd-loader),
             origin: "std/desktop:26:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "wireplumber",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(wireplumber),
             origin: "std/desktop:28:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "xdg-desktop-portal",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(xdg-desktop-portal),
             origin: "std/desktop:29:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "xdg-desktop-portal-wlr",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(xdg-desktop-portal-wlr),
             origin: "std/desktop:30:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "xwayland-satellite",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(xwayland-satellite),
             origin: "std/desktop:31:5",
         },
         Request {
-            pkg: PkgRef {
-                name: Name(
-                    "zsh",
-                ),
-                prefix: None,
-                variant: Dynamic,
-            },
+            pkg: PkgRef(zsh),
             origin: "/etc/laft/system.stav:25:5",
         },
     ],
@@ -672,79 +521,27 @@ SystemConfig {
             inherit: true,
             packages: [
                 Request {
-                    pkg: PkgRef {
-                        name: Name(
-                            "clang",
-                        ),
-                        prefix: Some(
-                            VersionPrefix(
-                                "19",
-                            ),
-                        ),
-                        variant: Dynamic,
-                    },
+                    pkg: PkgRef(clang@19),
                     origin: "/etc/laft/system.stav:63:26",
                 },
                 Request {
-                    pkg: PkgRef {
-                        name: Name(
-                            "cmake",
-                        ),
-                        prefix: None,
-                        variant: Dynamic,
-                    },
+                    pkg: PkgRef(cmake),
                     origin: "/etc/laft/system.stav:63:36",
                 },
                 Request {
-                    pkg: PkgRef {
-                        name: Name(
-                            "llvm",
-                        ),
-                        prefix: Some(
-                            VersionPrefix(
-                                "19",
-                            ),
-                        ),
-                        variant: Dynamic,
-                    },
+                    pkg: PkgRef(llvm@19),
                     origin: "/etc/laft/system.stav:63:17",
                 },
                 Request {
-                    pkg: PkgRef {
-                        name: Name(
-                            "ninja",
-                        ),
-                        prefix: None,
-                        variant: Dynamic,
-                    },
+                    pkg: PkgRef(ninja),
                     origin: "/etc/laft/system.stav:63:43",
                 },
                 Request {
-                    pkg: PkgRef {
-                        name: Name(
-                            "nodejs",
-                        ),
-                        prefix: Some(
-                            VersionPrefix(
-                                "22",
-                            ),
-                        ),
-                        variant: Dynamic,
-                    },
+                    pkg: PkgRef(nodejs@22),
                     origin: "/etc/laft/system.stav:63:63",
                 },
                 Request {
-                    pkg: PkgRef {
-                        name: Name(
-                            "python",
-                        ),
-                        prefix: Some(
-                            VersionPrefix(
-                                "3.12",
-                            ),
-                        ),
-                        variant: Dynamic,
-                    },
+                    pkg: PkgRef(python@3.12),
                     origin: "/etc/laft/system.stav:63:50",
                 },
             ],
@@ -762,37 +559,15 @@ SystemConfig {
             inherit: false,
             packages: [
                 Request {
-                    pkg: PkgRef {
-                        name: Name(
-                            "base-minimal",
-                        ),
-                        prefix: None,
-                        variant: Dynamic,
-                    },
+                    pkg: PkgRef(base-minimal),
                     origin: "/etc/laft/system.stav:69:17",
                 },
                 Request {
-                    pkg: PkgRef {
-                        name: Name(
-                            "openssl1.1",
-                        ),
-                        prefix: None,
-                        variant: Dynamic,
-                    },
+                    pkg: PkgRef(openssl1.1),
                     origin: "/etc/laft/system.stav:69:31",
                 },
                 Request {
-                    pkg: PkgRef {
-                        name: Name(
-                            "python",
-                        ),
-                        prefix: Some(
-                            VersionPrefix(
-                                "3.9",
-                            ),
-                        ),
-                        variant: Dynamic,
-                    },
+                    pkg: PkgRef(python@3.9),
                     origin: "/etc/laft/system.stav:69:43",
                 },
             ],

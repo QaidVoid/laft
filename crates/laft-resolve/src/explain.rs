@@ -99,7 +99,7 @@ impl fmt::Display for Learned {
         match self {
             Self::Require {
                 name,
-                dep: dep @ Dep::Pkg(n, _),
+                dep: dep @ Dep::Pkg(n, _, _),
                 by,
             } if n == name => write!(f, "learned {dep} from {by}"),
             Self::Require {

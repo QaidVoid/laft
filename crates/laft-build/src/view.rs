@@ -248,7 +248,7 @@ pub fn assemble_from(
                 id: entry.id,
             });
             todo.extend(entry.meta.depends.iter().filter_map(|d| match d {
-                Dep::Pkg(name, _) => Some(name),
+                Dep::Pkg(name, _, _) => Some(name),
                 _ => None,
             }));
         }

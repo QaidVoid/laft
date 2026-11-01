@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use laft_core::{Dep, Name, PkgRef, StoreId, Variant, VersionPrefix, VersionReq};
+use laft_core::{
+    Dep, Name, OptionConstraints, PkgRef, StoreId, Variant, VersionPrefix, VersionReq,
+};
 use laft_index::Yank;
 use laft_pkg::Meta;
 
@@ -289,11 +291,11 @@ impl Fact<'_> {
 /// its provides otherwise.
 fn satisfies(meta: &Meta, dep: &Dep) -> bool {
     match dep {
-        Dep::Pkg(name, req) if *name == meta.name => req.matches(&meta.version, meta.rev),
-        Dep::Pkg(name, _) => meta
+        Dep::Pkg(name, req, _) if *name == meta.name => req.matches(&meta.version, meta.rev),
+        Dep::Pkg(name, _, _) => meta
             .replaces
             .iter()
-            .any(|r| matches!(r, Dep::Pkg(replaced, _) if replaced == name)),
+            .any(|r| matches!(r, Dep::Pkg(replaced, _, _) if replaced == name)),
         _ => provides(meta, dep),
     }
 }
@@ -794,7 +796,11 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             && let Some(prefix) = &request.prefix
         {
             constraints.push(Bound {
-                dep: Dep::Pkg(name.clone(), VersionReq::Prefix(prefix.clone())),
+                dep: Dep::Pkg(
+                    name.clone(),
+                    VersionReq::Prefix(prefix.clone()),
+                    OptionConstraints::default(),
+                ),
                 from: BoundSource::Request(request.origin.clone()),
             });
         }
@@ -811,7 +817,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             dep: dep.clone(),
         };
         match (dep, Key::of_dep(dep)) {
-            (Dep::Pkg(name, req), _) => self.satisfy_name(dep, name, req, by, reason),
+            (Dep::Pkg(name, req, _), _) => self.satisfy_name(dep, name, req, by, reason),
             (_, Some(key)) => self.satisfy_provide(dep, key, by, reason),
             (_, None) => Ok(()),
         }
@@ -1110,7 +1116,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             let meta = sel.candidate.meta;
             for dep in &meta.conflicts {
                 match dep {
-                    Dep::Pkg(other, req) if other != name && matches(other, req) => {
+                    Dep::Pkg(other, req, _) if other != name && matches(other, req) => {
                         return Err(self.conflict(name, other, false));
                     }
                     Dep::Virtual(virtual_name) => {
@@ -1124,7 +1130,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 }
             }
             for dep in &meta.replaces {
-                if let Dep::Pkg(other, req) = dep
+                if let Dep::Pkg(other, req, _) = dep
                     && other != name
                     && matches(other, req)
                 {
