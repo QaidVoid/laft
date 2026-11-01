@@ -70,9 +70,10 @@ impl OptionConstraint {
         })
     }
 
-    /// The constraint for `flag` or `!flag`.
+    /// The constraint for `flag` or `!flag`. The names `true` and `false`
+    /// are the bool literals, so no option can be named them.
     fn flag_constraint(name: &str, value: bool) -> Option<Self> {
-        is_valid_name(name).then(|| {
+        (is_valid_name(name) && !matches!(name, "true" | "false")).then(|| {
             let name = name.to_owned();
             if value {
                 Self::True { name }
@@ -96,7 +97,7 @@ impl FromStr for OptionConstraint {
             ParseError::new(
                 "option constraint",
                 s,
-                "expected `flag`, `!flag` or `opt=tag` of lowercase names, where the tag is not `true` or `false`",
+                "expected `flag`, `!flag` or `opt=tag` of lowercase names, where the option name and the tag are not `true` or `false`",
             )
         })
     }
@@ -114,7 +115,7 @@ impl fmt::Display for OptionConstraint {
 
 /// The option constraints of one dependency, in the order they are
 /// written, written `{flag,!flag,opt=tag}`. An empty list constrains
-/// nothing.
+/// nothing, and no option is named twice.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct OptionConstraints(Vec<OptionConstraint>);
 
@@ -155,6 +156,18 @@ impl FromStr for OptionConstraints {
             .split(',')
             .map(OptionConstraint::from_str)
             .collect::<Result<Vec<_>, _>>()?;
+        let mut names: Vec<&str> = Vec::with_capacity(constraints.len());
+        for constraint in &constraints {
+            let name = constraint.name();
+            if names.contains(&name) {
+                return Err(ParseError::new(
+                    "option constraints",
+                    s,
+                    "each option may be constrained at most once",
+                ));
+            }
+            names.push(name);
+        }
         Ok(Self(constraints))
     }
 }

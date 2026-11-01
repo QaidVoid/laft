@@ -45,6 +45,8 @@ fn rejects_constraints_that_are_not_names() {
         "x11=amd,x11=intel",
         "x11=true",
         "x11=false",
+        "true",
+        "!false",
     ] {
         assert!(
             text.parse::<OptionConstraint>().is_err(),
@@ -118,10 +120,25 @@ fn rejects_broken_constraint_lists() {
         "{,llvm}",
         "{ llvm }",
         "{x11=true}",
+        "{llvm,llvm}",
+        "{llvm,!llvm}",
+        "{vulkan=amd,vulkan=intel}",
+        "{llvm,vulkan=amd,llvm}",
     ] {
         assert!(
             text.parse::<OptionConstraints>().is_err(),
             "`{text}` should not parse"
         );
     }
+    assert_eq!(
+        "llvm".parse::<OptionConstraints>().unwrap_err().reason(),
+        "expected `{flag,...}` with at least one constraint and no spaces"
+    );
+    assert_eq!(
+        "{llvm,llvm}"
+            .parse::<OptionConstraints>()
+            .unwrap_err()
+            .reason(),
+        "each option may be constrained at most once"
+    );
 }

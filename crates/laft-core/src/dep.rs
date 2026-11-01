@@ -295,7 +295,9 @@ pub enum Dep {
     /// A package by name, written `<name>`, `<name>@<prefix>`,
     /// `<name><constraints>` or any of these with `{opt=tag,...}` after it.
     /// The option constraints are empty when the dependency names no
-    /// option.
+    /// option. The build checks them against the option declarations of
+    /// the target; matching them against the option values of a chosen
+    /// candidate is up to resolution.
     Pkg(Name, VersionReq, OptionConstraints),
 }
 

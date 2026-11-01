@@ -245,6 +245,58 @@ fn arb_constraint() -> impl Strategy<Value = Constraint> {
         })
 }
 
+fn arb_option_word() -> impl Strategy<Value = String> {
+    "[a-z][a-z0-9_]{0,8}".prop_filter("not a bool literal", |s| s != "true" && s != "false")
+}
+
+/// Builds a constraint list from unique option names, where `None` is the
+/// plain flag, `Some(empty)` the negated flag and `Some(tag)` a tag
+/// constraint, so every generated list parses.
+fn arb_option_constraints() -> impl Strategy<Value = OptionConstraints> {
+    proptest::collection::vec(
+        (
+            arb_option_word(),
+            prop_oneof![
+                Just(None),
+                Just(Some(String::new())),
+                arb_option_word().prop_map(Some)
+            ],
+        ),
+        0..3,
+    )
+    .prop_map(|entries| {
+        let mut text = String::from("{");
+        let mut names = std::collections::HashSet::new();
+        let mut first = true;
+        for (name, tag) in entries {
+            if !names.insert(name.clone()) {
+                continue;
+            }
+            if !first {
+                text.push(',');
+            }
+            first = false;
+            match tag {
+                None => text.push_str(&name),
+                Some(tag) if tag.is_empty() => {
+                    text.push('!');
+                    text.push_str(&name);
+                }
+                Some(tag) => {
+                    text.push_str(&name);
+                    text.push('=');
+                    text.push_str(&tag);
+                }
+            }
+        }
+        if first {
+            return OptionConstraints::default();
+        }
+        text.push('}');
+        text.parse().expect("generated constraints are valid")
+    })
+}
+
 fn arb_dep() -> impl Strategy<Value = Dep> {
     prop_oneof![
         arb_library_name().prop_map(|s| Dep::So(s.parse().expect("generated soname is valid"))),
@@ -254,25 +306,20 @@ fn arb_dep() -> impl Strategy<Value = Dep> {
         )
             .prop_map(|(s, c)| Dep::Pc(s.parse().expect("generated module name is valid"), c)),
         arb_name().prop_map(Dep::Virtual),
-        arb_name().prop_map(|n| Dep::Pkg(n, VersionReq::Any, OptionConstraints::default())),
-        (arb_name(), "[0-9][0-9.]{0,6}").prop_map(|(n, p)| {
+        (arb_name(), arb_option_constraints()).prop_map(|(n, o)| Dep::Pkg(n, VersionReq::Any, o)),
+        (arb_name(), "[0-9][0-9.]{0,6}", arb_option_constraints()).prop_map(|(n, p, o)| {
             Dep::Pkg(
                 n,
                 VersionReq::Prefix(p.parse().expect("generated prefix is valid")),
-                OptionConstraints::default(),
+                o,
             )
         }),
         (
             arb_name(),
-            proptest::collection::vec(arb_constraint(), 0..4)
+            proptest::collection::vec(arb_constraint(), 0..4),
+            arb_option_constraints(),
         )
-            .prop_map(|(n, c)| {
-                Dep::Pkg(
-                    n,
-                    VersionReq::from_constraints(c),
-                    OptionConstraints::default(),
-                )
-            }),
+            .prop_map(|(n, c, o)| { Dep::Pkg(n, VersionReq::from_constraints(c), o) }),
     ]
 }
 

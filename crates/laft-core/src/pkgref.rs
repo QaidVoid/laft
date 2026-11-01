@@ -18,7 +18,10 @@ use crate::{Name, ParseError, Variant, VersionPrefix};
 /// | `mesa{vulkan=amd}` | the newest `mesa` with `vulkan=amd` |
 ///
 /// The dynamic variant is the default and is never printed, and empty
-/// option constraints are never printed.
+/// option constraints are never printed. The build checks the option
+/// constraints against the option declarations of the named recipe;
+/// matching them against the option values of a candidate is up to
+/// resolution.
 ///
 /// ```
 /// use laft_core::{PkgRef, Variant};
