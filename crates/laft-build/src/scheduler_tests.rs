@@ -220,6 +220,66 @@ fn a_panicking_prepare_fails_the_run_and_wakes_the_workers() {
 }
 
 #[test]
+fn a_panicking_settled_names_the_build_it_settled() {
+    let mut scheduler = scheduler(&["a", "b"], &[], &[("a", 0), ("b", 0)], 2);
+    let failed = scheduler
+        .run(
+            ["a", "b"].iter().map(|name| item(name)),
+            &mut |_: &Item| (),
+            &|item, (): ()| {
+                if item.name.as_str() == "b" {
+                    // The build that runs while `a` is settled.
+                    thread::sleep(Duration::from_millis(200));
+                }
+                Ok(format!("built {item}"))
+            },
+            &mut |item: &Item, _: &String| {
+                if item.name.as_str() == "a" {
+                    panic!("a settled badly");
+                }
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .expect_err("the run fails");
+    let Failed::Build { item, error } = failed else {
+        panic!("the run fails with a build, not {failed:?}");
+    };
+    assert_eq!(
+        item,
+        Item::new("a".parse().unwrap(), Variant::Dynamic),
+        "the panic names the build that was settled, not {error}"
+    );
+    assert!(error.to_string().contains("a settled badly"), "{error}");
+}
+
+#[test]
+fn a_panicking_prepare_without_a_message_still_fails_the_run() {
+    let mut scheduler = scheduler(&["a"], &[], &[("a", 0)], 1);
+    let mut payload = Some(0u8);
+    let failed = scheduler
+        .run(
+            ["a"].iter().map(|name| item(name)),
+            &mut |_: &Item| {
+                if let Some(value) = payload.take() {
+                    std::panic::panic_any(value);
+                }
+            },
+            &|_, (): ()| Ok(()),
+            &mut |_, _| Ok(Vec::new()),
+            None,
+        )
+        .expect_err("the run fails");
+    let Failed::Build { item, error } = failed else {
+        panic!("the run fails with a build, not {failed:?}");
+    };
+    assert_eq!(item, Item::new("a".parse().unwrap(), Variant::Dynamic));
+    let message = error.to_string();
+    assert!(message.contains("the run panicked"), "{message}");
+    assert!(message.contains("panic code 0"), "{message}");
+}
+
+#[test]
 fn a_failure_stops_the_builds_that_wait_for_it() {
     let built = Arc::new(Mutex::new(Vec::new()));
     let mut scheduler = scheduler(

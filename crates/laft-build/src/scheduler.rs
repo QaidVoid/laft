@@ -279,9 +279,11 @@ impl<'a> Scheduler<'a> {
             }));
             drop(jobs.take());
             if let Err(payload) = finished_loop {
-                let item = self
-                    .unfinished()
-                    .or(settling_item)
+                // A panic of `settled` belongs to the build it settled,
+                // even while other builds are still running; any other
+                // panic of the loop goes to the first unfinished build.
+                let item = settling_item
+                    .or_else(|| self.unfinished())
                     .expect("the run panicked over a build it held");
                 panicking = Some((item, panic_reason(payload)));
             }
@@ -516,6 +518,9 @@ fn panic_reason(payload: Box<dyn Any + Send>) -> String {
         .or_else(|| payload.downcast_ref::<String>().cloned());
     match message {
         Some(message) => format!(": {message}"),
-        None => String::new(),
+        None => match payload.downcast_ref::<u8>() {
+            Some(code) => format!(": panic code {code}"),
+            None => String::from(" without a message"),
+        },
     }
 }
