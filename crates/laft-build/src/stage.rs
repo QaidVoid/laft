@@ -247,7 +247,8 @@ pub struct StageOptions {
     pub check: bool,
     /// The number of parallel jobs inside one build.
     pub jobs: u32,
-    /// The number of packages of one step that may build at once.
+    /// The number of packages of one step that may build at once. Zero
+    /// picks an eighth of the CPUs, at least one.
     pub workers: usize,
     /// The longest one phase or script may run.
     pub timeout: Duration,
@@ -830,11 +831,7 @@ impl StageRun<'_> {
                 (item.clone(), seconds)
             })
             .collect();
-        let workers = self
-            .options
-            .workers
-            .max(1)
-            .min(usize::try_from(self.builder.jobs.max(1)).unwrap_or(usize::MAX));
+        let workers = crate::build::resolved_workers(self.options.workers, self.builder.jobs);
         let memory = Memory {
             estimates,
             big,

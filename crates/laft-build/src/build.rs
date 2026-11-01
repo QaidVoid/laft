@@ -258,7 +258,8 @@ pub struct Builder<'a> {
     pub mirrors: Vec<String>,
     /// The number of parallel jobs, `$JOBS`.
     pub jobs: u32,
-    /// The number of builds of one run that may run at once.
+    /// The number of builds of one run that may run at once. Zero picks
+    /// an eighth of the CPUs, at least one.
     pub workers: usize,
     /// The memory, in bytes, that a build whose runner wants the host to
     /// itself waits for when it has no record of what it needed before.
@@ -287,6 +288,18 @@ pub struct Builder<'a> {
     pub(crate) jobserver: Option<Jobserver>,
 }
 
+/// The workers a run uses. Zero picks an eighth of the CPUs, at least
+/// one, and the workers are never more than the jobs.
+pub(crate) fn resolved_workers(workers: usize, jobs: u32) -> usize {
+    let jobs = usize::try_from(jobs.max(1)).unwrap_or(usize::MAX);
+    let workers = if workers == 0 {
+        (jobs / 8).max(1)
+    } else {
+        workers
+    };
+    workers.min(jobs)
+}
+
 impl<'a> Builder<'a> {
     /// A builder that keeps everything in `root`, with checks enabled, one
     /// job per CPU, the default timeout and development compression.
@@ -304,7 +317,7 @@ impl<'a> Builder<'a> {
             logs: root.logs(),
             mirrors: Vec::new(),
             jobs: u32::try_from(jobs).unwrap_or(u32::MAX),
-            workers: 1,
+            workers: 0,
             min_available: DEFAULT_MIN_AVAILABLE,
             check: true,
             keep_work: false,
@@ -333,7 +346,7 @@ impl<'a> Builder<'a> {
             return Ok(());
         }
         let jobs = usize::try_from(self.jobs.max(1)).unwrap_or(usize::MAX);
-        self.workers = self.workers.max(1).min(jobs);
+        self.workers = resolved_workers(self.workers, self.jobs);
         let path = self.work.join("jobserver");
         self.jobserver = Some(
             Jobserver::open(&self.work, jobs - self.workers)
@@ -352,7 +365,7 @@ impl<'a> Builder<'a> {
         let alone = matches!(self.mode, Mode::Bootstrap(_)) || !exec.is_sandboxed();
         let workers = match alone {
             true => 1,
-            false => self.workers.max(1),
+            false => resolved_workers(self.workers, self.jobs),
         };
         let share = (jobs / u32::try_from(workers).unwrap_or(u32::MAX)).max(1);
         Budget {

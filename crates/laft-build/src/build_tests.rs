@@ -123,6 +123,15 @@ fn an_install_record_holds_a_versioned_build_key() {
 }
 
 #[test]
+fn workers_of_zero_pick_an_eighth_of_the_cpus() {
+    assert_eq!(resolved_workers(0, 16), 2);
+    assert_eq!(resolved_workers(0, 8), 1);
+    assert_eq!(resolved_workers(0, 4), 1);
+    assert_eq!(resolved_workers(5, 16), 5);
+    assert_eq!(resolved_workers(5, 2), 2);
+}
+
+#[test]
 fn an_install_record_of_the_first_format_is_a_bare_key_line() {
     let dir = laft_test::tempdir();
     let item = Item::new("zlib".parse().unwrap(), Variant::Dynamic);

@@ -865,7 +865,7 @@ fn stage(
         }),
         workers: options
             .workers
-            .map_or(1, |n| usize::try_from(n).unwrap_or(usize::MAX)),
+            .map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX)),
         timeout: Duration::from_secs(options.timeout_hours * 3600),
         min_available: run.min_free_gib << 30,
         dry_run,

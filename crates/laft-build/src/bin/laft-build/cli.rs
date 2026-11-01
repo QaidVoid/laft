@@ -208,9 +208,9 @@ pub(crate) struct BuildOptions {
     /// of CPUs.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
     pub(crate) jobs: Option<u32>,
-    /// The number of builds of one run that may run at once. Defaults to
-    /// one.
-    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    /// The number of builds of one run that may run at once. Zero picks
+    /// an eighth of the CPUs, at least one.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(0..))]
     pub(crate) workers: Option<u64>,
     /// The longest one phase may run, in hours, from 1 to 8760.
     #[arg(
