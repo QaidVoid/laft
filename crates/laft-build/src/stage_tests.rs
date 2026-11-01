@@ -1121,23 +1121,21 @@ fn a_view_the_store_cannot_satisfy_stops_the_stage() {
     assert!(!dir.path().join("build/stages/demo/check").exists());
 }
 
-/// A store stage whose step builds `grumpy`, which fails, and `greet`,
-/// which installs the greeting of a source that a mirror below `dir`
-/// serves, and the store with the build base in it.
-fn failing_store_stage(dir: &Path) -> Stage {
+/// A store stage whose step builds `greet`, which installs a source that
+/// the mirror below `dir` serves when `served`, and the store with the
+/// build base in it.
+fn mirror_stage(dir: &Path, served: bool) -> Stage {
     use sha2::Digest;
-    let hex = |bytes: &[u8]| {
-        sha2::Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    };
-    let (greeting, grump) = (hex(b"hi\n"), hex(b"grr\n"));
-    let mirror = dir.join("mirror/sha256");
-    fs::create_dir_all(&mirror).unwrap();
-    fs::write(mirror.join(&greeting), b"hi\n").unwrap();
-    fs::write(mirror.join(&grump), b"grr\n").unwrap();
-    let stage = host_tools_stage(dir, r#"    { name = "step", packages = [grumpy, greet] },"#);
+    let greeting = sha2::Sha256::digest(b"hi\n")
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    if served {
+        let mirror = dir.join("mirror/sha256");
+        fs::create_dir_all(&mirror).unwrap();
+        fs::write(mirror.join(&greeting), b"hi\n").unwrap();
+    }
+    let stage = host_tools_stage(dir, r#"    { name = "step", packages = [greet] },"#);
     fs::write(
         stage.recipes.join("recipes.stav"),
         format!(
@@ -1146,37 +1144,29 @@ fn failing_store_stage(dir: &Path) -> Stage {
         ),
     )
     .unwrap();
-    let source = |name: &str, hash: &str, phase: &str| {
+    fs::create_dir_all(stage.recipes.join("recipes/greet")).unwrap();
+    fs::write(
+        stage.recipes.join("recipes/greet/package.stav"),
         format!(
-            r#"package {name} {{
+            r#"package greet {{
   version = "1"
   summary = "A package"
   license = [MIT]
   env = {{ LD_LIBRARY_PATH = "/usr/lib" }}
   source main {{
-    url     = ["https://example.org/{name}"]
-    sha256  = "sha256:{hash}"
+    url     = ["https://example.org/greet"]
+    sha256  = "sha256:{greeting}"
     extract = false
   }}
   build custom {{}}
   phases {{
     install = """
-      {phase}
+      mkdir -p "$DESTDIR/usr/share" && echo hi > "$DESTDIR/usr/share/greet"
       """
   }}
 }}
 "#
-        )
-    };
-    fs::create_dir_all(stage.recipes.join("recipes/grumpy")).unwrap();
-    fs::write(
-        stage.recipes.join("recipes/grumpy/package.stav"),
-        source("grumpy", &grump, "exit 1"),
-    )
-    .unwrap();
-    fs::write(
-        stage.recipes.join("recipes/greet/package.stav"),
-        source("greet", &greeting, "test -f \"$SRC/greeting\""),
+        ),
     )
     .unwrap();
     store_with_host_tools(dir);
@@ -1184,26 +1174,46 @@ fn failing_store_stage(dir: &Path) -> Stage {
 }
 
 #[test]
-fn the_sources_of_a_step_are_fetched_before_its_first_build() {
-    use sha2::Digest;
+fn a_dry_run_fetches_no_sources_and_makes_no_jobserver() {
+    let dir = laft_test::tempdir();
+    let stage = mirror_stage(dir.path(), false);
+    let options = StageOptions {
+        dry_run: true,
+        ..store_options(dir.path())
+    };
+    let states = run_with(dir.path(), &stage, &options).expect("the dry run fetches nothing");
+    assert!(
+        states.iter().all(|(_, s)| *s == StageState::Pending),
+        "{states:?}"
+    );
+    assert!(
+        !dir.path().join("build/work/jobserver").exists(),
+        "the dry run made a jobserver"
+    );
+}
+
+#[test]
+fn a_step_that_is_up_to_date_fetches_no_sources() {
     if no_shell() {
         return;
     }
     let dir = laft_test::tempdir();
-    let stage = failing_store_stage(dir.path());
+    let stage = mirror_stage(dir.path(), true);
     let result = run_with(dir.path(), &stage, &store_options(dir.path()));
     if refused(&result) {
         return;
     }
-    let error = result.unwrap_err();
-    assert_eq!(error.code(), Some("B040"), "{error}");
-    let hex: String = sha2::Sha256::digest(b"hi\n")
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
+    result.expect("the first run builds");
+    // The step ran once, so running it again needs neither the mirror
+    // nor the cache of the first run.
+    fs::remove_dir_all(dir.path().join("mirror")).expect("the test setup works");
+    fs::remove_dir_all(dir.path().join("build/sources")).expect("the test setup works");
+    fs::remove_file(dir.path().join("build/stages/demo/step")).expect("the test setup works");
+    let second = run_with(dir.path(), &stage, &store_options(dir.path()))
+        .expect("the up-to-date step fetches nothing");
     assert!(
-        dir.path().join("build/sources/sha256").join(&hex).is_file(),
-        "the source of greet is cached even though grumpy failed"
+        second.iter().all(|(_, s)| *s == StageState::UpToDate),
+        "{second:?}"
     );
 }
 

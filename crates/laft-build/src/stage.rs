@@ -476,7 +476,10 @@ fn run_steps(
     builder.workers = options.workers;
     builder.timeout = options.timeout;
     builder.mirrors = options.mirrors.clone();
-    builder.share_jobs()?;
+    // A dry run builds nothing, so it leaves no jobserver behind.
+    if !options.dry_run {
+        builder.share_jobs()?;
+    }
     if let Some(root) = &options.root {
         builder.search = stage.path.iter().map(|p| root.join(p)).collect();
     }
@@ -678,11 +681,6 @@ impl StageRun<'_> {
         }
         if !self.options.dry_run {
             forget_key(&self.record(step))?;
-        }
-        if self.stage.install == Install::Store {
-            for recipe in recipes {
-                self.builder.fetch(recipe)?;
-            }
         }
         let keys = match self.stage.install {
             Install::Store => self.store_packages(step, tag, recipes, previous, progress)?,
