@@ -76,6 +76,9 @@
 //! | `R031` | an `env` key that the builder sets itself, unless it is set with `force(...)`, and always `JOBS` and `MAKEFLAGS` |
 //! | `R050` | an `update` block without exactly one of `github`, `gitlab`, `anitya` and `url`, or with `pattern` and `url` not set together |
 //! | `R060` | a stage file without exactly one stage, a stage name that does not start with a lowercase letter or digit followed by lowercase letters, digits and dashes, a step that sets both or neither of `packages` and `script`, a step name used twice, a search directory that is not a plain relative path, a missing recipe repository, a package that builds nothing in the variant named, a step or search directory that a stage building into the store cannot have, a view script outside such a stage or without packages, a view named by a step that does not run in one, or a stage given a target root it cannot have or missing one it needs |
+//! | `R070` | a recipe that imports `laft/options` for a package that declares no options |
+//! | `R071` | an overlay that declares a sum type or option the recipe it extends already declares |
+//! | `R072` | an `options.stav` that breaks a rule: a declaration other than sum types and the struct `Options`, a missing doc comment or default, a field type that is not `Bool` or a tag only sum type of the file, a bad name, a wrong default, too many options, or a file that does not parse |
 //!
 //! Between recipes, and while planning, these problems are found:
 //!
@@ -84,6 +87,7 @@
 //! | `R020` | a reference to a package of the run in a variant it does not build |
 //! | `R021` | a reference that no recipe of the run and no published package satisfies |
 //! | `R022` | more than one recipe of the run for the same package and variant, reported once with their repositories |
+//! | `R073` | a build that was asked for an option the recipe does not declare, or a tag the option does not have |
 //! | `B010` | dirty items that depend on each other in a cycle |
 //!
 //! Fetching and unpacking sources reports [`SourceError`]s:
@@ -132,6 +136,7 @@ mod host;
 mod jobserver;
 mod loader;
 mod lock;
+mod options;
 mod plan;
 pub mod post;
 mod recipe;

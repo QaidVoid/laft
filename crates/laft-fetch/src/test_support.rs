@@ -386,6 +386,7 @@ pub(crate) fn package(content: &[u8]) -> IndexEntry {
             triggers: vec![],
             static_deps: vec![],
             abi: Default::default(),
+            options: BTreeMap::new(),
             abi_epoch: 0,
             requested_privileges: vec![],
             installed_size: 10,

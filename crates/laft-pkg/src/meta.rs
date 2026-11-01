@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use laft_core::{
-    Blake3Hash, Dep, Name, Provide, Soname, StoreId, Variant, Version, system_gid, system_uid,
-    to_canonical_json,
+    Blake3Hash, Dep, MAX_NAME_CHARS, MAX_OPTIONS, Name, OptionValue, Provide, Soname, StoreId,
+    Variant, Version, is_valid_name, system_gid, system_uid, to_canonical_json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +75,12 @@ pub struct Meta {
     /// Incremented by the recipe when the ABI changes in a way the ABI digest
     /// cannot see.
     pub abi_epoch: u32,
+    /// The value every declared option had when the package was built,
+    /// sorted by name. A package built from a recipe without options has
+    /// none, so its metadata, and with it its store id, is exactly what it
+    /// was before options existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, OptionValue>,
     /// Privileges the recipe asked for, which the store never grants on its
     /// own files, sorted by path.
     pub requested_privileges: Vec<PrivRequest>,
@@ -283,6 +289,25 @@ impl Meta {
         }
         for path in self.abi.keys() {
             check_path(path)?;
+        }
+        if self.options.len() > MAX_OPTIONS {
+            return Err(Error::invalid(format!(
+                "`options` declares more than {MAX_OPTIONS} options"
+            )));
+        }
+        for (name, value) in &self.options {
+            if !is_valid_name(name) {
+                return Err(Error::invalid(format!(
+                    "`options` key {name:?} is not an option name of at most {MAX_NAME_CHARS} lowercase letters, digits and `_`"
+                )));
+            }
+            if let OptionValue::Tag(tag) = value
+                && !is_valid_name(tag)
+            {
+                return Err(Error::invalid(format!(
+                    "`options` value of {name} is the tag {tag:?}, which is not a tag of lowercase letters, digits and `_`"
+                )));
+            }
         }
         check_sorted("requested_privileges", &self.requested_privileges, |p| {
             p.path.clone()

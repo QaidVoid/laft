@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use laft_core::Blake3Hash;
@@ -36,6 +37,7 @@ fn package(dir: &Path, name: &str, payload: &Path) -> PathBuf {
         triggers: vec![],
         static_deps: vec![],
         abi: Default::default(),
+        options: BTreeMap::new(),
         abi_epoch: 0,
         requested_privileges: vec![],
         installed_size,

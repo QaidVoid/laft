@@ -124,6 +124,61 @@ fn identity_and_format_are_checked() {
 }
 
 #[test]
+fn stored_form_of_an_optionless_package_is_what_it_was_before_options() {
+    let json = meta(5498112).to_json().expect("valid metadata");
+    let text = String::from_utf8(json).expect("UTF-8");
+    assert_eq!(
+        text,
+        "{\"abi\":{},\"abi_epoch\":0,\"alternatives\":[],\"arch\":\"x86_64-v3\",\"conflicts\":[],\"depends\":[\"so:libc.so.6\",\"so:libgcc_s.so.1\"],\"format\":1,\"homepage\":\"https://github.com/BurntSushi/ripgrep\",\"installed_size\":5498112,\"license\":[\"MIT\",\"Unlicense\"],\"name\":\"ripgrep\",\"origin\":\"ripgrep\",\"provides\":[],\"replaces\":[],\"requested_privileges\":[],\"rev\":1,\"static_deps\":[],\"summary\":\"Recursively search directories for a regex pattern\",\"triggers\":[],\"variant\":\"dynamic\",\"version\":\"14.1.1\"}"
+    );
+}
+
+#[test]
+fn metadata_without_options_has_no_options_member() {
+    let m = meta(5498112);
+    let text = String::from_utf8(m.to_json().expect("valid")).expect("UTF-8");
+    assert!(!text.contains("\"options\""), "{text}");
+}
+
+#[test]
+fn options_are_checked_and_stored_sorted() {
+    let mut m = meta(0);
+    m.options.insert("vulkan".into(), OptionValue::tag("amd"));
+    m.options.insert("llvm".into(), OptionValue::Bool(false));
+    let json = m.to_json().expect("valid");
+    let text = String::from_utf8(json).expect("UTF-8");
+    let at = text.find("\"options\"").expect("the member is present");
+    assert!(
+        text[at..].starts_with(r#""options":{"llvm":false,"vulkan":"amd"}"#),
+        "{text}"
+    );
+    assert_eq!(Meta::from_json(text.as_bytes()).unwrap(), m);
+
+    let err = rejected(|m| {
+        m.options.insert("LLVM".into(), OptionValue::TRUE);
+    });
+    assert!(err.contains("`options` key"), "{err}");
+    let err = rejected(|m| {
+        m.options.insert("llvm".into(), OptionValue::tag("True"));
+    });
+    assert!(err.contains("tag"), "{err}");
+    let err = rejected(|m| {
+        for i in 0..(MAX_OPTIONS as u32 + 1) {
+            m.options.insert(format!("o{i}"), OptionValue::Bool(true));
+        }
+    });
+    assert!(err.contains("more than"), "{err}");
+}
+
+#[test]
+fn options_absent_from_stored_form_are_defaults() {
+    let m = meta(0);
+    let json = m.to_json().expect("valid");
+    let parsed = Meta::from_json(&json).expect("parses");
+    assert!(parsed.options.is_empty());
+}
+
+#[test]
 fn paths_in_metadata_follow_the_payload_rules() {
     let err = rejected(|m| {
         m.alternatives = vec![Alternative {

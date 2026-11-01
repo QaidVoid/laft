@@ -2,6 +2,7 @@
 
 use laft_core::{Blake3Hash, StoreId, Timestamp};
 use laft_pkg::{Arch, Meta};
+use std::collections::BTreeMap;
 
 use crate::{Defaults, Index, IndexEntry, KeyId, Keys, OnlineKey, PublicKey, Repo};
 
@@ -99,6 +100,7 @@ pub(crate) fn meta(name: &str, version: &str) -> Meta {
         triggers: vec![],
         static_deps: vec![],
         abi: Default::default(),
+        options: BTreeMap::new(),
         abi_epoch: 0,
         requested_privileges: vec![],
         installed_size: 10,

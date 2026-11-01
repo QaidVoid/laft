@@ -713,6 +713,7 @@ fn add_package(root: &BuildRoot, dir: &Path, name: &str, files: &[(String, Vec<u
         triggers: vec![],
         static_deps: vec![],
         abi: Default::default(),
+        options: BTreeMap::new(),
         abi_epoch: 2,
         requested_privileges: vec![],
         installed_size: 0,

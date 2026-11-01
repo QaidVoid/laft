@@ -4,6 +4,7 @@
 // Each test binary uses a different part of this module.
 #![allow(dead_code)]
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -52,6 +53,7 @@ pub(crate) fn pkg(name: &str, version: &str) -> Pkg {
             triggers: vec![],
             static_deps: vec![],
             abi: Default::default(),
+            options: BTreeMap::new(),
             abi_epoch: 0,
             requested_privileges: vec![],
             installed_size: 0,

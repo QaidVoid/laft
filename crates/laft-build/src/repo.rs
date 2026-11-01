@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use laft_core::{Name, Variant};
+use laft_core::{Name, OptionValue, Variant};
 use stav::{
     AttrPath, Checked, Diagnostic, FileDiagnostic, ImportRoot, Limits, RootSpec, Span, Value,
 };
@@ -12,6 +12,7 @@ use stav::{
 use crate::convert::{self, Cx};
 use crate::host;
 use crate::loader::{COMMON, DESCRIPTOR, RECIPE_FILE, RECIPES, Scope};
+use crate::options::{self, OPTIONS_MODULE};
 use crate::{Error, Problem, Recipe, Report, Target, schema};
 
 /// A recipe repository: a directory with a `recipes.stav` descriptor and a
@@ -161,7 +162,8 @@ impl Repos {
         safe.then(|| repo.path.join(dir).join(rel))
     }
 
-    /// Evaluates the package `name` for every variant it builds.
+    /// Evaluates the package `name` for every variant it builds, with
+    /// every option at its default.
     ///
     /// The recipe and its overlays are checked once, then evaluated with
     /// the `dynamic` target first, which decides the variants. Every other
@@ -175,6 +177,22 @@ impl Repos {
     /// warnings, when the recipe does not type check or evaluate, or when
     /// it breaks one of the recipe rules of the crate documentation.
     pub fn evaluate(&self, name: &Name) -> Result<Evaluation, Error> {
+        self.evaluate_with(name, &BTreeMap::new())
+    }
+
+    /// [`Repos::evaluate`] with the option values `set`, which must name
+    /// only options the package declares, and for a sum type option only
+    /// tags it declares.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Problems`] with `R073` for a set the package does
+    /// not declare, and otherwise what [`Repos::evaluate`] returns.
+    pub fn evaluate_with(
+        &self,
+        name: &Name,
+        set: &BTreeMap<String, OptionValue>,
+    ) -> Result<Evaluation, Error> {
         let Some(indices) = self.packages.get(name) else {
             return Err(Error::Problems(vec![Problem::new(
                 "R001",
@@ -182,8 +200,33 @@ impl Repos {
             )]));
         };
         let repos: Vec<&RecipeRepo> = indices.iter().map(|&i| &self.repos[i]).collect();
+        let all: Vec<&RecipeRepo> = self.repos.iter().collect();
+        let (declared, found) = options::declarations(&all, name);
+        let bad = match &declared {
+            Some(decls) => decls.problems(&format!("the build of {name}"), set),
+            None if set.is_empty() => Vec::new(),
+            None => vec![format!(
+                "the build of {name} sets an option, which the package declares none of"
+            )],
+        };
+        if !bad.is_empty() {
+            return Err(Error::Problems(
+                bad.into_iter().map(|m| Problem::new("R073", m)).collect(),
+            ));
+        }
+        if !found.is_empty() {
+            return Err(Error::Problems(
+                found
+                    .into_iter()
+                    .map(|f| Problem::new(f.diagnostic.code, f.diagnostic.message))
+                    .collect(),
+            ));
+        }
         let roots: Vec<PathBuf> = repos.iter().map(|r| r.path.clone()).collect();
-        let host = host::host(roots.clone(), Scope::Package(name.to_string()));
+        let mut host = host::host(roots.clone(), Scope::Package(name.to_string()));
+        if let Some(decls) = &declared {
+            host.host_modules.push(decls.module());
+        }
         let spec = RootSpec {
             root_struct: "Recipes".to_owned(),
             entries: roots
@@ -193,7 +236,14 @@ impl Repos {
             import_roots: roots.iter().map(ImportRoot::new).collect(),
         };
         let checked = stav::check(&host, &spec).map_err(|e| Error::Report(own_codes(&e)))?;
-        let first = evaluate_variant(&checked, name, &repos, Variant::Dynamic)?;
+        let first = evaluate_variant(
+            &checked,
+            name,
+            &repos,
+            Variant::Dynamic,
+            declared.as_ref(),
+            set,
+        )?;
         let mut recipes = Vec::new();
         let builds = convert::builds_for_arch(&repos, first.arch.as_deref());
         for variant in first.variants.iter().copied().collect::<BTreeSet<_>>() {
@@ -203,7 +253,7 @@ impl Repos {
             let recipe = if variant == Variant::Dynamic {
                 first.recipe.clone()
             } else {
-                evaluate_variant(&checked, name, &repos, variant)?.recipe
+                evaluate_variant(&checked, name, &repos, variant, declared.as_ref(), set)?.recipe
             };
             recipes.push(recipe);
         }
@@ -213,14 +263,21 @@ impl Repos {
 }
 
 /// Evaluates the checked recipe of `name` for `variant`, checks it against
-/// the recipe rules and converts it.
+/// the recipe rules and converts it. `declared` and `set` are the option
+/// declarations of the package and the values of this evaluation.
 fn evaluate_variant(
     checked: &Checked,
     name: &Name,
     repos: &[&RecipeRepo],
     variant: Variant,
+    declared_options: Option<&options::Declarations>,
+    set: &BTreeMap<String, OptionValue>,
 ) -> Result<OneVariant, Error> {
     let target = Target::new(variant);
+    let mut values = target.values();
+    if let Some(decls) = declared_options {
+        decls.apply(&mut values, set);
+    }
     // The errors of any step are reported with the warnings of the check.
     let failed = |errors: Vec<FileDiagnostic>| {
         Error::Report(
@@ -228,7 +285,7 @@ fn evaluate_variant(
         )
     };
     let evaluated = checked
-        .eval_with(&Limits::default(), &target.values())
+        .eval_with(&Limits::default(), &values)
         .map_err(|e| failed(e.iter().cloned().collect()))?;
     let mut found = Vec::new();
     let declared = match evaluated.value_at(&AttrPath::new(["packages"])) {
@@ -278,20 +335,38 @@ fn evaluate_variant(
     };
     let recipe = convert::convert(&mut cx, package);
     match recipe {
-        Some(recipe) if cx.found.is_empty() => Ok(OneVariant {
-            recipe,
-            variants,
-            arch,
-        }),
+        Some(mut recipe) if cx.found.is_empty() => {
+            if let Some(decls) = declared_options {
+                recipe.option_values = decls.resolve(set);
+            }
+            Ok(OneVariant {
+                recipe,
+                variants,
+                arch,
+            })
+        }
         _ => Err(failed(cx.found)),
     }
 }
 
-/// Reports a path or import that leaves the recipe repositories, which
-/// Stav reports as `E0702`, as `R002`.
+/// Reports the codes Stav reports for what a recipe does with its own
+/// files and modules as the codes of the recipe rules: an import of a
+/// module no host serves as `R070`, and a path or import that leaves the
+/// recipe repositories, which Stav reports as `E0702`, as `R002`.
 pub(crate) fn own_codes(report: &Report) -> Report {
     report.with_items(report.iter().map(|item| {
         match item.diagnostic.code {
+        "E0701" if quoted(&item.diagnostic.message) == Some(OPTIONS_MODULE) => FileDiagnostic {
+            file: item.file,
+            diagnostic: Diagnostic::error(
+                "R070",
+                item.diagnostic.span,
+                format!("the recipe imports {OPTIONS_MODULE}, which it declares no options for"),
+            )
+            .with_help(format!(
+                "declare the options in {RECIPES}/<name>/options.stav, or drop the import"
+            )),
+        },
         "E0702" => FileDiagnostic {
             file: item.file,
             diagnostic: Diagnostic::error(

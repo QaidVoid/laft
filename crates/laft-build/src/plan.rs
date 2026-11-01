@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use laft_core::{Blake3Hash, Name, Sha256Hash, StoreId, Variant};
+use laft_core::{Blake3Hash, Name, OptionValue, Sha256Hash, StoreId, Variant};
 use serde::{Deserialize, Serialize};
 
 use crate::{BuildGraph, Item, Problem, Recipe};
@@ -13,8 +13,9 @@ use crate::{BuildGraph, Item, Problem, Recipe};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Trigger {
-    /// `T1`: the plan hash differs from the latest build. Recipe edits,
-    /// schema changes and style template changes do this.
+    /// `T1`: the plan hash differs from the latest build, or its option
+    /// values do. Recipe edits, schema changes and style template changes
+    /// do this, and so does building with other option values.
     Plan,
     /// `T2`: the hash of a source, a vendor tarball, a patch or another
     /// file the recipe names changed.
@@ -81,6 +82,11 @@ pub struct LinkInput {
     pub abi_epoch: u32,
     /// The sonames it provides.
     pub sonames: BTreeSet<String>,
+    /// The value every declared option of the dependency had when its
+    /// package was built, sorted by name. A dependency without options
+    /// has none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, OptionValue>,
 }
 
 /// A `static` package in the build view of a `static` build.
@@ -116,6 +122,10 @@ pub struct KeyInputs {
     pub statics: Vec<StaticInput>,
     /// The toolchain epoch of the recipe repositories.
     pub toolchain_epoch: u32,
+    /// The value every declared option had, sorted by name. A recipe
+    /// without options has none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, OptionValue>,
 }
 
 impl KeyInputs {
@@ -135,6 +145,7 @@ impl KeyInputs {
             links,
             statics,
             toolchain_epoch: recipe.toolchain_epoch,
+            options: recipe.option_values.clone(),
         }
     }
 
@@ -170,7 +181,7 @@ impl KeyInputs {
             return out;
         };
         let old = &previous.inputs;
-        if self.plan != old.plan {
+        if self.plan != old.plan || self.options != old.options {
             out.insert(Trigger::Plan);
         }
         if self.sources != old.sources || self.patches != old.patches {

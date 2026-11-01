@@ -242,6 +242,7 @@ pub(crate) fn convert(cx: &mut Cx<'_>, p: schema::Package) -> Option<Recipe> {
         shell,
         phases,
         env,
+        option_values: BTreeMap::new(),
         options: BuildOptions {
             check,
             parallel: p.parallel,

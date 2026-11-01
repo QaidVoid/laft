@@ -487,6 +487,7 @@ pub fn key_inputs_from(recipe: &Recipe, entries: &[StoreEntry]) -> KeyInputs {
                     _ => None,
                 })
                 .collect(),
+            options: entry.meta.options.clone(),
         });
         if entry.meta.variant == Variant::Static {
             statics.push(StaticInput {

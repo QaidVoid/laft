@@ -177,6 +177,7 @@ pub fn package(
             .map(|(p, a)| (p.clone(), a.clone()))
             .collect(),
         abi_epoch: recipe.abi_epoch,
+        options: recipe.option_values.clone(),
         requested_privileges: payload
             .privileges
             .requested

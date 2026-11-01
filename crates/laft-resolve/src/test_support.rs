@@ -43,6 +43,7 @@ pub(crate) fn pkg(text: &str) -> Meta {
         triggers: vec![],
         static_deps: vec![],
         abi: BTreeMap::new(),
+        options: BTreeMap::new(),
         abi_epoch: 0,
         requested_privileges: vec![],
         installed_size: 0,

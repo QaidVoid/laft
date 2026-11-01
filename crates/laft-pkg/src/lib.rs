@@ -50,6 +50,7 @@
 //!     static_deps: vec![],
 //!     abi: Default::default(),
 //!     abi_epoch: 0,
+//!     options: Default::default(),
 //!     requested_privileges: vec![],
 //!     installed_size: 21,
 //! };

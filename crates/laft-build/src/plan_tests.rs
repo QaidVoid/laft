@@ -21,6 +21,7 @@ fn link(library: &str, abi_epoch: u32, sonames: &[&str]) -> LinkInput {
         name: name(library),
         abi_epoch,
         sonames: sonames.iter().map(|s| (*s).to_owned()).collect(),
+        options: BTreeMap::new(),
     }
 }
 

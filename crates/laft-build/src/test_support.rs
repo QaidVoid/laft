@@ -72,6 +72,7 @@ pub(crate) fn recipe(item: &str) -> Recipe {
             ownership: BTreeMap::new(),
         },
         smoke: None,
+        option_values: BTreeMap::new(),
         abi_epoch: 0,
         toolchain_epoch: 0,
         operations: Operations {
@@ -259,6 +260,7 @@ impl<'a> TestPkg<'a> {
             triggers: vec![],
             static_deps: vec![],
             abi: Default::default(),
+            options: BTreeMap::new(),
             abi_epoch: 2,
             requested_privileges: vec![],
             installed_size: 0,

@@ -49,6 +49,7 @@
 //!         triggers: vec![],
 //!         static_deps: vec![],
 //!         abi: Default::default(),
+//!         options: Default::default(),
 //!         abi_epoch: 0,
 //!         requested_privileges: vec![],
 //!         installed_size: 0,

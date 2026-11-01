@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use laft_core::{Blake3Hash, Name, PkgRef, Sha256Hash, Variant, Version};
+use laft_core::{Blake3Hash, Name, OptionValue, PkgRef, Sha256Hash, Variant, Version};
 use serde::{Deserialize, Serialize};
 
 use crate::env;
@@ -13,8 +13,8 @@ use crate::env;
 /// recipe and nothing that depends on where the recipes are checked out.
 ///
 /// Its canonical JSON, without the operational fields, the toolchain
-/// epoch and the hashes of sources, vendor tarballs and files, is the plan
-/// that [`Recipe::plan_hash`] hashes.
+/// epoch, the option values and the hashes of sources, vendor tarballs
+/// and files, is the plan that [`Recipe::plan_hash`] hashes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recipe {
     /// The package name.
@@ -56,6 +56,10 @@ pub struct Recipe {
     /// depend on the job budget the builder gives the build and which its
     /// environment adds.
     pub env: BTreeMap<String, String>,
+    /// The value every declared package option had in this evaluation,
+    /// sorted by name. A recipe that declares no options has none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub option_values: BTreeMap<String, OptionValue>,
     /// Switches of the build and of post-processing.
     pub options: BuildOptions,
     /// How the output is split into packages and what they declare.
@@ -74,14 +78,14 @@ pub struct Recipe {
 
 impl Recipe {
     /// The plan hash: BLAKE3 of the canonical JSON of the recipe without
-    /// [`Recipe::operations`], without [`Recipe::toolchain_epoch`] and
-    /// without the content hashes of sources, vendor tarballs, patches and
-    /// files.
+    /// [`Recipe::operations`], without [`Recipe::toolchain_epoch`], without
+    /// [`Recipe::option_values`] and without the content hashes of sources,
+    /// vendor tarballs, patches and files.
     ///
     /// The epoch and the content hashes are left out because the build
-    /// key covers them separately. A changed hash is therefore a source
-    /// change and a changed epoch a toolchain change, never a plan change,
-    /// while an edit to anything else the recipe says is a plan change.
+    /// key covers them separately, and the option values because the
+    /// build key records them separately: an option without effect keeps
+    /// the plan hash, which is what tells it apart from a useful one.
     ///
     /// # Panics
     ///
@@ -91,6 +95,7 @@ impl Recipe {
         if let Some(object) = value.as_object_mut() {
             object.remove("operations");
             object.remove("toolchain_epoch");
+            object.remove("option_values");
             for (list, key) in [
                 ("vendors", "sha256"),
                 ("patches", "blake3"),
