@@ -358,11 +358,12 @@ impl<'a> Builder<'a> {
     /// The job budget a build whose executor is `exec` sees: the whole
     /// budget for `MAKEFLAGS`, the share of the builds that may run at
     /// once for `JOBS`, and the jobserver when the executor joins one. A
-    /// build that runs alone, such as one that installs into a system
-    /// under construction, sees the whole budget.
+    /// build that joins no jobserver is alone, because nothing enforces
+    /// its share, and sees the whole budget, like a build that installs
+    /// into a system under construction.
     pub(crate) fn budget(&self, exec: &Executor) -> Budget {
         let jobs = self.jobs.max(1);
-        let alone = matches!(self.mode, Mode::Bootstrap(_)) || !exec.is_sandboxed();
+        let alone = !exec.joins_jobserver();
         let workers = match alone {
             true => 1,
             false => resolved_workers(self.workers, self.jobs),

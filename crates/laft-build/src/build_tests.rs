@@ -158,3 +158,41 @@ fn an_install_record_of_another_format_is_refused() {
         assert!(error.to_string().contains(says), "{text}: {error}");
     }
 }
+
+#[test]
+fn a_build_that_joins_no_jobserver_sees_the_whole_budget() {
+    let dir = laft_test::tempdir();
+    let repos = Repos::open(&[] as &[&std::path::Path]).expect("no repositories open");
+    let config = laft_fetch::Config {
+        offline: true,
+        ..laft_fetch::Config::new(dir.path().join("cache"))
+    };
+    let root = BuildRoot::new(dir.path().join("root"));
+    let cache = SourceCache::new(root.sources(), laft_fetch::Fetcher::new(config));
+    let mut builder = Builder::new(&repos, &cache, &root, Mode::Store);
+    builder.jobs = 6;
+    builder.workers = 3;
+    builder.share_jobs().expect("the jobserver opens");
+    let sandboxed = |jobserver: bool| {
+        let exec = Executor::sandboxed(
+            dir.path().join("view"),
+            dir.path().join("build"),
+            dir.path().join("out"),
+            dir.path().join("logs"),
+        );
+        if jobserver {
+            exec.jobserver(dir.path().join("pipe"))
+        } else {
+            exec
+        }
+    };
+    let budget = builder.budget(&sandboxed(false));
+    assert!(!budget.jobserver, "the executor joins no jobserver");
+    assert_eq!(
+        budget.share, 6,
+        "nothing enforces a share, so the build is alone"
+    );
+    let budget = builder.budget(&sandboxed(true));
+    assert!(budget.jobserver, "the executor joins the jobserver");
+    assert_eq!(budget.share, 2, "the share of three builds at once");
+}
