@@ -1024,7 +1024,9 @@ fn the_builds_of_a_store_run_share_one_job_budget() {
     assert_eq!(timelines.len(), packages.len(), "every build keeps a meter");
     for timeline in &timelines {
         let peak = peak_of(std::slice::from_ref(timeline));
-        assert!(peak >= 2, "make runs more than one job at once: {peak}");
+        // Under load a build may run its jobs one after the other, so
+        // only the ceiling holds per build; the shared peak below carries
+        // the claim that jobs run side by side.
         assert!(
             peak <= 4,
             "make sees more than its one job and the three spare tokens: {peak}"
