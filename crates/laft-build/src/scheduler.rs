@@ -161,7 +161,10 @@ impl<'a> Scheduler<'a> {
     /// runs, which restores the tokens a killed build lost. A build starts
     /// only when `memory` says the host holds what it needs. A panic of
     /// `prepare` or `settled` fails the run with the panic's message
-    /// instead of leaving the workers waiting.
+    /// instead of leaving the workers waiting. Release builds run with
+    /// `panic = "abort"`, so there a panic of the coordinator ends the
+    /// process; the conversion to a failed run covers the profiles that
+    /// unwind, like the tests.
     ///
     /// Returns every build it built, in the order they finished.
     pub(crate) fn run<J, T>(
