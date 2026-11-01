@@ -168,6 +168,24 @@ fn a_profile_index_is_published_with_its_snapshots() {
 }
 
 #[test]
+fn the_recipe_archive_is_published_like_a_pool_file() {
+    let dir = laft_test::tempdir();
+    keygen(&dir.path().join("online"), false, None).unwrap();
+    let signer = Signer::load(&dir.path().join("online.key"), None).unwrap();
+    let repo = Repository::new(dir.path().join("repo"));
+    let source = dir.path().join("recipes-src");
+    fs::create_dir_all(source.join("recipes/hello")).unwrap();
+    fs::write(source.join("recipes.stav"), "recipe_repo core {}\n").unwrap();
+    let snapshot = crate::snapshot::write(&repo, &source).unwrap();
+    let hello = package(&repo, "hello", b"hello");
+    generation(&repo, &signer, 0, vec![hello]);
+    let published = dir.path().join("published");
+    run(&repo, &published, None).unwrap();
+    let archive = published.join(&snapshot.file);
+    assert_eq!(fs::read(&archive).unwrap().len() as u64, snapshot.size);
+}
+
+#[test]
 fn an_interrupted_publication_never_exposes_a_missing_package() {
     let dir = laft_test::tempdir();
     keygen(&dir.path().join("online"), false, None).unwrap();

@@ -43,6 +43,7 @@ mod package;
 mod promote;
 mod publish;
 mod sign;
+mod snapshot;
 mod yank;
 
 use std::io::{self, Write};
@@ -112,18 +113,19 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
             };
             let signer = signer(&sign)?;
             let bases = read_indexes(&check.with_index)?;
-            let recipes = match (&channel.profile, &check.recipes) {
-                (Some(_), Some(dir)) => Some(
-                    laft_build::Repos::open(std::slice::from_ref(dir))
-                        .map_err(|e| Error::new(format!("{}: {e}", dir.display())))?,
-                ),
-                (Some(profile), None) => {
-                    return Err(Error::new(format!(
-                        "profile {profile} needs the recipe repository, pass --recipes"
-                    )));
-                }
-                (None, _) => None,
-            };
+            if let (Some(profile), None) = (&channel.profile, &check.recipes) {
+                return Err(Error::new(format!(
+                    "profile {profile} needs the recipe repository, pass --recipes"
+                )));
+            }
+            let recipes = check
+                .recipes
+                .as_deref()
+                .map(|dir| {
+                    laft_build::Repos::open(std::slice::from_ref(&dir))
+                        .map_err(|e| Error::new(format!("{}: {e}", dir.display())))
+                })
+                .transpose()?;
             let outcome = index::run(&index::Request {
                 repo: &repo,
                 channel: &channel,
@@ -133,6 +135,7 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
                 providers: &provider,
                 bases: &bases,
                 recipes: recipes.as_ref(),
+                recipes_dir: check.recipes.as_deref(),
                 allow_bootstrap: check.allow_bootstrap,
                 signer: signer.as_ref(),
                 options: options(&generation, now),

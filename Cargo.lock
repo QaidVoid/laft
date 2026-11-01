@@ -722,6 +722,8 @@ dependencies = [
  "minisign",
  "serde",
  "serde_json",
+ "tar",
+ "zstd",
 ]
 
 [[package]]

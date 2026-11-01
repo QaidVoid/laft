@@ -132,7 +132,7 @@ pub(crate) fn plan(repo: &Repository, target: &Path, only: Option<&Name>) -> Res
 
     let mut steps = Vec::new();
     let mut removals = Vec::new();
-    for dir in ["pool", "buildinfo"] {
+    for dir in ["pool", "buildinfo", "recipes"] {
         for name in fsx::list(&repo.path(dir))? {
             if name.starts_with('.') {
                 continue;

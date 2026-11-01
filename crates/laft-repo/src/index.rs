@@ -14,6 +14,7 @@ use crate::generation::{self, Options};
 use crate::layout::{Channel, Repository};
 use crate::package::Inputs;
 use crate::sign::Signer;
+use crate::snapshot;
 
 /// What `laft-repo index` works on.
 pub(crate) struct Request<'a> {
@@ -31,9 +32,11 @@ pub(crate) struct Request<'a> {
     pub(crate) providers: &'a [(String, Name)],
     /// Indexes of base repositories for the dependency checks.
     pub(crate) bases: &'a [Index],
-    /// The recipe repository the packages were built from, needed for a
-    /// profile channel.
+    /// The recipe repository the packages were built from, for the recipe
+    /// snapshot of the index and the checks that read recipes.
     pub(crate) recipes: Option<&'a laft_build::Repos>,
+    /// The directory of the recipe repository, for the snapshot archive.
+    pub(crate) recipes_dir: Option<&'a std::path::Path>,
     /// Whether packages from dirty or bootstrap builds are allowed.
     pub(crate) allow_bootstrap: bool,
     /// The key to sign the new generation with, if any.
@@ -88,6 +91,17 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
     if let Some(profile) = &channel.profile {
         let repos = request.recipes.expect("a profile channel has recipes");
         index.profile = Some(member(repos, profile)?);
+    }
+    if let Some(source) = request.recipes_dir {
+        index.recipes = Some(snapshot::write(repo, source)?);
+    }
+    if let Some(repos) = request.recipes {
+        for name in repos.packages() {
+            let options = repos.options(name).map_err(|e| Error::new(e.to_string()))?;
+            if let Some(options) = options {
+                index.options.insert(name.clone(), options.declarations);
+            }
+        }
     }
     let listed: HashSet<StoreId> = index.packages.iter().map(|e| e.id).collect();
     let yanked: HashSet<_> = index

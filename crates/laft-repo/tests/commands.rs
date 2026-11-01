@@ -227,6 +227,129 @@ fn sign_signs_a_profile_index() {
     assert!(public(&key).verifies(&bytes, &signature));
 }
 
+/// Writes a recipe repository for the package `hello` at `dir`.
+fn recipe_repo(dir: &Path) -> PathBuf {
+    let recipes = dir.join("recipes-src");
+    fs::create_dir_all(recipes.join("recipes/hello")).expect("writable");
+    fs::write(recipes.join("recipes.stav"), "recipe_repo core {}\n").expect("writable");
+    fs::write(
+        recipes.join("recipes/hello/package.stav"),
+        "package hello {\n  version = \"1.0\"\n  summary = \"Say hello\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+    recipes
+}
+
+#[test]
+fn index_records_the_recipe_snapshot_of_a_generation() {
+    let dir = laft_test::tempdir();
+    let recipes = recipe_repo(dir.path());
+    let out = dir.path().join("out");
+    pkg("hello", "1.0").file("usr/bin/hello", "hi").write(&out);
+    let repo = dir.path().join("repo");
+    let now = at(0);
+    let mut args = index_args(&repo, "current", &now);
+    args.extend(["--recipes", s(&recipes), s(&out)]);
+    ok(&args);
+    let index = read_index(&repo, "current");
+    let first = index.recipes.as_ref().expect("the recipes member");
+    assert!(first.file.starts_with("recipes/b3:"));
+    assert_eq!(first.size, fsx_size(&repo.join(&first.file)));
+    assert!(repo.join(&first.file).is_file());
+    assert_eq!(first.file, format!("recipes/{}.tar.zst", first.blake3));
+
+    let now = at(HOUR);
+    let mut args = index_args(&repo, "current", &now);
+    args.extend(["--recipes", s(&recipes), s(&out)]);
+    ok(&args);
+    let index = read_index(&repo, "current");
+    assert_eq!(
+        index.recipes.as_ref().unwrap().blake3,
+        first.blake3,
+        "the same tree packs to the same archive"
+    );
+    let entries: Vec<_> = fs::read_dir(repo.join("recipes")).unwrap().collect();
+    assert_eq!(entries.len(), 1, "one archive for two generations");
+
+    fs::write(
+        recipes.join("recipes/hello/package.stav"),
+        "package hello {\n  version = \"1.1\"\n  summary = \"Say hello\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .unwrap();
+    let now = at(2 * HOUR);
+    let mut args = index_args(&repo, "current", &now);
+    args.extend(["--recipes", s(&recipes), s(&out)]);
+    ok(&args);
+    let index = read_index(&repo, "current");
+    let third = index.recipes.as_ref().unwrap();
+    assert_ne!(third.blake3, first.blake3);
+    assert!(repo.join(&third.file).is_file());
+}
+
+/// The size of `path`, or 0 when it does not exist.
+fn fsx_size(path: &Path) -> u64 {
+    fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+#[test]
+fn index_records_the_option_declarations_of_the_recipes() {
+    let dir = laft_test::tempdir();
+    let recipes = dir.path().join("recipes-src");
+    fs::create_dir_all(recipes.join("recipes/hello")).expect("writable");
+    fs::create_dir_all(recipes.join("recipes/zlib")).expect("writable");
+    fs::write(recipes.join("recipes.stav"), "recipe_repo core {}\n").expect("writable");
+    fs::write(
+        recipes.join("recipes/hello/package.stav"),
+        "package hello {\n  version = \"1.0\"\n  summary = \"Say hello\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+    fs::write(
+        recipes.join("recipes/hello/options.stav"),
+        "struct Options {\n  ## Ship the extra command line tool.\n  tool: Bool = true\n}\n",
+    )
+    .expect("writable");
+    fs::write(
+        recipes.join("recipes/zlib/package.stav"),
+        "package zlib {\n  version = \"1.2\"\n  summary = \"Deflate\"\n  license = [Zlib]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+
+    let out = dir.path().join("out");
+    pkg("hello", "1.0").file("usr/bin/hello", "hi").write(&out);
+    let repo = dir.path().join("repo");
+    let now = at(0);
+    let mut args = index_args(&repo, "current", &now);
+    args.extend(["--recipes", s(&recipes), s(&out)]);
+    ok(&args);
+    let index = read_index(&repo, "current");
+    let hello = &index.options[&"hello".parse().unwrap()];
+    assert_eq!(hello.len(), 1);
+    assert_eq!(hello[0].name, "tool");
+    assert_eq!(hello[0].doc, "Ship the extra command line tool.");
+    assert_eq!(hello[0].default, laft_core::OptionValue::Bool(true));
+    assert_eq!(index.options.len(), 1, "zlib declares no options");
+}
+
+#[test]
+fn index_refuses_a_recipe_with_broken_options() {
+    let dir = laft_test::tempdir();
+    let recipes = recipe_repo(dir.path());
+    fs::write(
+        recipes.join("recipes/hello/options.stav"),
+        "struct Options {\n  tool: Bool = true\n}\n",
+    )
+    .expect("writable");
+    let out = dir.path().join("out");
+    pkg("hello", "1.0").write(&out);
+    let repo = dir.path().join("repo");
+    let now = at(0);
+    let mut args = index_args(&repo, "current", &now);
+    args.extend(["--recipes", s(&recipes), s(&out)]);
+    let (_, stderr) = fails(&args);
+    assert!(stderr.contains("R072"), "{stderr}");
+    assert!(stderr.contains("of repository core"), "{stderr}");
+}
+
 #[test]
 fn a_generation_must_be_later_than_the_last_one() {
     let dir = laft_test::tempdir();
