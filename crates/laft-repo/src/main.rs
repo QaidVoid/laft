@@ -108,9 +108,22 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
             let channel = Channel {
                 name: channel.channel,
                 arch: channel.arch,
+                profile: channel.profile,
             };
             let signer = signer(&sign)?;
             let bases = read_indexes(&check.with_index)?;
+            let recipes = match (&channel.profile, &check.recipes) {
+                (Some(_), Some(dir)) => Some(
+                    laft_build::Repos::open(std::slice::from_ref(dir))
+                        .map_err(|e| Error::new(format!("{}: {e}", dir.display())))?,
+                ),
+                (Some(profile), None) => {
+                    return Err(Error::new(format!(
+                        "profile {profile} needs the recipe repository, pass --recipes"
+                    )));
+                }
+                (None, _) => None,
+            };
             let outcome = index::run(&index::Request {
                 repo: &repo,
                 channel: &channel,
@@ -119,6 +132,7 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
                 alternatives: &alternative,
                 providers: &provider,
                 bases: &bases,
+                recipes: recipes.as_ref(),
                 allow_bootstrap: check.allow_bootstrap,
                 signer: signer.as_ref(),
                 options: options(&generation, now),
@@ -149,6 +163,7 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
             repo,
             channel,
             arch,
+            profile,
             keys,
             key,
             password_env,
@@ -168,7 +183,11 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
                     ),
                 )?;
             } else if let Some(name) = channel {
-                let channel = Channel { name, arch };
+                let channel = Channel {
+                    name,
+                    arch,
+                    profile,
+                };
                 let comment = generation::sign(&repo, &channel, &signer)?;
                 say(
                     &mut out,
@@ -187,6 +206,7 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
             let channel = Channel {
                 name: channel.channel,
                 arch: channel.arch,
+                profile: channel.profile,
             };
             let report = check_channel(&repo, &channel, &check)?;
             if json {
@@ -214,6 +234,7 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
             let channel = Channel {
                 name: channel.channel,
                 arch: channel.arch,
+                profile: channel.profile,
             };
             let signer = signer(&sign)?;
             let request = yank::Request {
@@ -258,8 +279,16 @@ fn run(command: Command, now: Timestamp) -> Result<bool> {
             generation,
         } => {
             let repo = Repository::new(repo);
-            let from = Channel { name: from, arch };
-            let to = Channel { name: to, arch };
+            let from = Channel {
+                name: from,
+                arch,
+                profile: None,
+            };
+            let to = Channel {
+                name: to,
+                arch,
+                profile: None,
+            };
             let signer = signer(&sign)?;
             let bases = read_indexes(&with_index)?;
             let root = root_key.as_deref().map(sign::read_public).transpose()?;

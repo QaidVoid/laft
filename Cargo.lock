@@ -711,6 +711,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "clap",
+ "laft-build",
  "laft-core",
  "laft-fetch",
  "laft-index",

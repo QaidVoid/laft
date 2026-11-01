@@ -4,10 +4,10 @@
 mod support;
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use laft_core::Timestamp;
-use laft_index::{IndexComment, Keys, KeysComment, KeysFetch, Signature};
+use laft_index::{Index, IndexComment, Keys, KeysComment, KeysFetch, Signature};
 use support::{DAY, HOUR, T0, at, fails, keygen, ok, pkg, public, read_index, run, s};
 
 const INDEX: &str = "channels/current/x86_64-v3/index.json.zst";
@@ -68,6 +68,163 @@ fn index_copies_packages_by_store_id_and_signs_a_new_generation() {
         fs::read(snapshot.with_extension("zst.minisig")).unwrap(),
         fs::read(repo.join(format!("{INDEX}.minisig"))).unwrap()
     );
+}
+
+/// Writes a recipe repository declaring the profile `minimal`, which sets
+/// `x11 = false` on mesa.
+fn profile_repo(dir: &Path) -> PathBuf {
+    let recipes = dir.join("recipes-src");
+    fs::create_dir_all(&recipes).expect("writable");
+    fs::write(
+        recipes.join("recipes.stav"),
+        "recipe_repo core {}\n\nprofile minimal {\n  package mesa {\n    options {\n      x11 = false\n    }\n  }\n}\n",
+    )
+    .expect("writable");
+    recipes
+}
+
+#[test]
+fn index_writes_a_profile_index_with_the_profile_member() {
+    let dir = laft_test::tempdir();
+    let recipes = profile_repo(dir.path());
+    let out = dir.path().join("out");
+    pkg("hello", "1.0").file("usr/bin/hello", "hi").write(&out);
+    let repo = dir.path().join("repo");
+    let key = keygen(dir.path(), "online");
+    let now = at(0);
+    let stdout = ok(&[
+        "index",
+        "--repo",
+        s(&repo),
+        "--name",
+        "core",
+        "--channel",
+        "current",
+        "--profile",
+        "minimal",
+        "--recipes",
+        s(&recipes),
+        "--now",
+        &now,
+        "--key",
+        s(&key),
+        s(&out),
+    ]);
+    assert!(
+        stdout.contains("current/x86_64-v3 profiles/minimal"),
+        "{stdout}"
+    );
+
+    let entry = repo.join("channels/current/x86_64-v3/profiles/minimal/index.json.zst");
+    let index = Index::decode(&fs::read(&entry).unwrap()).unwrap();
+    let profile = index.profile.as_ref().expect("the profile member");
+    assert_eq!(profile.name, "minimal");
+    let mesa: laft_core::Name = "mesa".parse().unwrap();
+    let mesa = &profile.values[&mesa];
+    assert_eq!(mesa["x11"], laft_core::OptionValue::Bool(false));
+
+    let bytes = fs::read(&entry).unwrap();
+    let signature =
+        signature(&repo.join("channels/current/x86_64-v3/profiles/minimal/index.json.zst.minisig"));
+    assert!(public(&key).verifies(&bytes, &signature));
+    let comment: IndexComment = signature.trusted_comment().parse().unwrap();
+    assert_eq!(comment, index.comment());
+    let snapshot = repo.join(format!(
+        "channels/current/x86_64-v3/profiles/minimal/snapshots/{T0}.json.zst"
+    ));
+    assert_eq!(fs::read(&snapshot).unwrap(), bytes);
+}
+
+#[test]
+fn a_profile_index_needs_the_recipe_repository() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    pkg("hello", "1.0").write(&out);
+    let repo = dir.path().join("repo");
+    let (_, stderr) = fails(&[
+        "index",
+        "--repo",
+        s(&repo),
+        "--name",
+        "core",
+        "--channel",
+        "current",
+        "--profile",
+        "minimal",
+        "--now",
+        &at(0),
+        s(&out),
+    ]);
+    assert!(stderr.contains("--recipes"), "{stderr}");
+}
+
+#[test]
+fn an_unknown_profile_is_refused() {
+    let dir = laft_test::tempdir();
+    let recipes = profile_repo(dir.path());
+    let out = dir.path().join("out");
+    pkg("hello", "1.0").write(&out);
+    let repo = dir.path().join("repo");
+    let (_, stderr) = fails(&[
+        "index",
+        "--repo",
+        s(&repo),
+        "--name",
+        "core",
+        "--channel",
+        "current",
+        "--profile",
+        "wayland_only",
+        "--recipes",
+        s(&recipes),
+        "--now",
+        &at(0),
+        s(&out),
+    ]);
+    assert!(stderr.contains("no recipe repository declares"), "{stderr}");
+}
+
+#[test]
+fn sign_signs_a_profile_index() {
+    let dir = laft_test::tempdir();
+    let recipes = profile_repo(dir.path());
+    let out = dir.path().join("out");
+    pkg("hello", "1.0").write(&out);
+    let repo = dir.path().join("repo");
+    let key = keygen(dir.path(), "online");
+    ok(&[
+        "index",
+        "--repo",
+        s(&repo),
+        "--name",
+        "core",
+        "--channel",
+        "current",
+        "--profile",
+        "minimal",
+        "--recipes",
+        s(&recipes),
+        "--now",
+        &at(0),
+        s(&out),
+    ]);
+    let stdout = ok(&[
+        "sign",
+        "--repo",
+        s(&repo),
+        "--channel",
+        "current",
+        "--profile",
+        "minimal",
+        "--key",
+        s(&key),
+    ]);
+    assert!(stdout.contains(&format!("generation={T0}")), "{stdout}");
+    let bytes =
+        fs::read(repo.join("channels/current/x86_64-v3/profiles/minimal/index.json.zst")).unwrap();
+    let signature =
+        signature(&repo.join("channels/current/x86_64-v3/profiles/minimal/index.json.zst.minisig"));
+    assert!(public(&key).verifies(&bytes, &signature));
 }
 
 #[test]

@@ -15,6 +15,7 @@ fn channel() -> Channel {
     Channel {
         name: "current".parse().unwrap(),
         arch: Arch::X86_64V3,
+        profile: None,
     }
 }
 
@@ -60,10 +61,21 @@ fn package(repo: &Repository, name: &str, content: &[u8]) -> IndexEntry {
 
 /// Writes a signed generation at `T0 + offset` listing `packages`.
 fn generation(repo: &Repository, signer: &Signer, offset: u64, packages: Vec<IndexEntry>) {
+    generation_in(repo, signer, offset, packages, &channel());
+}
+
+/// [`generation`] for the channel `of`.
+fn generation_in(
+    repo: &Repository,
+    signer: &Signer,
+    offset: u64,
+    packages: Vec<IndexEntry>,
+    of: &Channel,
+) {
     let index = Index {
         format: Index::FORMAT,
         repo: "core".parse().unwrap(),
-        channel: channel().name,
+        channel: of.name.clone(),
         arch: Arch::X86_64V3,
         generation: 0,
         timestamp: Timestamp::from_secs(0),
@@ -80,8 +92,8 @@ fn generation(repo: &Repository, signer: &Signer, offset: u64, packages: Vec<Ind
         expires_in: 86_400,
         keep: 1,
     };
-    let index = generation::prepare(repo, &channel(), index, &options).unwrap();
-    generation::write(repo, &channel(), &index, Some(signer), &options).unwrap();
+    let index = generation::prepare(repo, of, index, &options).unwrap();
+    generation::write(repo, of, &index, Some(signer), &options).unwrap();
 }
 
 fn copy_tree(from: &Path, to: &Path) {
@@ -123,6 +135,36 @@ fn assert_consistent(target: &Path) {
             assert!(target.join(&entry.file).is_file());
         }
     }
+}
+
+#[test]
+fn a_profile_index_is_published_with_its_snapshots() {
+    let dir = laft_test::tempdir();
+    keygen(&dir.path().join("online"), false, None).unwrap();
+    let signer = Signer::load(&dir.path().join("online.key"), None).unwrap();
+    let repo = Repository::new(dir.path().join("repo"));
+    let profile = Channel {
+        profile: Some("minimal".parse().unwrap()),
+        ..channel()
+    };
+    let hello = package(&repo, "hello", b"hello");
+    generation_in(&repo, &signer, 0, vec![hello.clone()], &profile);
+    let published = dir.path().join("published");
+    let summary = run(&repo, &published, None).unwrap();
+    assert_eq!(summary.channels, vec![(profile.clone(), T0)]);
+    let entry = published.join(profile.index());
+    let index = Index::decode(&fs::read(&entry).unwrap()).unwrap();
+    assert_eq!(index.generation, T0);
+    assert!(published.join(sig(&profile.index())).is_file());
+    assert!(published.join(profile.snapshot(T0)).is_file());
+    assert!(published.join(sig(&profile.snapshot(T0))).is_file());
+
+    let zlib = package(&repo, "zlib", b"zlib");
+    generation_in(&repo, &signer, 3600, vec![hello, zlib], &profile);
+    run(&repo, &published, None).unwrap();
+    let stale = profile.snapshot(T0);
+    assert!(!published.join(&stale).exists());
+    assert!(!published.join(sig(&stale)).exists());
 }
 
 #[test]

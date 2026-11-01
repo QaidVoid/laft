@@ -5,8 +5,10 @@
 //! ├── keys.json, keys.json.minisig
 //! ├── pool/<id>.lpkg
 //! ├── buildinfo/<id>.json
+//! ├── recipes/<blake3>.tar.zst
 //! └── channels/<channel>/<arch>/
 //!     ├── index.json.zst, index.json.zst.minisig
+//!     ├── profiles/<profile>/  index.json.zst, index.json.zst.minisig
 //!     └── snapshots/<generation>.json.zst, <generation>.json.zst.minisig
 //! ```
 
@@ -32,19 +34,25 @@ pub(crate) struct Repository {
     root: PathBuf,
 }
 
-/// One channel and architecture of a repository.
+/// One channel and architecture of a repository, optionally the index of
+/// one of its profiles.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Channel {
     /// The channel name, for example `current`.
     pub(crate) name: Name,
     /// The architecture.
     pub(crate) arch: Arch,
+    /// The profile the index was built for, below `profiles/`.
+    pub(crate) profile: Option<Name>,
 }
 
 impl Channel {
     /// The directory of the channel relative to the repository root.
     pub(crate) fn dir(&self) -> String {
-        format!("channels/{}/{}", self.name, self.arch)
+        match &self.profile {
+            Some(profile) => format!("channels/{}/{}/profiles/{profile}", self.name, self.arch),
+            None => format!("channels/{}/{}", self.name, self.arch),
+        }
     }
 
     /// The entry point relative to the repository root.
@@ -60,7 +68,11 @@ impl Channel {
 
 impl std::fmt::Display for Channel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.name, self.arch)
+        write!(f, "{}/{}", self.name, self.arch)?;
+        if let Some(profile) = &self.profile {
+            write!(f, " profiles/{profile}")?;
+        }
+        Ok(())
     }
 }
 
@@ -112,7 +124,8 @@ impl Repository {
         Ok(generations)
     }
 
-    /// Every channel and architecture that has an entry point, sorted.
+    /// Every channel and architecture that has an entry point, with the
+    /// profile indexes below `profiles/`, sorted.
     pub(crate) fn channels(&self) -> Result<Vec<Channel>> {
         let mut channels = Vec::new();
         for name in fsx::list(&self.path("channels"))? {
@@ -126,9 +139,23 @@ impl Repository {
                 let channel = Channel {
                     name: name.clone(),
                     arch,
+                    profile: None,
                 };
                 if self.path(&channel.index()).is_file() {
                     channels.push(channel);
+                }
+                for profile in fsx::list(&self.path(&format!("channels/{name}/{arch}/profiles")))? {
+                    let Ok(profile) = profile.parse::<Name>() else {
+                        continue;
+                    };
+                    let channel = Channel {
+                        name: name.clone(),
+                        arch,
+                        profile: Some(profile),
+                    };
+                    if self.path(&channel.index()).is_file() {
+                        channels.push(channel);
+                    }
                 }
             }
         }

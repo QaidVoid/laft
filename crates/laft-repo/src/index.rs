@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
-use laft_core::{Name, StoreId, Timestamp};
-use laft_index::{Defaults, Index};
+use laft_core::{Name, OptionValue, StoreId, Timestamp};
+use laft_index::{Defaults, Index, ProfileMember};
 use laft_pkg::Arch;
 
 use crate::check::{self, Report, label};
@@ -31,6 +31,9 @@ pub(crate) struct Request<'a> {
     pub(crate) providers: &'a [(String, Name)],
     /// Indexes of base repositories for the dependency checks.
     pub(crate) bases: &'a [Index],
+    /// The recipe repository the packages were built from, needed for a
+    /// profile channel.
+    pub(crate) recipes: Option<&'a laft_build::Repos>,
     /// Whether packages from dirty or bootstrap builds are allowed.
     pub(crate) allow_bootstrap: bool,
     /// The key to sign the new generation with, if any.
@@ -82,6 +85,10 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
     };
     let inputs = Inputs::read(request.inputs)?;
     let mut index = previous.clone().unwrap_or_else(|| empty(name, channel));
+    if let Some(profile) = &channel.profile {
+        let repos = request.recipes.expect("a profile channel has recipes");
+        index.profile = Some(member(repos, profile)?);
+    }
     let listed: HashSet<StoreId> = index.packages.iter().map(|e| e.id).collect();
     let yanked: HashSet<_> = index
         .yanked
@@ -178,6 +185,38 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
         index: Box::new(index),
         added,
         report,
+    })
+}
+
+/// The `profile` member for the profile `name`: the values the highest
+/// priority repository that declares the profile sets.
+fn member(repos: &laft_build::Repos, name: &Name) -> Result<ProfileMember> {
+    let profile = repos
+        .repos()
+        .iter()
+        .rev()
+        .find_map(|repo| repo.profiles.get(name.as_str()))
+        .ok_or_else(|| Error::new(format!("no recipe repository declares the profile {name}")))?;
+    let values = profile
+        .package
+        .iter()
+        .map(|(package, set)| {
+            let set = set
+                .iter()
+                .map(|(option, value)| {
+                    let value = match value {
+                        laft_build::OptionText::Bool(value) => OptionValue::Bool(*value),
+                        laft_build::OptionText::Tag(tag) => OptionValue::Tag(tag.clone()),
+                    };
+                    (option.clone(), value)
+                })
+                .collect();
+            (package.clone(), set)
+        })
+        .collect();
+    Ok(ProfileMember {
+        name: name.to_string(),
+        values,
     })
 }
 

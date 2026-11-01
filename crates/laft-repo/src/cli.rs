@@ -83,6 +83,9 @@ pub(crate) enum Command {
         /// The architecture of the index.
         #[arg(long, default_value = "x86_64-v3")]
         arch: Arch,
+        /// The profile whose index to sign.
+        #[arg(long)]
+        profile: Option<Name>,
         /// Sign keys.json instead of an index.
         #[arg(long)]
         keys: bool,
@@ -264,6 +267,9 @@ pub(crate) struct ChannelArgs {
     /// The architecture.
     #[arg(long, default_value = "x86_64-v3")]
     pub(crate) arch: Arch,
+    /// The profile whose index to work on, below `profiles/`.
+    #[arg(long)]
+    pub(crate) profile: Option<Name>,
 }
 
 /// Options of the repository checks.
@@ -275,6 +281,10 @@ pub(crate) struct CheckArgs {
     /// Allow packages from dirty or bootstrap builds.
     #[arg(long)]
     pub(crate) allow_bootstrap: bool,
+    /// The recipe repository the packages were built from, for the recipe
+    /// snapshot of the index and the checks that read recipes.
+    #[arg(long, value_name = "DIR")]
+    pub(crate) recipes: Option<PathBuf>,
 }
 
 /// How a new generation is signed.
