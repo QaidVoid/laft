@@ -269,6 +269,7 @@ impl Env {
             let trust = laft_index::Repo {
                 name: name.clone(),
                 channel: repo.channel.clone(),
+                profile: None,
                 arch: ARCH,
                 key: repo.key.clone(),
                 keys: repo.keys.clone(),

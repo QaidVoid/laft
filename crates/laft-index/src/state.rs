@@ -23,6 +23,11 @@ pub struct Repo {
     pub name: Name,
     /// The channel the client follows.
     pub channel: Name,
+    /// The channel profile the client follows, below
+    /// `channels/<channel>/<arch>/profiles/`. The client accepts only
+    /// indexes of this profile when it is set, and only base indexes when
+    /// it is not.
+    pub profile: Option<Name>,
     /// The client's architecture.
     pub arch: Arch,
     /// The root key.
@@ -121,13 +126,16 @@ pub struct KeysRecord {
     pub root: KeyId,
 }
 
-/// The last accepted index of one channel and architecture of a
+/// The last accepted index of one channel, profile and architecture of a
 /// repository.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IndexRecord {
     /// The channel.
     pub channel: Name,
+    /// The channel profile, when the accepted index was one.
+    #[serde(default)]
+    pub profile: Option<Name>,
     /// The architecture.
     pub arch: Arch,
     /// The accepted generation. Lower generations are refused.
@@ -141,7 +149,8 @@ pub struct IndexRecord {
     pub signer: KeyId,
 }
 
-/// The index records of one repository, one per channel and architecture.
+/// The index records of one repository, one per channel, profile and
+/// architecture.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct IndexRecords {
@@ -407,14 +416,28 @@ impl IndexState {
                 &comment.channel,
             ));
         }
+        if comment.profile != repo.profile {
+            let shown = |profile: &Option<Name>| {
+                profile
+                    .as_ref()
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "no profile".to_owned())
+            };
+            return Err(wrong_target(
+                "index",
+                "profile",
+                shown(&repo.profile),
+                shown(&comment.profile),
+            ));
+        }
         if comment.arch != repo.arch {
             return Err(wrong_target("index", "arch", repo.arch, comment.arch));
         }
         let blake3 = Blake3Hash::of(bytes);
         let mut records = self.index_records(&repo.name)?;
-        let slot = records
-            .iter()
-            .position(|r| r.channel == repo.channel && r.arch == repo.arch);
+        let slot = records.iter().position(|r| {
+            r.channel == repo.channel && r.profile == repo.profile && r.arch == repo.arch
+        });
         if let Some(accepted) = slot.map(|i| &records[i]) {
             if comment.generation < accepted.generation {
                 return Err(ErrorKind::Rollback {
@@ -449,6 +472,20 @@ impl IndexState {
                 &content.channel,
             ));
         }
+        if content.profile != comment.profile {
+            let shown = |profile: &Option<Name>| {
+                profile
+                    .as_ref()
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "no profile".to_owned())
+            };
+            return Err(inconsistent(
+                "index",
+                "profile",
+                shown(&comment.profile),
+                shown(&content.profile),
+            ));
+        }
         if content.arch != comment.arch {
             return Err(inconsistent("index", "arch", comment.arch, content.arch));
         }
@@ -481,6 +518,7 @@ impl IndexState {
         }
         let record = IndexRecord {
             channel: repo.channel.clone(),
+            profile: repo.profile.clone(),
             arch: repo.arch,
             generation: index.generation,
             blake3: Some(blake3),
@@ -523,7 +561,9 @@ impl IndexState {
     }
 
     fn write_index_records(&self, repo: &Name, mut records: Vec<IndexRecord>) -> Result<(), Error> {
-        records.sort_by(|a, b| (&a.channel, a.arch).cmp(&(&b.channel, b.arch)));
+        records.sort_by(|a, b| {
+            (&a.channel, &a.profile, a.arch).cmp(&(&b.channel, &b.profile, b.arch))
+        });
         let file = IndexRecords {
             format: FORMAT,
             records,

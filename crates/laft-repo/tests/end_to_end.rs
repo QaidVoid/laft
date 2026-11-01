@@ -100,6 +100,7 @@ fn published_repository_is_accepted_and_served_over_file_urls() {
     let config = Repo {
         name: "core".parse().unwrap(),
         channel: "current".parse().unwrap(),
+        profile: None,
         arch: Arch::X86_64V3,
         key: public(&root),
         keys: vec![],

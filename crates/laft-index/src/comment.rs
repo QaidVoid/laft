@@ -7,7 +7,8 @@ use laft_pkg::Arch;
 use crate::Error;
 
 /// The trusted comment of an index signature:
-/// `laft-index repo=<repo> channel=<channel> arch=<arch> generation=<n>`.
+/// `laft-index repo=<repo> channel=<channel> arch=<arch> generation=<n>`,
+/// followed by ` profile=<p>` for the index of one channel profile.
 ///
 /// The signature covers the comment, so a client can reject a stale or
 /// substituted index before decompressing it.
@@ -31,6 +32,8 @@ pub struct IndexComment {
     pub arch: Arch,
     /// The index generation.
     pub generation: u64,
+    /// The profile, for the index of one channel profile.
+    pub profile: Option<Name>,
 }
 
 /// The trusted comment of a `keys.json` signature:
@@ -49,7 +52,11 @@ impl fmt::Display for IndexComment {
             f,
             "laft-index repo={} channel={} arch={} generation={}",
             self.repo, self.channel, self.arch, self.generation
-        )
+        )?;
+        if let Some(profile) = &self.profile {
+            write!(f, " profile={profile}")?;
+        }
+        Ok(())
     }
 }
 
@@ -57,13 +64,26 @@ impl FromStr for IndexComment {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let [repo, channel, arch, generation] =
-            fields(s, "laft-index", ["repo", "channel", "arch", "generation"])?;
+        let (head, profile) = match s.split_once(" profile=") {
+            Some((head, value)) => {
+                if value.is_empty() || value.contains(' ') {
+                    return Err(invalid(s));
+                }
+                (head, Some(name(s, value)?))
+            }
+            None => (s, None),
+        };
+        let [repo, channel, arch, generation] = fields(
+            head,
+            "laft-index",
+            ["repo", "channel", "arch", "generation"],
+        )?;
         Ok(Self {
             repo: name(s, repo)?,
             channel: name(s, channel)?,
             arch: arch.parse::<Arch>().map_err(|_| invalid(s))?,
             generation: number(s, generation)?,
+            profile,
         })
     }
 }

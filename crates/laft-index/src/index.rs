@@ -213,6 +213,10 @@ impl Index {
             channel: self.channel.clone(),
             arch: self.arch,
             generation: self.generation,
+            profile: self
+                .profile
+                .as_ref()
+                .and_then(|profile| profile.name.parse().ok()),
         }
     }
 

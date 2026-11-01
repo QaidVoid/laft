@@ -161,6 +161,7 @@ pub(crate) fn repo(root: &TestKey) -> Repo {
     Repo {
         name: "core".parse().expect("valid name"),
         channel: "current".parse().expect("valid name"),
+        profile: None,
         arch: Arch::X86_64V3,
         key: root.public.clone(),
         keys: vec![],

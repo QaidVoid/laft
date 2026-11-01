@@ -30,6 +30,7 @@
 //! let repo = Repo {
 //!     name: "core".parse()?,
 //!     channel: "current".parse()?,
+//!     profile: None,
 //!     arch: laft_pkg::Arch::X86_64V3,
 //!     key: "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3".parse()?,
 //!     keys: vec![],

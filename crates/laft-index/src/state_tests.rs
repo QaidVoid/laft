@@ -3,8 +3,13 @@ use std::fs;
 use laft_core::Timestamp;
 use laft_test::TempDir;
 
+use std::collections::BTreeMap;
+
+use laft_core::{Name, OptionValue};
+
 use super::*;
 use crate::test_support::{DAY, Signed, T0, TestKey, index, keys, now, repo};
+use crate::{IndexComment, ProfileMember};
 
 /// A client with an empty state directory, a root key and an online key
 /// listed in version 1 of `keys.json`.
@@ -640,6 +645,165 @@ fn channels_keep_separate_histories() {
         channels,
         [("current".into(), T0 + 100), ("testing".into(), T0)]
     );
+}
+
+#[test]
+fn a_profile_index_is_rejected_on_the_base_channel() {
+    let client = Client::new();
+    let trust = client.direct();
+    client
+        .accept(&trust, &client.root.sign_index(&index(T0 + 100)))
+        .expect("the base index");
+
+    let mut profile = index(T0 + 200);
+    profile.profile = Some(minimal());
+    assert_kind(
+        client.accept(&trust, &client.root.sign_index(&profile)),
+        |kind| {
+            matches!(
+                kind,
+                ErrorKind::WrongTarget {
+                    field: "profile",
+                    ..
+                }
+            )
+        },
+    );
+}
+
+#[test]
+fn a_base_index_is_rejected_on_a_profile_channel() {
+    let mut client = Client::new();
+    client.repo.profile = Some("minimal".parse().expect("valid name"));
+    let trust = client.direct();
+    assert_kind(
+        client.accept(&trust, &client.root.sign_index(&index(T0 + 100))),
+        |kind| {
+            matches!(
+                kind,
+                ErrorKind::WrongTarget {
+                    field: "profile",
+                    ..
+                }
+            )
+        },
+    );
+}
+
+#[test]
+fn profile_indexes_keep_separate_histories() {
+    let mut client = Client::new();
+    client.repo.profile = Some("minimal".parse().expect("valid name"));
+    let trust = client.direct();
+    client
+        .accept(&trust, &client.root.sign_index(&profile_index(T0 + 100)))
+        .expect("the profile index");
+
+    client
+        .accept(&trust, &client.root.sign_index(&profile_index(T0 + 50)))
+        .expect_err("the profile rolls back");
+
+    assert_kind(
+        client.accept(&trust, &client.root.sign_index(&index(T0 + 200))),
+        |kind| {
+            matches!(
+                kind,
+                ErrorKind::WrongTarget {
+                    field: "profile",
+                    ..
+                }
+            )
+        },
+    );
+
+    client
+        .accept(&trust, &client.root.sign_index(&profile_index(T0 + 200)))
+        .expect("the next profile generation");
+    let records = client
+        .state
+        .index_records(&client.repo.name)
+        .expect("records");
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].profile.as_ref().map(Name::as_str),
+        Some("minimal")
+    );
+    assert_eq!(records[0].generation, T0 + 200);
+}
+
+#[test]
+fn a_profile_member_that_differs_from_the_comment_is_rejected() {
+    let mut client = Client::new();
+    client.repo.profile = Some("minimal".parse().expect("valid name"));
+    let trust = client.direct();
+
+    let mut member = profile_index(T0 + 100);
+    member.profile.as_mut().expect("a profile").name = "other".into();
+    let signed = sign_with_comment(&client.root, &member, &comment_of(&member, "minimal"));
+    assert_kind(
+        client.state.accept_index(
+            &client.repo,
+            &trust,
+            &signed.bytes,
+            &signed.signature,
+            now(),
+            false,
+        ),
+        |kind| {
+            matches!(
+                kind,
+                ErrorKind::Inconsistent {
+                    field: "profile",
+                    ..
+                }
+            )
+        },
+    );
+}
+
+/// The profile member values of the `minimal` sample profile.
+fn minimal() -> ProfileMember {
+    let mut values = BTreeMap::new();
+    values.insert(
+        "hello".parse::<Name>().expect("valid name"),
+        [("strip".to_owned(), OptionValue::Tag("min".to_owned()))]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>(),
+    );
+    ProfileMember {
+        name: "minimal".to_owned(),
+        values,
+    }
+}
+
+/// The sample index for the profile `minimal`.
+fn profile_index(generation: u64) -> Index {
+    let mut idx = index(generation);
+    idx.profile = Some(minimal());
+    idx
+}
+
+/// The trusted comment for `index` as if its profile were named `profile`.
+fn comment_of(index: &Index, profile: &str) -> String {
+    format!(
+        "{} profile={profile}",
+        IndexComment {
+            repo: index.repo.clone(),
+            channel: index.channel.clone(),
+            arch: index.arch,
+            generation: index.generation,
+            profile: None,
+        }
+    )
+}
+
+/// Signs `index` with the trusted comment `comment`.
+fn sign_with_comment(key: &TestKey, index: &Index, comment: &str) -> Signed {
+    let bytes = index.encode().expect("sample indexes are valid");
+    Signed {
+        signature: key.sign(&bytes, comment),
+        bytes,
+    }
 }
 
 #[test]

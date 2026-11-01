@@ -621,6 +621,7 @@ fn keys_json_is_versioned_and_signed_by_the_root_key() {
     let config = laft_index::Repo {
         name: "core".parse().unwrap(),
         channel: "current".parse().unwrap(),
+        profile: None,
         arch: laft_pkg::Arch::X86_64V3,
         key: public(&root),
         keys: vec![],

@@ -73,6 +73,7 @@ pub(crate) fn list(env: &Env) -> Result<u8, Failure> {
         let trust = laft_index::Repo {
             name: name.clone(),
             channel: repo.channel.clone(),
+            profile: None,
             arch: crate::env::ARCH,
             key: repo.key.clone(),
             keys: repo.keys.clone(),

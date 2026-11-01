@@ -12,7 +12,8 @@
 //! `keys.json` runs in direct mode and signs indexes with a root key.
 //!
 //! [`IndexState`] keeps what a client accepted, one record per repository
-//! for `keys.json` and one per channel and architecture for indexes, and
+//! for `keys.json` and one per channel, profile and architecture for
+//! indexes, and
 //! refuses anything that would go back: a lower index generation, a lower
 //! `keys.json` version, a `keys.json` that disappears, a revoked key or an
 //! expired index. This crate reads downloaded bytes and does no networking.
@@ -30,6 +31,7 @@
 //! let repo = Repo {
 //!     name: "core".parse()?,
 //!     channel: "current".parse()?,
+//!     profile: None,
 //!     arch: laft_pkg::Arch::X86_64V3,
 //!     key: "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3".parse()?,
 //!     keys: vec![],
