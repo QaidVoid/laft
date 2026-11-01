@@ -476,6 +476,51 @@ fn a_constraint_on_a_package_without_options_is_r073() {
 }
 
 #[test]
+fn a_constraint_on_a_package_outside_the_run_cannot_be_verified() {
+    let errors = errors(
+        "app",
+        &[(
+            "recipes/app/package.stav",
+            &recipe(
+                "app",
+                &format!("{SOURCE}  link_deps = [ghost{{ssl}}]\n  build custom {{}}"),
+            ),
+        )],
+    );
+    assert_eq!(
+        errors[0],
+        (
+            "R073".to_owned(),
+            "the dependency on ghost requires ssl, which cannot be verified, because no repository of the run holds ghost"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn a_broken_options_file_of_a_dependency_is_reported_once() {
+    let mesa_options = "struct Options {\n  vulkan Vulkan = intel\n}\n";
+    let app = recipe(
+        "app",
+        &format!("{SOURCE}  link_deps = [mesa{{ssl}}, mesa{{vulkan=amd}}]\n  build custom {{}}"),
+    );
+    let mesa = recipe("mesa", "  build custom {}");
+    let files: Vec<(&str, &str)> = vec![
+        ("recipes/mesa/options.stav", mesa_options),
+        ("recipes/mesa/package.stav", &mesa),
+        ("recipes/app/package.stav", &app),
+    ];
+    let errors = errors("app", &files);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].0, "R072");
+    assert!(
+        errors[0].1.contains("recipes/mesa/options.stav"),
+        "{:?}",
+        errors[0].1
+    );
+}
+
+#[test]
 fn a_conflict_or_replace_takes_no_option_constraints() {
     let conflicts = errors(
         "app",
@@ -495,6 +540,29 @@ fn a_conflict_or_replace_takes_no_option_constraints() {
                 .to_owned()
         )
     );
+}
+
+#[test]
+fn a_subpackage_conflict_or_replace_takes_no_option_constraints() {
+    for (field, what) in [("conflicts", "conflict"), ("replaces", "replace")] {
+        let body = format!(
+            "{SOURCE}  build custom {{}}\n  subpackage tools {{\n    files = [\"x\"]\n    {field} = [mesa{{vulkan=amd}}]\n  }}"
+        );
+        let errors = errors(
+            "app",
+            &[("recipes/app/package.stav", &recipe("app", &body))],
+        );
+        assert_eq!(
+            errors[0],
+            (
+                "R073".to_owned(),
+                format!(
+                    "the {what} on mesa carries option constraints, which a {what} does not take"
+                )
+            ),
+            "{field}"
+        );
+    }
 }
 
 #[test]

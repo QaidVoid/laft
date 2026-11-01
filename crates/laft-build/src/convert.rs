@@ -55,6 +55,22 @@ impl Cx<'_> {
     fn has_errors(&self) -> bool {
         !self.found.is_empty()
     }
+
+    /// Adds the options-file problems of a dependency target, skipping the
+    /// ones already reported, which several constrained dependencies on one
+    /// broken target would report twice.
+    fn absorb(&mut self, found: Vec<FileDiagnostic>) {
+        for d in found {
+            let duplicate = self.found.iter().any(|e| {
+                e.diagnostic.code == d.diagnostic.code
+                    && e.diagnostic.message == d.diagnostic.message
+                    && e.diagnostic.span == d.diagnostic.span
+            });
+            if !duplicate {
+                self.found.push(d);
+            }
+        }
+    }
 }
 
 /// Checks the evaluated package `p` and converts it. Returns `None` when a
@@ -78,6 +94,18 @@ pub(crate) fn convert(cx: &mut Cx<'_>, p: schema::Package) -> Option<Recipe> {
     check_constraints(cx, &["deps"], &p.deps);
     for (suffix, s) in &p.subpackages {
         check_constraints(cx, &["subpackages", suffix, "deps"], &s.deps);
+        reject_constraints(
+            cx,
+            &["subpackages", suffix, "conflicts"],
+            &s.conflicts,
+            "conflict",
+        );
+        reject_constraints(
+            cx,
+            &["subpackages", suffix, "replaces"],
+            &s.replaces,
+            "replace",
+        );
     }
     reject_constraints(cx, &["conflicts"], &p.conflicts, "conflict");
     reject_constraints(cx, &["replaces"], &p.replaces, "replace");
@@ -314,23 +342,41 @@ fn add_dep(deps: &mut Vec<PkgRef>, name: &str) {
 /// declares, and for a tag constraint a tag of that option's sum type.
 fn check_constraints(cx: &mut Cx<'_>, keys: &[&str], deps: &[PkgRef]) {
     for dep in deps {
-        if dep.options().is_empty() || !declares_recipe(cx, dep.name()) {
+        if dep.options().is_empty() {
             continue;
         }
-        let (decls, _) = options::declarations(cx.all_repos, dep.name());
-        for constraint in dep.options().as_slice() {
-            let problem = match &decls {
-                Some(decls) => decls.constraint_problem(dep.name(), constraint),
-                None => Some(format!(
-                    "the dependency on {} requires {}, which {} declares no options",
-                    dep.name(),
-                    constraint,
-                    dep.name()
-                )),
-            };
-            if let Some(message) = problem {
-                cx.error(keys, "R073", message);
+        let (decls, found) = options::declarations(cx.all_repos, dep.name());
+        match &decls {
+            Some(decls) if found.is_empty() => {
+                for constraint in dep.options().as_slice() {
+                    if let Some(message) = decls.constraint_problem(dep.name(), constraint) {
+                        cx.error(keys, "R073", message);
+                    }
+                }
             }
+            Some(_) => cx.absorb(found),
+            None if found.is_empty() => {
+                let reason = if declares_recipe(cx, dep.name()) {
+                    format!("which {} declares no options", dep.name())
+                } else {
+                    format!(
+                        "which cannot be verified, because no repository of the run holds {}",
+                        dep.name()
+                    )
+                };
+                for constraint in dep.options().as_slice() {
+                    cx.error(
+                        keys,
+                        "R073",
+                        format!(
+                            "the dependency on {} requires {}, {reason}",
+                            dep.name(),
+                            constraint
+                        ),
+                    );
+                }
+            }
+            None => cx.absorb(found),
         }
     }
 }
