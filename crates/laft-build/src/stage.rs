@@ -12,7 +12,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use laft_core::{Blake3Hash, Name, PkgRef, Variant};
-use laft_sandbox::RootSandbox;
+use laft_sandbox::{RootSandbox, terminated};
 use serde::Deserialize;
 use stav::{AttrPath, ImportRoot, Limits, RootSpec};
 
@@ -1234,6 +1234,9 @@ impl StageRun<'_> {
     ) -> Result<(), BuildError> {
         let needed = self.options.min_available;
         loop {
+            if terminated() {
+                return Err(BuildError::interrupted());
+            }
             let available = available_memory()?;
             if available >= needed {
                 return Ok(());
