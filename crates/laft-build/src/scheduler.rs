@@ -348,9 +348,13 @@ impl<'a> Scheduler<'a> {
         Ok(waits)
     }
 
-    /// Starts every build that fits, and, when only big builds are ready
-    /// and none fits a host that no build uses, waits for the memory of
-    /// the one that comes first, checking every minute.
+    /// Starts every build that fits until `workers` run or nothing new
+    /// may start. When only big builds are ready and none fits a host
+    /// that no build uses, waits for the memory of the one that comes
+    /// first, checking every minute, and keeps waiting and starting until
+    /// a build runs, the run is asked to stop, or the memory cannot be
+    /// read, so memory that another tenant of the host takes away while
+    /// the run waits never ends the run.
     fn dispatch<J>(
         &mut self,
         prepare: &mut dyn FnMut(&Item) -> J,
@@ -360,8 +364,8 @@ impl<'a> Scheduler<'a> {
         if self.stopped {
             return Ok(());
         }
-        let waits = self.fill(prepare, jobs)?;
-        if self.running.is_empty() && waits && !self.stopped {
+        let mut waits = self.fill(prepare, jobs)?;
+        while self.running.is_empty() && waits && !self.stopped {
             let item = self
                 .next_ready(&BTreeSet::new())
                 .expect("a big build waits for an idle host");
@@ -379,9 +383,10 @@ impl<'a> Scheduler<'a> {
                 waiting(needed, free);
                 std::thread::sleep(self.memory_wait);
             }
-            if !self.stopped {
-                self.fill(prepare, jobs)?;
+            if self.stopped {
+                break;
             }
+            waits = self.fill(prepare, jobs)?;
         }
         Ok(())
     }

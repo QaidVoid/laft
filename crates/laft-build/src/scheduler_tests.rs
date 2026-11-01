@@ -433,3 +433,47 @@ fn the_next_build_that_fits_starts_instead() {
         .collect();
     assert_eq!(names, ["b", "a"], "a waits, b starts instead");
 }
+
+#[test]
+fn memory_that_vanishes_during_the_wait_does_not_end_the_run() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_look = calls.clone();
+    let waits = Arc::new(AtomicUsize::new(0));
+    let waits_announce = waits.clone();
+    let look = move || {
+        // The host holds the memory while the run waits for it, loses it
+        // to another tenant right before the build starts, and holds it
+        // again on the next wait.
+        Ok(match calls_look.fetch_add(1, Ordering::SeqCst) {
+            0 | 1 | 3 | 4 => 0,
+            _ => 150,
+        })
+    };
+    let announce = move |_, _| {
+        waits_announce.fetch_add(1, Ordering::SeqCst);
+    };
+    let mut scheduler = scheduler_with(
+        &["a"],
+        &[],
+        &[("a", 0)],
+        1,
+        Memory {
+            estimates: BTreeMap::from([(item("a"), 100)]),
+            big: BTreeSet::from([item("a")]),
+            available: &look,
+            waiting: &announce,
+        },
+    )
+    .memory_wait(Duration::ZERO);
+    let built = scheduler
+        .run(
+            ["a"].iter().map(|name| item(name)),
+            &mut |_: &Item| (),
+            &|_, (): ()| Ok(()),
+            &mut |_, _| Ok(Vec::new()),
+            None,
+        )
+        .expect("the run builds instead of ending as interrupted");
+    assert_eq!(built.len(), 1);
+    assert_eq!(waits.load(Ordering::SeqCst), 2, "the build waits twice");
+}
