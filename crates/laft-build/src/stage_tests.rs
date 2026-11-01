@@ -1643,8 +1643,12 @@ fn a_store_step_takes_the_keys_of_its_packages_before_it_starts() {
     let parallel_dir = laft_test::tempdir();
     let serial = keyed_alpha(serial_dir.path(), 1);
     let parallel = keyed_alpha(parallel_dir.path(), 2);
+    if refused(&serial) || refused(&parallel) {
+        return;
+    }
     assert_eq!(
-        parallel, serial,
+        parallel.expect("the parallel run builds"),
+        serial.expect("the serial run builds"),
         "the key of alpha does not depend on the scheduling"
     );
 }
@@ -1731,7 +1735,7 @@ fn a_forward_link_dependency_builds_against_the_entries_of_its_key() {
 /// taken in stage-file order. `slow` holds `alpha` back long enough for
 /// `omega` to be built first, which is what made the key depend on the
 /// scheduling.
-fn keyed_alpha(dir: &Path, workers: usize) -> String {
+fn keyed_alpha(dir: &Path, workers: usize) -> Result<String, BuildError> {
     let stage = host_tools_stage(
         dir,
         r#"    { name = "build", packages = [slow, alpha, gamma, omega] },"#,
@@ -1802,9 +1806,6 @@ fn keyed_alpha(dir: &Path, workers: usize) -> String {
             ..store_options(dir)
         },
     );
-    if refused(&result) {
-        return String::new();
-    }
     let states = result.expect("the run builds");
     assert!(
         states.iter().all(|(_, s)| *s == StageState::Done),
@@ -1818,5 +1819,5 @@ fn keyed_alpha(dir: &Path, workers: usize) -> String {
         ))
         .unwrap()
         .expect("the database records the build");
-    alpha.record.key.to_string()
+    Ok(alpha.record.key.to_string())
 }
