@@ -25,12 +25,92 @@ fn encoded_index_decodes_to_the_same_index() {
         .defaults
         .providers
         .insert("so:libz.so.1".into(), "zlib".parse().expect("valid name"));
+    original.options.insert(
+        "mesa".parse().expect("valid name"),
+        vec![OptionDecl {
+            name: "vulkan".to_owned(),
+            kind: OptionType::Tags(vec!["amd".to_owned(), "intel".to_owned()]),
+            default: OptionValue::Tag("intel".to_owned()),
+            doc: "The Vulkan backend.".to_owned(),
+        }],
+    );
+    original.profile = Some(ProfileMember {
+        name: "minimal".to_owned(),
+        values: [("mesa".parse().expect("valid name"))]
+            .into_iter()
+            .map(|n| {
+                (
+                    n,
+                    [("x11".to_owned(), OptionValue::Bool(false))]
+                        .into_iter()
+                        .collect(),
+                )
+            })
+            .collect(),
+    });
     let bytes = original.encode().expect("valid");
     assert_eq!(Index::decode(&bytes).expect("decodes"), original);
     assert_eq!(
         decompress(&bytes, MAX_INDEX_SIZE).expect("zstd"),
         original.to_json().expect("valid")
     );
+}
+
+#[test]
+fn an_option_declaration_must_fit_its_own_fields() {
+    let hash = "b3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let decl = |kind: OptionType, default: OptionValue| OptionDecl {
+        name: "vulkan".to_owned(),
+        kind,
+        default,
+        doc: String::new(),
+    };
+    let snapshot = RecipeSnapshot {
+        file: format!("recipes/{hash}.tar.zst"),
+        size: 1,
+        blake3: hash.parse().expect("valid hash"),
+    };
+    let mut original = index(1);
+    original.recipes = Some(snapshot);
+    original.options.insert(
+        "mesa".parse().expect("valid name"),
+        vec![decl(
+            OptionType::Tags(vec!["amd".to_owned()]),
+            OptionValue::Bool(true),
+        )],
+    );
+    let err = original.validate().expect_err("the default is no tag");
+    assert!(
+        err.to_string()
+            .contains("has a default that does not fit its type"),
+        "{err}"
+    );
+    let mut original = index(1);
+    original.recipes = Some(RecipeSnapshot {
+        file: "recipes/b3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.tar.zst".to_owned(),
+        size: 1,
+        blake3: hash.parse().expect("valid hash"),
+    });
+    let err = original.validate().expect_err("the file is another hash");
+    assert!(err.to_string().contains("`recipes` names"), "{err}");
+}
+
+#[test]
+fn a_recipe_snapshot_names_its_own_hash() {
+    let hash = "b3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let mut original = index(1);
+    original.recipes = Some(RecipeSnapshot {
+        file: "recipes/b3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.tar.zst".to_owned(),
+        size: 1,
+        blake3: hash.parse().expect("valid hash"),
+    });
+    let err = original.validate().expect_err("the file is another hash");
+    assert!(err.to_string().contains("`recipes` names"), "{err}");
+    let mut without = index(1);
+    without.recipes = None;
+    without
+        .validate()
+        .expect("a repository may publish no recipe snapshots");
 }
 
 #[test]
@@ -208,6 +288,9 @@ fn package((name, version, rev, fixed): &Identity, any_arch: bool) -> IndexEntry
     entry
 }
 
+/// A fixed hash for the generated snapshots.
+const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
 fn arb_index() -> impl Strategy<Value = Index> {
     (
         prop::collection::vec((arb_identity(), any::<bool>()), 0..6),
@@ -294,6 +377,13 @@ fn arb_index() -> impl Strategy<Value = Index> {
                     },
                     packages,
                     yanked,
+                    options: std::collections::BTreeMap::new(),
+                    recipes: Some(RecipeSnapshot {
+                        file: format!("recipes/b3:{HASH}.tar.zst"),
+                        size: 1,
+                        blake3: format!("b3:{HASH}").parse().expect("valid hash"),
+                    }),
+                    profile: None,
                 }
             },
         )

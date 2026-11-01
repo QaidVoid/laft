@@ -137,6 +137,9 @@ pub(crate) fn index(repo: &str, packages: Vec<Meta>) -> Index {
         defaults: Defaults::default(),
         packages: packages.into_iter().map(entry).collect(),
         yanked: vec![],
+        options: BTreeMap::new(),
+        recipes: None,
+        profile: None,
     }
 }
 

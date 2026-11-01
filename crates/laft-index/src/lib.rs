@@ -60,7 +60,8 @@ mod test_support;
 pub use comment::{IndexComment, KeysComment};
 pub use error::{Error, ErrorKind};
 pub use index::{
-    Defaults, Index, IndexEntry, MAX_INDEX_SIZE, MAX_VALIDITY_SECS, Yank, next_generation,
+    Defaults, Index, IndexEntry, MAX_INDEX_SIZE, MAX_VALIDITY_SECS, OptionDecl, OptionType,
+    ProfileMember, RecipeSnapshot, Yank, next_generation,
 };
 pub use key::{KeyId, PublicKey, Signature};
 pub use keys::{Keys, OnlineKey};

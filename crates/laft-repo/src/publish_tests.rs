@@ -71,6 +71,9 @@ fn generation(repo: &Repository, signer: &Signer, offset: u64, packages: Vec<Ind
         defaults: Defaults::default(),
         packages,
         yanked: vec![],
+        options: BTreeMap::new(),
+        recipes: None,
+        profile: None,
     };
     let options = Options {
         now: Timestamp::from_secs(T0 + offset),

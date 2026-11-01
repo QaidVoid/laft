@@ -53,12 +53,12 @@ fn a_descriptor_declares_neither_publish_nor_profiles_by_default() {
 #[test]
 fn a_publish_or_profile_name_that_is_no_recipe_name_is_invalid() {
     let dir = laft_test::tempdir();
-    let error = manifest(&dir, "recipe_repo core {}\n\npublish Mesa {\n  options {\n    x11 = false\n  }\n}\n")
-        .expect_err("the recipe name is invalid");
-    assert!(
-        error.to_string().contains("core publishes Mesa"),
-        "{error}"
-    );
+    let error = manifest(
+        &dir,
+        "recipe_repo core {}\n\npublish Mesa {\n  options {\n    x11 = false\n  }\n}\n",
+    )
+    .expect_err("the recipe name is invalid");
+    assert!(error.to_string().contains("core publishes Mesa"), "{error}");
     let dir = laft_test::tempdir();
     let error = manifest(
         &dir,
@@ -76,8 +76,11 @@ fn a_publish_or_profile_name_that_is_no_recipe_name_is_invalid() {
 #[test]
 fn an_option_value_that_is_no_bool_or_tag_is_rejected() {
     let dir = laft_test::tempdir();
-    let error = manifest(&dir, "recipe_repo core {}\n\npublish mesa {\n  options {\n    jobs = 3\n  }\n}\n")
-        .expect_err("an Int is no option value");
+    let error = manifest(
+        &dir,
+        "recipe_repo core {}\n\npublish mesa {\n  options {\n    jobs = 3\n  }\n}\n",
+    )
+    .expect_err("an Int is no option value");
     assert!(
         error.to_string().to_lowercase().contains("bool")
             || error.to_string().to_lowercase().contains("tag")

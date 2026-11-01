@@ -2,7 +2,9 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 
-use laft_core::{Blake3Hash, Name, Provide, StoreId, Timestamp, Variant, Version};
+use laft_core::{
+    Blake3Hash, Name, OptionValue, Provide, StoreId, Timestamp, Variant, Version, is_valid_name,
+};
 use laft_pkg::{Arch, Meta};
 use serde::de::Error as _;
 use serde::ser::Error as _;
@@ -49,6 +51,9 @@ const LEVEL: i32 = 19;
 ///     defaults: Defaults::default(),
 ///     packages: vec![],
 ///     yanked: vec![],
+///     options: Default::default(),
+///     recipes: None,
+///     profile: None,
 /// };
 /// let bytes = index.encode()?;
 /// assert_eq!(Index::decode(&bytes)?, index);
@@ -86,6 +91,63 @@ pub struct Index {
     /// duplicates. None has the store id or the name, version, revision and
     /// variant of an available package.
     pub yanked: Vec<Yank>,
+    /// The option declarations of every recipe with options, by package
+    /// name.
+    pub options: BTreeMap<Name, Vec<OptionDecl>>,
+    /// The recipe snapshot this generation was built from, when the
+    /// repository publishes recipe snapshots.
+    pub recipes: Option<RecipeSnapshot>,
+    /// The profile this index was built for, in a profile index.
+    pub profile: Option<ProfileMember>,
+}
+
+/// One option a recipe declares, as an index records it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptionDecl {
+    /// The option name.
+    pub name: String,
+    /// The type of the option.
+    #[serde(rename = "type")]
+    pub kind: OptionType,
+    /// The value the recipe is published with when nothing is set.
+    pub default: OptionValue,
+    /// The first line of the doc comment.
+    pub doc: String,
+}
+
+/// The type of a declared option.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OptionType {
+    /// A `Bool` option, written `"bool"`.
+    Bool(String),
+    /// A sum option: the tag names, in declaration order.
+    Tags(Vec<String>),
+}
+
+/// The recipe snapshot of an index generation: the exact recipe
+/// repositories that produced it, as one archive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecipeSnapshot {
+    /// The path of the archive relative to the repository base, always
+    /// `recipes/<blake3>.tar.zst`.
+    pub file: String,
+    /// The size of the archive in bytes.
+    pub size: u64,
+    /// The BLAKE3 hash of the archive.
+    pub blake3: Blake3Hash,
+}
+
+/// The profile an index was built for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileMember {
+    /// The profile name.
+    pub name: String,
+    /// The values of the profile, by package name and option name.
+    pub values: BTreeMap<Name, BTreeMap<String, OptionValue>>,
 }
 
 /// Repository defaults that resolve choices between packages.
@@ -142,7 +204,7 @@ pub struct Yank {
 
 impl Index {
     /// The index format version this crate reads and writes.
-    pub const FORMAT: u32 = 1;
+    pub const FORMAT: u32 = 2;
 
     /// The trusted comment to sign the encoded index with.
     pub fn comment(&self) -> IndexComment {
@@ -184,6 +246,76 @@ impl Index {
                 return Err(err(format!(
                     "provider default {key:?} names a pkg-config module with a version"
                 )));
+            }
+        }
+        for (origin, decls) in &self.options {
+            let mut names: Option<&str> = None;
+            for decl in decls {
+                if !is_valid_name(&decl.name) {
+                    return Err(err(format!(
+                        "options of {origin} name the invalid option {:?}",
+                        decl.name
+                    )));
+                }
+                if names.is_some_and(|previous| previous >= decl.name.as_str()) {
+                    return Err(err(format!(
+                        "options of {origin} are not sorted by option name"
+                    )));
+                }
+                names = Some(&decl.name);
+                match &decl.kind {
+                    OptionType::Bool(what) if what == "bool" => {}
+                    OptionType::Bool(what) => {
+                        return Err(err(format!(
+                            "option {} of {origin} has the type {what:?}, only \"bool\" or a list of tags is",
+                            decl.name
+                        )));
+                    }
+                    OptionType::Tags(tags) => {
+                        if tags.is_empty() || !tags.iter().all(|t| is_valid_name(t)) {
+                            return Err(err(format!(
+                                "option {} of {origin} has a type that is no non-empty list of tag names",
+                                decl.name
+                            )));
+                        }
+                    }
+                }
+                match (&decl.default, &decl.kind) {
+                    (OptionValue::Bool(_), OptionType::Bool(what)) if what == "bool" => {}
+                    (OptionValue::Tag(tag), OptionType::Tags(tags)) if tags.contains(tag) => {}
+                    _ => {
+                        return Err(err(format!(
+                            "option {} of {origin} has a default that does not fit its type",
+                            decl.name
+                        )));
+                    }
+                }
+            }
+        }
+        if let Some(snapshot) = &self.recipes {
+            let expected = format!("recipes/{}.tar.zst", snapshot.blake3);
+            if snapshot.file != expected || snapshot.size == 0 {
+                return Err(err(format!(
+                    "`recipes` names {:?}, expected {expected:?} with a size",
+                    snapshot.file
+                )));
+            }
+        }
+        if let Some(profile) = &self.profile {
+            if profile.name.is_empty() {
+                return Err(err("`profile` has an empty name".into()));
+            }
+            for (origin, values) in &profile.values {
+                if values.is_empty() {
+                    return Err(err(format!("the profile sets no option of {origin}")));
+                }
+                for option in values.keys() {
+                    if !is_valid_name(option) {
+                        return Err(err(format!(
+                            "the profile sets the invalid option {option:?} of {origin}"
+                        )));
+                    }
+                }
             }
         }
         let mut ids = BTreeSet::new();

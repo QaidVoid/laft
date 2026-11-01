@@ -387,6 +387,9 @@ fn resolve<'e>(
         defaults: Defaults::default(),
         packages,
         yanked: Vec::new(),
+        options: BTreeMap::new(),
+        recipes: None,
+        profile: None,
     };
     let universe = Universe::new(&[Repository {
         index: &index,

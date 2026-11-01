@@ -483,7 +483,8 @@ fn descriptor(path: &Path) -> Result<RecipeRepo, Error> {
         evaluated
             .get(&AttrPath::new(["profiles"]))
             .map_err(Error::Report)?,
-    )?;    Ok(RecipeRepo {
+    )?;
+    Ok(RecipeRepo {
         name,
         path: path.to_path_buf(),
         arch: repo.arch.into_iter().collect(),

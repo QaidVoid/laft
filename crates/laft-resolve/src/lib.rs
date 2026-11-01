@@ -72,6 +72,9 @@
 //!         entry("pcre2", &[], &["so:libpcre2-8.so.0"]),
 //!     ],
 //!     yanked: vec![],
+//!     options: Default::default(),
+//!     recipes: None,
+//!     profile: None,
 //! };
 //! let universe = Universe::new(&[Repository { index: &index, priority: 0 }]);
 //! let mut input = ResolveInput::new("system");

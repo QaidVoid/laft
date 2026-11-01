@@ -312,6 +312,9 @@ pub(crate) fn index(generation: u64) -> Index {
         defaults: Defaults::default(),
         packages: vec![],
         yanked: vec![],
+        options: BTreeMap::new(),
+        recipes: None,
+        profile: None,
     }
 }
 

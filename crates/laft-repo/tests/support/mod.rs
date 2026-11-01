@@ -225,6 +225,9 @@ pub(crate) fn fixture(
         defaults: Defaults::default(),
         packages: vec![],
         yanked: vec![],
+        options: BTreeMap::new(),
+        recipes: None,
+        profile: None,
     };
     for path in packages {
         let entry = entry(path);

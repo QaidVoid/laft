@@ -187,6 +187,9 @@ impl<'a> Universe<'a> {
     /// #     defaults: Defaults::default(),
     /// #     packages: vec![],
     /// #     yanked: vec![],
+    /// #     options: Default::default(),
+    /// #     recipes: None,
+    /// #     profile: None,
     /// # };
     /// let universe = Universe::new(&[Repository { index: &index, priority: 0 }]);
     /// let mut input = ResolveInput::new("system");

@@ -78,6 +78,9 @@ pub enum Source<'a> {
 ///     defaults: Defaults::default(),
 ///     packages: vec![],
 ///     yanked: vec![],
+///     options: Default::default(),
+///     recipes: None,
+///     profile: None,
 /// };
 /// let universe = Universe::new(&[Repository { index: &index, priority: 0 }]);
 /// let resolution = universe.resolve(&ResolveInput::new("system"))?;

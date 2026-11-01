@@ -4,7 +4,7 @@ use laft_core::{Blake3Hash, StoreId, Timestamp};
 use laft_pkg::{Arch, Meta};
 use std::collections::BTreeMap;
 
-use crate::{Defaults, Index, IndexEntry, KeyId, Keys, OnlineKey, PublicKey, Repo};
+use crate::{Defaults, Index, IndexEntry, KeyId, Keys, OnlineKey, PublicKey, RecipeSnapshot, Repo};
 
 /// A signing time all sample documents are built around.
 pub(crate) const T0: u64 = 1_761_652_800;
@@ -132,6 +132,16 @@ pub(crate) fn index(generation: u64) -> Index {
         defaults: Defaults::default(),
         packages: vec![entry("hello", "1.0"), entry("zlib", "1.3.1")],
         yanked: vec![],
+        options: BTreeMap::new(),
+        recipes: Some(RecipeSnapshot {
+            file: "recipes/b3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tar.zst"
+                .to_owned(),
+            size: 1,
+            blake3: "b3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .parse()
+                .expect("valid hash"),
+        }),
+        profile: None,
     }
 }
 

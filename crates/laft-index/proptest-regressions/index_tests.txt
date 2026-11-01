@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e1a6d6c963c1ec9c26726022c15d62abe4591f630fffb4f461f8ff862f208780 # shrinks to index = Index { format: 2, repo: Name("core"), channel: Name("current"), arch: X86_64V3, generation: 1, timestamp: 1970-01-01T00:00:00Z, expires: 1970-01-01T00:00:01Z, defaults: Defaults { alternatives: {}, providers: {} }, packages: [], yanked: [], options: {}, recipes: None, profile: None }

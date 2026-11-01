@@ -194,5 +194,8 @@ pub(crate) fn empty(repo: Name, channel: &Channel) -> Index {
         defaults: Defaults::default(),
         packages: Vec::new(),
         yanked: Vec::new(),
+        options: BTreeMap::new(),
+        recipes: None,
+        profile: None,
     }
 }
