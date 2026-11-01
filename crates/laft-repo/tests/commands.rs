@@ -74,10 +74,20 @@ fn index_copies_packages_by_store_id_and_signs_a_new_generation() {
 /// `x11 = false` on mesa.
 fn profile_repo(dir: &Path) -> PathBuf {
     let recipes = dir.join("recipes-src");
-    fs::create_dir_all(&recipes).expect("writable");
+    fs::create_dir_all(recipes.join("recipes/mesa")).expect("writable");
     fs::write(
         recipes.join("recipes.stav"),
         "recipe_repo core {}\n\nprofile minimal {\n  package mesa {\n    options {\n      x11 = false\n    }\n  }\n}\n",
+    )
+    .expect("writable");
+    fs::write(
+        recipes.join("recipes/mesa/options.stav"),
+        "struct Options {\n  ## Support X11 through GLX.\n  x11: Bool = true\n}\n",
+    )
+    .expect("writable");
+    fs::write(
+        recipes.join("recipes/mesa/package.stav"),
+        "import \"laft/options\" as opt\n\npackage mesa {\n  version = \"25.2.0\"\n  summary = if opt.x11 { \"with X11\" } else { \"Wayland only\" }\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
     )
     .expect("writable");
     recipes
@@ -300,7 +310,7 @@ fn index_records_the_option_declarations_of_the_recipes() {
     fs::write(recipes.join("recipes.stav"), "recipe_repo core {}\n").expect("writable");
     fs::write(
         recipes.join("recipes/hello/package.stav"),
-        "package hello {\n  version = \"1.0\"\n  summary = \"Say hello\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+        "import \"laft/options\" as opt\n\npackage hello {\n  version = \"1.0\"\n  summary = if opt.tool { \"Say hello with tools\" } else { \"Say hello\" }\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
     )
     .expect("writable");
     fs::write(
@@ -315,7 +325,10 @@ fn index_records_the_option_declarations_of_the_recipes() {
     .expect("writable");
 
     let out = dir.path().join("out");
-    pkg("hello", "1.0").file("usr/bin/hello", "hi").write(&out);
+    pkg("hello", "1.0")
+        .option("tool", laft_core::OptionValue::TRUE)
+        .file("usr/bin/hello", "hi")
+        .write(&out);
     let repo = dir.path().join("repo");
     let now = at(0);
     let mut args = index_args(&repo, "current", &now);

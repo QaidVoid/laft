@@ -90,6 +90,7 @@ pub(crate) fn run(
         published: previous.as_ref(),
         others: &others,
         bases,
+        recipes: None,
         allow_bootstrap: false,
     });
     if report.errors > 0 {

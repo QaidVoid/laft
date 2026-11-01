@@ -409,6 +409,14 @@ fn check_channel(repo: &Repository, channel: &Channel, args: &cli::CheckArgs) ->
     };
     let bases = read_indexes(&args.with_index)?;
     let others = repo.other_indexes(channel)?;
+    let recipes = args
+        .recipes
+        .as_deref()
+        .map(|dir| {
+            laft_build::Repos::open(std::slice::from_ref(&dir))
+                .map_err(|e| Error::new(format!("{}: {e}", dir.display())))
+        })
+        .transpose()?;
     Ok(check::check(&check::Input {
         repo,
         index: &index,
@@ -417,6 +425,7 @@ fn check_channel(repo: &Repository, channel: &Channel, args: &cli::CheckArgs) ->
         published: published.as_ref(),
         others: &others,
         bases: &bases,
+        recipes: recipes.as_ref(),
         allow_bootstrap: args.allow_bootstrap,
     }))
 }

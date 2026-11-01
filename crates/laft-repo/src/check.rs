@@ -18,6 +18,10 @@
 //! | KR009 | error | A package file that is missing or differs in size or hash from its entry. |
 //! | KR010 | error | An entry whose metadata or store id differs from its package file. |
 //! | KR011 | error | A payload that ships a file a trigger generates. |
+//! | KR012 | warning | An option whose every other value gives the recipe the plan its default gives. |
+//! | KR013 | error | A publish block or profile that names a recipe without options, an option the recipe does not declare, or a value the option does not take. |
+//! | KR014 | error | A package whose metadata sets an option its recipe does not declare, misses one it declares, or sets one to a value its type does not take. |
+//! | KR015 | error | A dependency whose option constraints name an option the target recipe does not declare, or a value the option does not take, or whose constraints cannot be verified. |
 //! | CI001 | error | A package built from a dirty recipe tree or by a bootstrap build, unless allowed. |
 //! | CI003 | error | A package without readable buildinfo. |
 //!
@@ -29,8 +33,11 @@ use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::PathBuf;
 
-use laft_core::{Dep, Name, PkgRef, Provide, StoreId, TRIGGERS, Variant, Version, VersionReq};
-use laft_index::{Index, IndexEntry};
+use laft_core::{
+    Dep, Name, OptionConstraint, OptionValue, PkgRef, Provide, StoreId, TRIGGERS, Variant, Version,
+    VersionReq,
+};
+use laft_index::{Index, IndexEntry, OptionType};
 use laft_pkg::{Entry, Manifest, Meta, Reader};
 use laft_resolve::{Request, ResolveInput, Universe};
 use serde::{Deserialize, Serialize};
@@ -140,6 +147,9 @@ pub(crate) struct Input<'a> {
     pub(crate) others: &'a [Index],
     /// Indexes of base repositories that dependencies may resolve to.
     pub(crate) bases: &'a [Index],
+    /// The recipe repository the packages were built from, for the checks
+    /// that read recipes.
+    pub(crate) recipes: Option<&'a laft_build::Repos>,
     /// Whether packages from dirty or bootstrap builds are allowed.
     pub(crate) allow_bootstrap: bool,
 }
@@ -156,6 +166,12 @@ pub(crate) fn check(input: &Input<'_>) -> Report {
     downgrades(input, &mut findings);
     ambiguous_providers(input.index, &mut findings);
     buildinfo(input, &mut findings);
+    option_metadata(input, &mut findings);
+    option_constraints(input, &mut findings);
+    if input.recipes.is_some() {
+        publish_blocks(input, &mut findings);
+        option_effect(input, &mut findings);
+    }
     findings.sort_by(|a, b| (&a.code, &a.message).cmp(&(&b.code, &b.message)));
     findings.dedup();
     let errors = findings.iter().filter(|f| f.level == Level::Error).count();
@@ -797,6 +813,265 @@ fn ambiguous_providers(index: &Index, findings: &mut Vec<Finding>) {
                 ))
                 .packages(involved.iter().map(|&i| metas[i])),
         );
+    }
+}
+
+/// Whether `value` is of the type `kind` declares.
+fn fits(kind: &OptionType, value: &OptionValue) -> bool {
+    match (kind, value) {
+        (OptionType::Bool(what), OptionValue::Bool(_)) => what == "bool",
+        (OptionType::Tags(tags), OptionValue::Tag(tag)) => tags.iter().any(|t| t == tag),
+        _ => false,
+    }
+}
+
+/// KR014: every package sets exactly the options its recipe declares, with
+/// values of the declared types.
+fn option_metadata(input: &Input<'_>, findings: &mut Vec<Finding>) {
+    for entry in &input.index.packages {
+        let meta = &entry.meta;
+        let kr014 = |message: String| finding("KR014", Level::Error, message).packages([meta]);
+        let Some(decls) = input.index.options.get(&meta.name) else {
+            if meta.options.is_empty() {
+                continue;
+            }
+            let names: Vec<&str> = meta.options.keys().map(String::as_str).collect();
+            findings.push(kr014(format!(
+                "option metadata: {} sets the options {}, but the index records no option declarations for it",
+                label(meta),
+                names.join(", ")
+            )));
+            continue;
+        };
+        let mut problems = Vec::new();
+        for (name, value) in &meta.options {
+            let Some(decl) = decls.iter().find(|d| &d.name == name) else {
+                problems.push(format!(
+                    "the option {name} is set, which the recipe does not declare"
+                ));
+                continue;
+            };
+            if !fits(&decl.kind, value) {
+                problems.push(format!(
+                    "the option {name} is set to {value}, which does not fit its type"
+                ));
+            }
+        }
+        for decl in decls {
+            if !meta.options.contains_key(&decl.name) {
+                problems.push(format!(
+                    "the option {} is declared, which the package does not set",
+                    decl.name
+                ));
+            }
+        }
+        if !problems.is_empty() {
+            let mut f = kr014(format!("option metadata: {}", label(meta)));
+            for problem in problems {
+                f = f.detail(problem);
+            }
+            findings.push(f);
+        }
+    }
+}
+
+/// KR015: every option constraint of a dependency names an option and tag
+/// that the target recipe declares.
+fn option_constraints(input: &Input<'_>, findings: &mut Vec<Finding>) {
+    for entry in &input.index.packages {
+        let meta = &entry.meta;
+        let deps = meta
+            .depends
+            .iter()
+            .chain(&meta.conflicts)
+            .chain(&meta.replaces);
+        for dep in deps {
+            let Dep::Pkg(target, _, constraints) = dep else {
+                continue;
+            };
+            if constraints.is_empty() {
+                continue;
+            }
+            let kr015 = |message: String| {
+                finding("KR015", Level::Error, message)
+                    .packages([meta])
+                    .detail(format!("the dependency: {dep}"))
+            };
+            let Some(decls) = input.index.options.get(target) else {
+                findings.push(kr015(format!(
+                    "option constraints: {} requires options of {target}, but the index records no option declarations for {target}, so they cannot be verified",
+                    label(meta)
+                )));
+                continue;
+            };
+            for constraint in constraints.as_slice() {
+                let name = constraint.name();
+                let Some(decl) = decls.iter().find(|d| d.name == name) else {
+                    findings.push(kr015(format!(
+                        "option constraints: the dependency on {target} requires the option {name}, which the recipe of {target} does not declare"
+                    )));
+                    continue;
+                };
+                let fits = match constraint {
+                    OptionConstraint::True { .. } | OptionConstraint::False { .. } => {
+                        matches!(&decl.kind, OptionType::Bool(_))
+                    }
+                    OptionConstraint::Tag { tag, .. } => {
+                        fits(&decl.kind, &OptionValue::Tag(tag.clone()))
+                    }
+                };
+                if !fits {
+                    findings.push(kr015(format!(
+                        "option constraints: the dependency on {target} requires {constraint}, which does not fit the type of the option {name}"
+                    )));
+                }
+            }
+        }
+    }
+}
+
+/// KR013: every publish block and profile names recipes with options,
+/// options they declare and tags they have.
+fn publish_blocks(input: &Input<'_>, findings: &mut Vec<Finding>) {
+    let repos = input.recipes.expect("the check runs with recipes");
+    for repo in repos.repos() {
+        for (recipe, set) in &repo.publish {
+            let what = format!("the publish block for {recipe} of repository {}", repo.name);
+            option_set(input, findings, &what, recipe, set);
+        }
+        for (profile, member) in &repo.profiles {
+            for (recipe, set) in &member.package {
+                let what = format!(
+                    "the profile {profile} of repository {} for {recipe}",
+                    repo.name
+                );
+                option_set(input, findings, &what, recipe, set);
+            }
+        }
+    }
+}
+
+/// The KR013 findings for one `publish` block or profile entry, named by
+/// `what`.
+fn option_set(
+    input: &Input<'_>,
+    findings: &mut Vec<Finding>,
+    what: &str,
+    recipe: &Name,
+    set: &BTreeMap<String, laft_build::OptionText>,
+) {
+    let repos = input.recipes.expect("the check runs with recipes");
+    let kr013 = |message: String| finding("KR013", Level::Error, message).detail(what.to_owned());
+    let declared = match repos.options(recipe) {
+        Ok(declared) => declared,
+        Err(e) => {
+            findings.push(kr013(format!("{what}: {e}")));
+            return;
+        }
+    };
+    let Some(decls) = declared else {
+        findings.push(kr013(format!("{what}: the recipe declares no options")));
+        return;
+    };
+    for (option, text) in set {
+        let value = match text {
+            laft_build::OptionText::Bool(value) => OptionValue::Bool(*value),
+            laft_build::OptionText::Tag(tag) => OptionValue::Tag(tag.clone()),
+        };
+        let Some(decl) = decls.declarations.iter().find(|d| &d.name == option) else {
+            findings.push(kr013(format!(
+                "{what}: sets the option {option}, which the recipe does not declare"
+            )));
+            continue;
+        };
+        if !fits(&decl.kind, &value) {
+            findings.push(kr013(format!(
+                "{what}: sets the option {option} to {value}, which does not fit its type"
+            )));
+        }
+    }
+}
+
+/// The plan hashes of a recipe evaluation, one per variant.
+fn plan_hashes(recipes: &[laft_build::Recipe]) -> Vec<laft_core::Blake3Hash> {
+    recipes.iter().map(|recipe| recipe.plan_hash()).collect()
+}
+
+/// KR012: an option whose every other value gives the plan the default
+/// gives.
+fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
+    let repos = input.recipes.expect("the check runs with recipes");
+    for name in repos.packages() {
+        let Some(decls) = repos.options(name).ok().flatten() else {
+            continue;
+        };
+        let default = match repos.evaluate_with(name, &BTreeMap::new()) {
+            Ok(evaluation) => plan_hashes(&evaluation.recipes),
+            Err(e) => {
+                findings.push(
+                    finding(
+                        "KR012",
+                        Level::Error,
+                        format!("cannot evaluate {name} to check its options"),
+                    )
+                    .detail(e.to_string()),
+                );
+                continue;
+            }
+        };
+        for decl in &decls.declarations {
+            let alternatives: Vec<OptionValue> = match &decl.kind {
+                OptionType::Bool(_) => vec![OptionValue::Bool(decl.default == OptionValue::FALSE)],
+                OptionType::Tags(tags) => tags
+                    .iter()
+                    .filter(|tag| Some(tag.as_str()) != default_tag(&decl.default))
+                    .map(|tag| OptionValue::Tag(tag.clone()))
+                    .collect(),
+            };
+            let mut changes = false;
+            let mut broken = false;
+            for value in &alternatives {
+                let mut set = BTreeMap::new();
+                set.insert(decl.name.clone(), value.clone());
+                match repos.evaluate_with(name, &set) {
+                    Ok(evaluation) if plan_hashes(&evaluation.recipes) != default => {
+                        changes = true;
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        findings.push(
+                            finding(
+                                "KR012",
+                                Level::Error,
+                                format!(
+                                    "cannot evaluate {name} with {}={} to check its options",
+                                    decl.name, value
+                                ),
+                            )
+                            .detail(e.to_string()),
+                        );
+                        broken = true;
+                        break;
+                    }
+                }
+            }
+            if !changes && !broken {
+                findings.push(finding(
+                    "KR012",
+                    Level::Warning,
+                    format!("option without effect: {name}: {}", decl.name),
+                ));
+            }
+        }
+    }
+}
+
+/// The tag of a default value, for a tag option.
+fn default_tag(default: &OptionValue) -> Option<&str> {
+    match default {
+        OptionValue::Tag(tag) => Some(tag),
+        OptionValue::Bool(_) => None,
     }
 }
 

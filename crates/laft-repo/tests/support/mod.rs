@@ -112,6 +112,12 @@ impl Pkg {
         self
     }
 
+    /// Sets one option value in the metadata.
+    pub(crate) fn option(mut self, name: &str, value: laft_core::OptionValue) -> Self {
+        self.meta.options.insert(name.to_owned(), value);
+        self
+    }
+
     /// Writes buildinfo that marks the build as made from a dirty recipe
     /// tree.
     pub(crate) fn dirty(mut self) -> Self {

@@ -175,6 +175,7 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
         published: previous.as_ref(),
         others: &others,
         bases: request.bases,
+        recipes: request.recipes,
         allow_bootstrap: request.allow_bootstrap,
     });
     if report.errors > 0 {
