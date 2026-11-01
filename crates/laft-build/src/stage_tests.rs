@@ -1174,6 +1174,32 @@ fn mirror_stage(dir: &Path, served: bool) -> Stage {
 }
 
 #[test]
+fn a_dry_run_admits_a_big_build_without_memory() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = host_tools_stage(dir.path(), r#"    { name = "build", packages = [greet] },"#);
+    let greet = stage.recipes.join("recipes/greet/package.stav");
+    let text = fs::read_to_string(&greet).unwrap().replace(
+        "  build custom {}",
+        "  ci { runner = big }\n  build custom {}",
+    );
+    fs::write(&greet, text).expect("the test setup works");
+    store_with_host_tools(dir.path());
+    let options = StageOptions {
+        dry_run: true,
+        min_available: u64::MAX,
+        ..store_options(dir.path())
+    };
+    let states = run_with(dir.path(), &stage, &options).expect("the dry run waits for nothing");
+    assert!(
+        states.iter().all(|(_, s)| *s == StageState::Pending),
+        "{states:?}"
+    );
+}
+
+#[test]
 fn a_corrupt_build_record_stops_the_stage() {
     if no_shell() {
         return;

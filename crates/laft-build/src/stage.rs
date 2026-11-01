@@ -803,28 +803,35 @@ impl StageRun<'_> {
             })
             .collect();
         let db = self.build_root.db();
+        // A dry run builds nothing, so every build is admitted without
+        // looking at the memory of the host, and the run only reports the
+        // plan.
         let mut big = BTreeSet::new();
-        let estimates: BTreeMap<Item, u64> = items
-            .iter()
-            .map(|item| -> Result<(Item, u64), BuildError> {
-                let recipe = graph
-                    .recipe(item)
-                    .expect("the graph holds every recipe of the step");
-                let wants = recipe.operations.ci.runner == Runner::Big;
-                if wants {
-                    big.insert(item.clone());
-                }
-                let peak = db
-                    .latest(item)?
-                    .map_or(0, |latest| latest.record.peak_memory);
-                let estimate = match peak {
-                    0 if wants => self.options.min_available,
-                    0 => DEFAULT_MEMORY,
-                    peak => peak,
-                };
-                Ok((item.clone(), estimate))
-            })
-            .collect::<Result<_, BuildError>>()?;
+        let estimates: BTreeMap<Item, u64> = if self.options.dry_run {
+            items.iter().map(|item| (item.clone(), 0)).collect()
+        } else {
+            items
+                .iter()
+                .map(|item| -> Result<(Item, u64), BuildError> {
+                    let recipe = graph
+                        .recipe(item)
+                        .expect("the graph holds every recipe of the step");
+                    let wants = recipe.operations.ci.runner == Runner::Big;
+                    if wants {
+                        big.insert(item.clone());
+                    }
+                    let peak = db
+                        .latest(item)?
+                        .map_or(0, |latest| latest.record.peak_memory);
+                    let estimate = match peak {
+                        0 if wants => self.options.min_available,
+                        0 => DEFAULT_MEMORY,
+                        peak => peak,
+                    };
+                    Ok((item.clone(), estimate))
+                })
+                .collect::<Result<_, BuildError>>()?
+        };
         let durations: BTreeMap<Item, u64> = items
             .iter()
             .map(|item| -> Result<(Item, u64), BuildError> {
