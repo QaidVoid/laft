@@ -34,6 +34,15 @@ fn encoded_index_decodes_to_the_same_index() {
             doc: "The Vulkan backend.".to_owned(),
         }],
     );
+    original.options.insert(
+        "mesa".parse().expect("valid name"),
+        vec![OptionDecl {
+            name: "x11".to_owned(),
+            kind: OptionType::Bool("bool".to_owned()),
+            default: OptionValue::Bool(true),
+            doc: String::new(),
+        }],
+    );
     original.profile = Some(ProfileMember {
         name: "minimal".to_owned(),
         values: [("mesa".parse().expect("valid name"))]
@@ -93,6 +102,107 @@ fn an_option_declaration_must_fit_its_own_fields() {
     });
     let err = original.validate().expect_err("the file is another hash");
     assert!(err.to_string().contains("`recipes` names"), "{err}");
+}
+
+#[test]
+fn a_recipe_snapshot_has_a_serializable_size() {
+    let hash = "b3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let mut original = index(1);
+    original.recipes = Some(RecipeSnapshot {
+        file: format!("recipes/{hash}.tar.zst"),
+        size: MAX_SAFE_INTEGER + 1,
+        blake3: hash.parse().expect("valid hash"),
+    });
+    let err = original
+        .validate()
+        .expect_err("the size does not fit canonical JSON");
+    assert!(err.to_string().contains("`recipes`"), "{err}");
+    assert!(
+        original.encode().is_err(),
+        "encoding must refuse, not panic"
+    );
+}
+
+#[test]
+fn a_profile_has_a_valid_name() {
+    let mut original = index(1);
+    original.profile = Some(ProfileMember {
+        name: "with space".to_owned(),
+        values: BTreeMap::new(),
+    });
+    let err = original.validate().expect_err("no name may hold a space");
+    assert!(err.to_string().contains("invalid name"), "{err}");
+}
+
+#[test]
+fn a_profile_names_declared_options_with_valid_values() {
+    let mesa: Name = "mesa".parse().expect("valid name");
+    let profile = |values| ProfileMember {
+        name: "minimal".to_owned(),
+        values,
+    };
+    let vulkan = OptionDecl {
+        name: "vulkan".to_owned(),
+        kind: OptionType::Tags(vec!["amd".to_owned(), "intel".to_owned()]),
+        default: OptionValue::Tag("intel".to_owned()),
+        doc: String::new(),
+    };
+
+    let mut original = index(1);
+    original.profile = Some(profile(
+        [(
+            mesa.clone(),
+            [("x11".to_owned(), OptionValue::Bool(false))]
+                .into_iter()
+                .collect(),
+        )]
+        .into_iter()
+        .collect(),
+    ));
+    let err = original
+        .validate()
+        .expect_err("the index declares no options for mesa");
+    assert!(
+        err.to_string()
+            .contains("records no option declarations for it"),
+        "{err}"
+    );
+
+    let mut original = index(1);
+    original.options.insert(mesa.clone(), vec![vulkan.clone()]);
+    original.profile = Some(profile(
+        [(
+            mesa.clone(),
+            [("zstd".to_owned(), OptionValue::Bool(true))]
+                .into_iter()
+                .collect(),
+        )]
+        .into_iter()
+        .collect(),
+    ));
+    let err = original
+        .validate()
+        .expect_err("vulkan is declared, zstd is not");
+    assert!(
+        err.to_string()
+            .contains("which the recipe of mesa does not declare"),
+        "{err}"
+    );
+
+    let mut original = index(1);
+    original.options.insert(mesa.clone(), vec![vulkan]);
+    original.profile = Some(profile(
+        [(
+            mesa,
+            [("vulkan".to_owned(), OptionValue::Bool(true))]
+                .into_iter()
+                .collect(),
+        )]
+        .into_iter()
+        .collect(),
+    ));
+    let err = original.validate().expect_err("a tag option takes no bool");
+    assert!(err.to_string().contains("does not fit"), "{err}");
 }
 
 #[test]

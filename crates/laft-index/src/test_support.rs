@@ -1,6 +1,6 @@
 //! Keys, signed documents and sample indexes for tests.
 
-use laft_core::{Blake3Hash, StoreId, Timestamp};
+use laft_core::{Blake3Hash, OptionValue, StoreId, Timestamp};
 use laft_pkg::{Arch, Meta};
 use std::collections::BTreeMap;
 
@@ -132,7 +132,15 @@ pub(crate) fn index(generation: u64) -> Index {
         defaults: Defaults::default(),
         packages: vec![entry("hello", "1.0"), entry("zlib", "1.3.1")],
         yanked: vec![],
-        options: BTreeMap::new(),
+        options: BTreeMap::from([(
+            "hello".parse().expect("valid name"),
+            vec![crate::OptionDecl {
+                name: "strip".to_owned(),
+                kind: crate::OptionType::Tags(vec!["min".to_owned(), "max".to_owned()]),
+                default: OptionValue::Tag("min".to_owned()),
+                doc: String::new(),
+            }],
+        )]),
         recipes: Some(RecipeSnapshot {
             file: "recipes/b3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tar.zst"
                 .to_owned(),

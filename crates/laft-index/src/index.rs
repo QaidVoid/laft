@@ -150,6 +150,15 @@ pub struct ProfileMember {
     pub values: BTreeMap<Name, BTreeMap<String, OptionValue>>,
 }
 
+/// Whether `value` is of the type `kind` declares.
+fn fits(kind: &OptionType, value: &OptionValue) -> bool {
+    match (kind, value) {
+        (OptionType::Bool(what), OptionValue::Bool(_)) => what == "bool",
+        (OptionType::Tags(tags), OptionValue::Tag(tag)) => tags.iter().any(|t| t == tag),
+        _ => false,
+    }
+}
+
 /// Repository defaults that resolve choices between packages.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -298,25 +307,38 @@ impl Index {
         }
         if let Some(snapshot) = &self.recipes {
             let expected = format!("recipes/{}.tar.zst", snapshot.blake3);
-            if snapshot.file != expected || snapshot.size == 0 {
+            if snapshot.file != expected || snapshot.size == 0 || snapshot.size > MAX_SAFE_INTEGER {
                 return Err(err(format!(
-                    "`recipes` names {:?}, expected {expected:?} with a size",
+                    "`recipes` names {:?}, expected {expected:?} with a size above 0 and at most 2^53",
                     snapshot.file
                 )));
             }
         }
         if let Some(profile) = &self.profile {
-            if profile.name.is_empty() {
-                return Err(err("`profile` has an empty name".into()));
+            if !is_valid_name(&profile.name) {
+                return Err(err(format!(
+                    "`profile` has the invalid name {:?}",
+                    profile.name
+                )));
             }
             for (origin, values) in &profile.values {
                 if values.is_empty() {
                     return Err(err(format!("the profile sets no option of {origin}")));
                 }
-                for option in values.keys() {
-                    if !is_valid_name(option) {
+                let declared = self.options.get(origin).ok_or_else(|| {
+                    err(format!(
+                        "the profile sets options of {origin}, but the index records no option declarations for it"
+                    ))
+                })?;
+                for (option, value) in values {
+                    let Some(decl) = declared.iter().find(|d| &d.name == option) else {
                         return Err(err(format!(
-                            "the profile sets the invalid option {option:?} of {origin}"
+                            "the profile sets the option {option} of {origin}, which the recipe of {origin} does not declare"
+                        )));
+                    };
+                    if !fits(&decl.kind, value) {
+                        return Err(err(format!(
+                            "the profile sets the option {option} of {origin} to {value}, which does not fit its type"
                         )));
                     }
                 }
