@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 use laft_core::{MAX_OPTIONS, Name, OptionConstraint, OptionValue, is_valid_name};
+use laft_index::{OptionDecl, OptionType};
 use stav::ast::{self, Expr, Field, Item, LiteralKind, StructDecl, Type, TypeDecl};
 use stav::{Diagnostic, FileDiagnostic, HostModule, HostValues, Span, Value, parse};
 
@@ -67,6 +68,31 @@ impl Declarations {
             .iter()
             .map(|f| (f.name.clone(), f.default.clone()))
             .collect()
+    }
+
+    /// The declarations as the index of a repository records them, sorted
+    /// by option name.
+    pub(crate) fn to_index(&self) -> Vec<OptionDecl> {
+        let mut decls: Vec<_> = self
+            .fields
+            .iter()
+            .map(|field| OptionDecl {
+                name: field.name.clone(),
+                kind: match &field.kind {
+                    Kind::Bool => OptionType::Bool("bool".to_owned()),
+                    Kind::Sum(sum) => OptionType::Tags(
+                        self.sums
+                            .iter()
+                            .find(|s| &s.name == sum)
+                            .map_or_else(Vec::new, |s| s.tags.clone()),
+                    ),
+                },
+                default: field.default.clone(),
+                doc: field.doc.clone(),
+            })
+            .collect();
+        decls.sort_by(|a, b| a.name.cmp(&b.name));
+        decls
     }
 
     /// What stops `set` from being a valid option set of this package.

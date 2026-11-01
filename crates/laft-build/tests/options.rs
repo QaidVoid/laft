@@ -336,6 +336,69 @@ fn a_broken_options_file_names_its_repository() {
 }
 
 #[test]
+fn the_index_records_the_declarations() {
+    let dir = laft_test::tempdir();
+    let repos = Repos::open(&[options_repo(dir.path())]).expect("the repository opens");
+    let options = repos
+        .options(&support::name("optpkg"))
+        .expect("the files are valid")
+        .expect("the package declares options");
+    assert_eq!(options.declarations.len(), 2);
+    let drivers = &options.declarations[0];
+    assert_eq!(drivers.name, "drivers");
+    assert_eq!(
+        drivers.kind,
+        laft_index::OptionType::Tags(vec!["all".into(), "amd".into(), "intel".into()])
+    );
+    assert_eq!(drivers.default, OptionValue::tag("all"));
+    assert_eq!(drivers.doc, "Build for every driver the hardware supports.");
+    let tool = &options.declarations[1];
+    assert_eq!(tool.name, "tool");
+    assert_eq!(tool.kind, laft_index::OptionType::Bool("bool".into()));
+    assert_eq!(tool.default, OptionValue::TRUE);
+    assert_eq!(tool.doc, "Ship the extra command line tool.");
+}
+
+#[test]
+fn a_package_without_options_file_declares_none() {
+    let dir = laft_test::tempdir();
+    let path = repo(
+        dir.path(),
+        "core",
+        &[(
+            "recipes/zlib/package.stav",
+            &support::recipe("zlib", "  empty = true\n  build custom {}"),
+        )],
+    );
+    let repos = Repos::open(&[path]).expect("the repository opens");
+    let options = repos
+        .options(&support::name("zlib"))
+        .expect("the files are valid");
+    assert!(options.is_none());
+}
+
+#[test]
+fn a_broken_options_file_refuses_the_declarations() {
+    let dir = laft_test::tempdir();
+    let path = repo(
+        dir.path(),
+        "core",
+        &[
+            ("recipes/optpkg/options.stav", "struct Options {\n"),
+            (
+                "recipes/optpkg/package.stav",
+                "package optpkg {\n  version = \"1.0\"\n  summary = \"The options package\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+            ),
+        ],
+    );
+    let repos = Repos::open(&[path]).expect("the repository opens");
+    let err = repos
+        .options(&support::name("optpkg"))
+        .expect_err("the file does not parse");
+    assert!(err.to_string().contains("R072"), "{err}");
+}
+
+#[test]
 fn a_broken_options_file_is_reported_before_the_set_is() {
     let dir = laft_test::tempdir();
     let repo = repo(

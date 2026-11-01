@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use laft_core::{Name, OptionValue, Variant};
+use laft_index::OptionDecl;
 use stav::{
     AttrPath, Checked, Diagnostic, FileDiagnostic, ImportRoot, Limits, RootSpec, Span, Value,
 };
@@ -103,6 +104,14 @@ pub struct Evaluation {
     pub warnings: Report,
 }
 
+/// The option declarations of one package, as the index of a repository
+/// records them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageOptions {
+    /// The declarations, sorted by option name.
+    pub declarations: Vec<OptionDecl>,
+}
+
 impl Repos {
     /// Opens the repositories at `paths`, lowest priority first.
     ///
@@ -162,6 +171,30 @@ impl Repos {
     /// The repositories, lowest priority first.
     pub fn repos(&self) -> &[RecipeRepo] {
         &self.repos
+    }
+
+    /// The option declarations of the package `name`, from the
+    /// `options.stav` files of every repository that contributes to it, or
+    /// `None` when no repository ships one for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `R071` and `R072` problems of a file that breaks a
+    /// rule of the option grammar.
+    pub fn options(&self, name: &Name) -> Result<Option<PackageOptions>, Error> {
+        let all: Vec<&RecipeRepo> = self.repos.iter().collect();
+        let (declared, found) = options::declarations(&all, name);
+        if !found.is_empty() {
+            return Err(Error::Problems(
+                found
+                    .into_iter()
+                    .map(|f| Problem::new(f.diagnostic.code, f.diagnostic.message))
+                    .collect(),
+            ));
+        }
+        Ok(declared.map(|decls| PackageOptions {
+            declarations: decls.to_index(),
+        }))
     }
 
     /// The names of every package, in order.
