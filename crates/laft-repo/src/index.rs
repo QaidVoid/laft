@@ -96,12 +96,20 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
         index.recipes = Some(snapshot::write(repo, source)?);
     }
     if let Some(repos) = request.recipes {
+        let mut declared = HashSet::new();
         for name in repos.packages() {
-            let options = repos.options(name).map_err(|e| Error::new(e.to_string()))?;
-            if let Some(options) = options {
-                index.options.insert(name.clone(), options.declarations);
+            declared.insert(name.clone());
+            match repos.options(name) {
+                Ok(Some(options)) => {
+                    index.options.insert(name.clone(), options.declarations);
+                }
+                Ok(None) => {
+                    index.options.remove(name);
+                }
+                Err(e) => return Err(Error::new(e.to_string())),
             }
         }
+        index.options.retain(|name, _| declared.contains(name));
     }
     let listed: HashSet<StoreId> = index.packages.iter().map(|e| e.id).collect();
     let yanked: HashSet<_> = index

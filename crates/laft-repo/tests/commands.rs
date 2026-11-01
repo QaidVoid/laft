@@ -344,6 +344,85 @@ fn index_records_the_option_declarations_of_the_recipes() {
 }
 
 #[test]
+fn index_drops_the_declarations_of_options_that_are_gone() {
+    let dir = laft_test::tempdir();
+    let recipes = dir.path().join("recipes-src");
+    fs::create_dir_all(recipes.join("recipes/hello")).expect("writable");
+    fs::write(recipes.join("recipes.stav"), "recipe_repo core {}\n").expect("writable");
+    fs::write(
+        recipes.join("recipes/hello/package.stav"),
+        "import \"laft/options\" as opt\n\npackage hello {\n  version = \"1.0\"\n  summary = if opt.tool { \"With tools\" } else { \"Say hello\" }\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+    fs::write(
+        recipes.join("recipes/hello/options.stav"),
+        "struct Options {\n  ## Ship the extra command line tool.\n  tool: Bool = true\n}\n",
+    )
+    .expect("writable");
+
+    let out = dir.path().join("out");
+    pkg("hello", "1.0")
+        .option("tool", laft_core::OptionValue::TRUE)
+        .file("usr/bin/hello", "hi")
+        .write(&out);
+    let repo = dir.path().join("repo");
+    let now = at(0);
+    let mut args = index_args(&repo, "current", &now);
+    args.extend(["--recipes", s(&recipes), s(&out)]);
+    ok(&args);
+    let index = read_index(&repo, "current");
+    assert_eq!(index.options.len(), 1, "the declarations are recorded");
+
+    let with_tools = index
+        .packages
+        .iter()
+        .find(|e| e.meta.name.as_str() == "hello")
+        .expect("the first build")
+        .id;
+
+    // The option is gone from the recipe, and the new build sets none. The
+    // build that still sets it is withdrawn, since its recipe declares no
+    // option any more.
+    fs::remove_file(recipes.join("recipes/hello/options.stav")).expect("writable");
+    fs::write(
+        recipes.join("recipes/hello/package.stav"),
+        "package hello {\n  version = \"1.1\"\n  summary = \"Say hello\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+    ok(&[
+        "yank",
+        "--repo",
+        s(&repo),
+        "--channel",
+        "current",
+        "hello",
+        "1.0",
+        "--reason",
+        "drops the tool option",
+        "--now",
+        &at(HOUR),
+    ]);
+    let out2 = dir.path().join("out2");
+    pkg("hello", "1.1").file("usr/bin/hello", "hi").write(&out2);
+    let now = at(2 * HOUR);
+    let mut args = index_args(&repo, "current", &now);
+    args.extend(["--recipes", s(&recipes), s(&out2)]);
+    ok(&args);
+
+    let index = read_index(&repo, "current");
+    assert!(
+        !index.options.contains_key(&"hello".parse().unwrap()),
+        "the stale declarations are gone, not {:?}",
+        index.options
+    );
+    assert!(
+        index.yanked.iter().any(|y| y.id == with_tools),
+        "the old build is withdrawn"
+    );
+    assert!(index.packages.iter().all(|e| e.meta.options.is_empty()));
+}
+
+#[test]
 fn index_refuses_a_recipe_with_broken_options() {
     let dir = laft_test::tempdir();
     let recipes = recipe_repo(dir.path());
