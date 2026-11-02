@@ -7,8 +7,8 @@ use laft_index::{Defaults, Index, IndexEntry, Yank};
 use laft_pkg::{Alternative, Arch, Meta};
 
 use crate::{
-    Error, FixedValue, Installed, OptionRequest, Repository, Request, Resolution, ResolveInput,
-    Universe, Upgrade,
+    Buildable, Error, FixedValue, Installed, OptionRequest, Repository, Request, Resolution,
+    ResolveInput, Universe, Upgrade,
 };
 
 pub(crate) fn name(s: &str) -> Name {
@@ -209,6 +209,8 @@ pub(crate) fn input<'a>(
             .collect(),
         upgrade: Upgrade::None,
         options: BTreeMap::new(),
+        buildable: Vec::new(),
+        allow_builds: false,
     }
 }
 
@@ -243,6 +245,25 @@ pub(crate) fn input_with<'a>(
     let mut input = input(view, requests, installed);
     input.options = options.iter().cloned().collect();
     input
+}
+
+/// A package a snapshot can build, with revision 1 in the dynamic variant.
+pub(crate) fn buildable(of: &str, version: &str, defaults: &[(&str, &str)]) -> Buildable {
+    Buildable {
+        name: name(of),
+        version: version.parse().expect("test version is valid"),
+        rev: 1,
+        variant: Default::default(),
+        defaults: defaults
+            .iter()
+            .map(|(opt, value)| {
+                (
+                    (*opt).to_owned(),
+                    (*value).parse().expect("test option value is valid"),
+                )
+            })
+            .collect(),
+    }
 }
 
 /// Resolves `requests` for view `system` against one repository `core`.

@@ -1390,7 +1390,7 @@ fn a_dependency_contradicting_a_fixed_value_cannot_select() {
         "core",
         vec![
             pkg("mesa 25.2.0").options(&[("vulkan", "all")]),
-            pkg("blender 4.5").depends(&["mesa{vulkan=all}"]),
+            pkg("blender 4.5.0").depends(&["mesa{vulkan=all}"]),
         ],
     );
     let i = input_with(
@@ -1404,6 +1404,161 @@ fn a_dependency_contradicting_a_fixed_value_cannot_select() {
     );
     let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
     assert_eq!(e.code(), Some("S005"));
+}
+
+#[test]
+fn an_unpublished_fixed_value_reports_s011() {
+    let core = index("core", vec![pkg("mesa 25.2.0").options(&[("x11", "true")])]);
+    let mut i = input_with(
+        "system",
+        vec![req("mesa")],
+        &[],
+        &[fixed(
+            "mesa",
+            &[("x11", "false", "/etc/laft/system.stav:12:3")],
+        )],
+    );
+    i.buildable = vec![buildable("mesa", "25.2.0", &[("x11", "true")])];
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(
+        e.to_string(),
+        "error[S011]: view \"system\": no repository publishes mesa with x11=false\n  \
+         x11=false set at /etc/laft/system.stav:12:3\n  \
+         published: mesa 25.2.0-r1 (defaults)\n  \
+         hint: set `build.missing = build` to build it on this machine,\n        \
+         or run `laft apply --build-missing` once"
+    );
+}
+
+#[test]
+fn s011_names_a_dependency_that_demands_the_values() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vulkan", "all")]),
+            pkg("blender 4.5.0").depends(&["mesa{vulkan=amd}"]),
+        ],
+    );
+    let mut i = input("system", vec![req("blender")], &[]);
+    i.buildable = vec![buildable("mesa", "25.3.0", &[("vulkan", "all")])];
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(
+        e.to_string(),
+        "error[S011]: view \"system\": no repository publishes mesa with vulkan=amd\n  \
+         vulkan=amd needed by blender 4.5.0-r1 (mesa{vulkan=amd})\n  \
+         published: mesa 25.2.0-r1 (defaults)\n  \
+         hint: set `build.missing = build` to build it on this machine,\n        \
+         or run `laft apply --build-missing` once"
+    );
+}
+
+#[test]
+fn allowing_builds_returns_a_build_request() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vulkan", "all")]),
+            pkg("blender 4.5.0").depends(&["mesa{vulkan=amd}"]),
+        ],
+    );
+    let mut i = input("system", vec![req("blender")], &[]);
+    i.buildable = vec![buildable("mesa", "25.3.0", &[("vulkan", "all")])];
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)]).resolve(&i).unwrap();
+    assert_eq!(labels(&r), ["blender 4.5.0-r1"]);
+    assert_eq!(r.builds.len(), 1);
+    let build = &r.builds[0];
+    assert_eq!(build.buildable.name, name("mesa"));
+    assert_eq!(build.buildable.version.to_string(), "25.3.0");
+    assert_eq!(build.values.get("vulkan").unwrap().to_string(), "amd");
+    assert_eq!(
+        build.reasons,
+        [Reason::Dependency {
+            by: name("blender"),
+            dep: "mesa{vulkan=amd}".parse().unwrap(),
+        }]
+    );
+}
+
+#[test]
+fn a_newer_buildable_beats_an_older_published_option_set() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vulkan", "amd")]),
+            pkg("blender 4.5.0").depends(&["mesa{vulkan=amd}"]),
+        ],
+    );
+    let mut i = input("system", vec![req("blender")], &[]);
+    i.buildable = vec![buildable("mesa", "25.3.0", &[("vulkan", "all")])];
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)]).resolve(&i).unwrap();
+    assert!(
+        r.builds[0]
+            .buildable
+            .version
+            .to_string()
+            .starts_with("25.3")
+    );
+}
+
+#[test]
+fn published_beats_a_buildable_at_the_same_version() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.3.0").options(&[("vulkan", "amd")]),
+            pkg("blender 4.5.0").depends(&["mesa{vulkan=amd}"]),
+        ],
+    );
+    let mut i = input("system", vec![req("blender")], &[]);
+    i.buildable = vec![buildable("mesa", "25.3.0", &[("vulkan", "all")])];
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)]).resolve(&i).unwrap();
+    assert!(r.builds.is_empty());
+    assert_eq!(labels(&r), ["blender 4.5.0-r1", "mesa 25.3.0-r1"]);
+}
+
+#[test]
+fn the_installed_package_beats_a_newer_buildable() {
+    let installed = pkg("mesa 25.1.0").options(&[("vulkan", "amd")]);
+    let core = index(
+        "core",
+        vec![
+            installed.clone(),
+            pkg("blender 4.5.0").depends(&["mesa{vulkan=amd}"]),
+        ],
+    );
+    let mut i = input("system", vec![req("blender")], &[&installed]);
+    i.buildable = vec![buildable("mesa", "25.3.0", &[("vulkan", "all")])];
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)]).resolve(&i).unwrap();
+    assert!(r.builds.is_empty());
+    assert_eq!(labels(&r), ["blender 4.5.0-r1", "mesa 25.1.0-r1"]);
+    assert!(r.packages[&name("mesa")].kept_installed);
+}
+
+#[test]
+fn a_name_nobody_publishes_is_built_with_its_defaults() {
+    let core = index("core", vec![]);
+    let mut i = input("system", vec![req("mesa")], &[]);
+    i.buildable = vec![buildable(
+        "mesa",
+        "25.3.0",
+        &[("llvm", "true"), ("x11", "true")],
+    )];
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)]).resolve(&i).unwrap();
+    assert!(r.packages.is_empty());
+    assert_eq!(r.builds.len(), 1);
+    assert_eq!(r.builds[0].values.get("llvm").unwrap().to_string(), "true");
+    assert_eq!(
+        r.builds[0].reasons,
+        [Reason::Requested {
+            origin: "test:mesa".into(),
+            text: "mesa".into(),
+        }]
+    );
 }
 
 /// A universe that is known to resolve, because it contains a planted

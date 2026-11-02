@@ -9,7 +9,7 @@ const LEARNED_SHOWN: usize = 10;
 
 /// A resolution that failed, with everything needed to explain why.
 ///
-/// Its codes start with `S`, from `S001` to `S010`, so that they never
+/// Its codes start with `S`, from `S001` to `S011`, so that they never
 /// collide with the codes of other Laft tools.
 ///
 /// Its [`Display`](fmt::Display) form is the full message, for example:
@@ -153,6 +153,21 @@ pub enum ErrorKind {
         /// How the request or the depending package got into the view.
         chain: Chain,
     },
+    /// S011: the selection needs a package nobody publishes, and local
+    /// builds are not allowed.
+    NothingPublished {
+        /// The package name.
+        name: Name,
+        /// The values the build would use, as `option=value` texts, sorted
+        /// by option name. Empty when it would be built with the defaults.
+        values: Vec<String>,
+        /// Where each value that deviates from the declared defaults comes
+        /// from.
+        sources: Vec<(String, ValueOrigin)>,
+        /// The published candidates that match on version and variant, with
+        /// the option values they were built with.
+        published: Vec<(Package, String)>,
+    },
     /// The configuration chooses an alternatives member that is not in the
     /// view.
     AlternativeAbsent {
@@ -193,8 +208,19 @@ pub enum BoundSource {
     Request(String),
 }
 
+/// Where a demanded option value comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueOrigin {
+    /// The configuration set it at this location.
+    Config(String),
+    /// A request made at this location demands it.
+    Request(String),
+    /// A dependency of this package demands it, as written.
+    Dependency(Package, String),
+}
+
 impl Error {
-    /// The error code, `S001` to `S010`, or `None` for alternatives errors.
+    /// The error code, `S001` to `S011`, or `None` for alternatives errors.
     pub fn code(&self) -> Option<&'static str> {
         Some(match *self.kind {
             ErrorKind::NoCandidate { .. } => "S001",
@@ -207,6 +233,7 @@ impl Error {
             ErrorKind::EqualPriority { .. } => "S008",
             ErrorKind::RestartLimit { .. } => "S009",
             ErrorKind::Yanked { .. } => "S010",
+            ErrorKind::NothingPublished { .. } => "S011",
             ErrorKind::AlternativeAbsent { .. } | ErrorKind::AlternativeAmbiguous { .. } => {
                 return None;
             }
@@ -453,6 +480,43 @@ impl fmt::Display for Error {
                 write!(
                     f,
                     "  hint: relax the version prefix, or wait for a fixed revision"
+                )?;
+            }
+            ErrorKind::NothingPublished {
+                name,
+                values,
+                sources,
+                published,
+            } => {
+                head(f)?;
+                if values.is_empty() {
+                    writeln!(
+                        f,
+                        "no repository publishes {name} with its default option values"
+                    )?;
+                } else {
+                    writeln!(f, "no repository publishes {name} with {}", list(values))?;
+                }
+                for (text, origin) in sources {
+                    match origin {
+                        ValueOrigin::Config(at) => writeln!(f, "  {text} set at {at}")?,
+                        ValueOrigin::Request(at) => writeln!(f, "  {text} requested at {at}")?,
+                        ValueOrigin::Dependency(by, dep) => {
+                            writeln!(f, "  {text} needed by {by} ({dep})")?;
+                        }
+                    }
+                }
+                if !published.is_empty() {
+                    let sets = published
+                        .iter()
+                        .map(|(p, set)| format!("{p} ({set})"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    writeln!(f, "  published: {sets}")?;
+                }
+                write!(
+                    f,
+                    "  hint: set `build.missing = build` to build it on this machine,\n        or run `laft apply --build-missing` once"
                 )?;
             }
             ErrorKind::AlternativeAbsent {
