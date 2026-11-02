@@ -3,8 +3,8 @@
 //! A repository publishes, for each channel and architecture, an [`Index`]
 //! of its packages as zstd-compressed canonical JSON, signed with minisign.
 //! The trusted comment of the signature ([`IndexComment`]) names the
-//! repository, channel, architecture and generation, so a client rejects a
-//! stale or substituted index before decompressing it.
+//! repository, channel, profile, architecture and generation, so a client
+//! rejects a stale or substituted index before decompressing it.
 //!
 //! Keys form two levels. Root keys are configured on the client and sign
 //! only `keys.json` ([`Keys`]), which lists the online keys that sign

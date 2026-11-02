@@ -353,13 +353,13 @@ impl IndexState {
     ///
     /// 1. The signature is made by a key `trust` allows and verifies over
     ///    the exact bytes of `index` and over its trusted comment.
-    /// 2. The trusted comment names the configured repository, channel and
-    ///    architecture.
+    /// 2. The trusted comment names the configured repository, channel,
+    ///    architecture and profile.
     /// 3. Its generation is not lower than the accepted one, and an equal
     ///    generation comes with the accepted bytes.
     /// 4. The index decompresses within the size limit and is valid, and its
-    ///    repository, channel, architecture and generation equal the trusted
-    ///    comment.
+    ///    repository, channel, architecture, profile and generation equal
+    ///    the trusted comment.
     /// 5. An online key's validity window contains the index's signing time.
     /// 6. The index has not expired at `now`, unless `allow_expired` is set.
     ///
