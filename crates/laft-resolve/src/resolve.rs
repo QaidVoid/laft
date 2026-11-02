@@ -7,7 +7,7 @@ use laft_core::{
 use laft_index::Yank;
 use laft_pkg::Meta;
 
-use crate::error::{Bound, BoundSource, Error, ErrorKind, ValueOrigin};
+use crate::error::{Bound, BoundSource, Demand, Error, ErrorKind, ValueOrigin};
 use crate::explain::{Chain, Learned, Package, Reason, Warning, Why};
 use crate::universe::{Candidate, Key, Source, Universe, option_order, order, provides};
 
@@ -374,6 +374,20 @@ fn constraints_hold(
         .as_slice()
         .iter()
         .all(|c| options.get(c.name()).is_some_and(|v| c.matches(v)))
+}
+
+/// The value a constraint demands.
+fn canonical(c: &OptionConstraint) -> OptionValue {
+    match c {
+        OptionConstraint::True { .. } => OptionValue::Bool(true),
+        OptionConstraint::False { .. } => OptionValue::Bool(false),
+        OptionConstraint::Tag { tag, .. } => OptionValue::Tag(tag.clone()),
+    }
+}
+
+/// The value a constraint demands, as `option=value`.
+fn canonical_text(c: &OptionConstraint) -> String {
+    format!("{}={}", c.name(), canonical(c))
 }
 
 /// Whether `meta` satisfies `dep`: by its version and options for a
@@ -846,9 +860,10 @@ enum Pick<'a> {
 }
 
 /// Where the option values of a demanded build come from.
+#[derive(Clone, Copy)]
 enum Asked<'p> {
-    /// A request made at this location.
-    Request(&'p str),
+    /// A request made at this location, as written.
+    Request { origin: &'p str, text: &'p str },
     /// A dependency of this package.
     Dependency(&'p Meta, &'p Dep),
 }
@@ -1115,7 +1130,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                                     text.clone(),
                                     ValueOrigin::Dependency(Package::of(by), dep.to_string()),
                                 ),
-                                Some(Asked::Request(origin)) => {
+                                Some(Asked::Request { origin, .. }) => {
                                     (text.clone(), ValueOrigin::Request(origin.to_owned()))
                                 }
                                 None => (text.clone(), ValueOrigin::Request(String::new())),
@@ -1167,6 +1182,136 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         }
     }
 
+    /// The option failure that explains a selection of `name` finding no
+    /// candidate while some candidate matches on version and variant: S013
+    /// when a demanded value contradicts a fixed one, S012 when two demands
+    /// contradict each other, and `None` when the options are not the
+    /// cause.
+    fn option_failure(&self, name: &Name, want: &Want<'_>, asked: Asked<'_>) -> Option<ErrorKind> {
+        let matches = |c: &Candidate<'_>| {
+            want.matches(&c.meta.version, c.meta.rev)
+                && want.variant.is_none_or(|v| c.meta.variant == v)
+        };
+        if !self
+            .ctx
+            .ordered(name.as_str())
+            .ok()?
+            .any(|c| matches(&c))
+        {
+            return None;
+        }
+        let empty = BTreeMap::new();
+        let fixed = self
+            .ctx
+            .input
+            .options
+            .get(name)
+            .map(|req| &req.fixed)
+            .unwrap_or(&empty);
+        let mut demands: Vec<(&OptionConstraint, Asked<'_>)> =
+            want.options.as_slice().iter().map(|c| (c, asked)).collect();
+        for fact in self.facts.iter() {
+            if let Fact::Require {
+                name: constrained,
+                dep: dep @ Dep::Pkg(_, _, opts),
+                by,
+            } = *fact
+                && *constrained == *name
+            {
+                for c in opts.as_slice() {
+                    demands.push((c, Asked::Dependency(by, dep)));
+                }
+            }
+        }
+        for (c, from) in demands {
+            if let Some(f) = fixed.get(c.name()) {
+                if !c.matches(&f.value) {
+                    return Some(self.fixed_conflict(c, from, f));
+                }
+                continue;
+            }
+            for (opts, by) in self.facts.iter().filter_map(|fact| match *fact {
+                Fact::Require {
+                    name: constrained,
+                    dep: Dep::Pkg(_, _, opts),
+                    by,
+                } if *constrained == *name => Some((opts, by)),
+                _ => None,
+            }) {
+                for fc in opts.as_slice() {
+                    if fc.name() == c.name() && canonical(fc) != canonical(c) {
+                        let dep = self.facts.iter().find_map(|fact| match *fact {
+                            Fact::Require {
+                                dep: dep @ Dep::Pkg(_, _, own),
+                                ..
+                            } if *own == *opts => Some(dep),
+                            _ => None,
+                        });
+                        let Some(dep) = dep else { continue };
+                        return Some(ErrorKind::OptionConflict {
+                            name: name.clone(),
+                            demands: vec![
+                                self.demand(c, from),
+                                self.demand(fc, Asked::Dependency(by, dep)),
+                            ],
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// S013 for a constraint that a fixed value contradicts.
+    fn fixed_conflict(&self, c: &OptionConstraint, from: Asked<'_>, f: &FixedValue) -> ErrorKind {
+        let (text, by, chain) = match from {
+            Asked::Dependency(by, dep) => {
+                let base = self.chain(&by.name);
+                (dep.to_string(), Some(Package::of(by)), base)
+            }
+            Asked::Request { origin, text } => (
+                text.to_owned(),
+                None,
+                Chain {
+                    steps: Vec::new(),
+                    origin: origin.to_owned(),
+                    request: text.to_owned(),
+                },
+            ),
+        };
+        ErrorKind::FixedConflict {
+            name: c.name().parse().expect("a constraint names an option"),
+            text,
+            by,
+            chain,
+            value: canonical_text(c),
+            fixed: (format!("{}={}", c.name(), f.value), f.origin.clone()),
+        }
+    }
+
+    /// The demand of one option constraint, with its source and chain.
+    fn demand(&self, c: &OptionConstraint, from: Asked<'_>) -> Demand {
+        let (origin, chain) = match from {
+            Asked::Dependency(by, dep) => (
+                ValueOrigin::Dependency(Package::of(by), dep.to_string()),
+                self.chain(&by.name),
+            ),
+            Asked::Request { origin, text } => (
+                ValueOrigin::Request(origin.to_owned()),
+                Chain {
+                    steps: Vec::new(),
+                    origin: origin.to_owned(),
+                    request: text.to_owned(),
+                },
+            ),
+        };
+        Demand {
+            value: canonical_text(c),
+            origin,
+            chain,
+        }
+    }
+
     fn chain(&self, name: &Name) -> Chain {
         Chain::find(name, |n| {
             self.selected
@@ -1196,11 +1341,23 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                         &request.name,
                         values,
                         &want,
-                        Some(Asked::Request(&request.origin)),
+                        Some(Asked::Request {
+                            origin: &request.origin,
+                            text: &request.text,
+                        }),
                         request.reasons.clone(),
                     )?;
                 }
-                None => return Err(self.no_candidate(request)?),
+                None => {
+                    let asked = Asked::Request {
+                        origin: &request.origin,
+                        text: &request.text,
+                    };
+                    if let Some(kind) = self.option_failure(&request.name, &want, asked) {
+                        return Err(Stop::failed(kind, Vec::new()));
+                    }
+                    return Err(self.no_candidate(request)?);
+                }
             }
         }
         while let Some(name) = self.queue.pop_front() {
@@ -1369,7 +1526,12 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                     vec![reason],
                 );
             }
-            None => {}
+            None => {
+                let asked = Asked::Dependency(by.meta, dep);
+                if let Some(kind) = self.option_failure(name, &want, asked) {
+                    return Err(Stop::failed(kind, vec![Fact::Avoid(by)]));
+                }
+            }
         }
         if *req == VersionReq::Any
             && let [one] = self.ctx.universe.replacers(name.as_str())

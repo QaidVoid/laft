@@ -9,7 +9,7 @@ const LEARNED_SHOWN: usize = 10;
 
 /// A resolution that failed, with everything needed to explain why.
 ///
-/// Its codes start with `S`, from `S001` to `S011`, so that they never
+/// Its codes start with `S`, from `S001` to `S013`, so that they never
 /// collide with the codes of other Laft tools.
 ///
 /// Its [`Display`](fmt::Display) form is the full message, for example:
@@ -168,6 +168,32 @@ pub enum ErrorKind {
         /// the option values they were built with.
         published: Vec<(Package, String)>,
     },
+    /// S012: two dependents in one view need option values that cannot
+    /// hold together.
+    OptionConflict {
+        /// The constrained package name.
+        name: Name,
+        /// Each demand: the value as `option=value`, where it comes from,
+        /// and the chain to the request.
+        demands: Vec<Demand>,
+    },
+    /// S013: a dependency needs an option value that the configuration
+    /// fixes otherwise.
+    FixedConflict {
+        /// The constrained package name.
+        name: Name,
+        /// The dependency or request that demands the value, as written.
+        text: String,
+        /// The package whose dependency demands it, `None` for a request.
+        by: Option<Package>,
+        /// How the demand got into the view.
+        chain: Chain,
+        /// The value it demands, as `option=value`.
+        value: String,
+        /// The value the configuration fixes, as `option=value`, and where
+        /// it was set.
+        fixed: (String, String),
+    },
     /// The configuration chooses an alternatives member that is not in the
     /// view.
     AlternativeAbsent {
@@ -219,8 +245,20 @@ pub enum ValueOrigin {
     Dependency(Package, String),
 }
 
+/// One demand on an option of a package, with the chain to its source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Demand {
+    /// The demanded value, as `option=value`.
+    pub value: String,
+    /// Where the demand comes from.
+    pub origin: ValueOrigin,
+    /// How the demanding package got into the view. Empty steps for a
+    /// request or the configuration.
+    pub chain: Chain,
+}
+
 impl Error {
-    /// The error code, `S001` to `S011`, or `None` for alternatives errors.
+    /// The error code, `S001` to `S013`, or `None` for alternatives errors.
     pub fn code(&self) -> Option<&'static str> {
         Some(match *self.kind {
             ErrorKind::NoCandidate { .. } => "S001",
@@ -234,6 +272,8 @@ impl Error {
             ErrorKind::RestartLimit { .. } => "S009",
             ErrorKind::Yanked { .. } => "S010",
             ErrorKind::NothingPublished { .. } => "S011",
+            ErrorKind::OptionConflict { .. } => "S012",
+            ErrorKind::FixedConflict { .. } => "S013",
             ErrorKind::AlternativeAbsent { .. } | ErrorKind::AlternativeAmbiguous { .. } => {
                 return None;
             }
@@ -517,6 +557,50 @@ impl fmt::Display for Error {
                 write!(
                     f,
                     "  hint: set `build.missing = build` to build it on this machine,\n        or run `laft apply --build-missing` once"
+                )?;
+            }
+            ErrorKind::OptionConflict { name, demands } => {
+                head(f)?;
+                let values: Vec<&str> = demands.iter().map(|d| d.value.as_str()).collect();
+                match values.as_slice() {
+                    [] => writeln!(f, "no value of {name} satisfies every dependent")?,
+                    values => writeln!(f, "{name} cannot have {}", values.join(" and "))?,
+                }
+                for demand in demands {
+                    write!(f, "  {} ", demand.value)?;
+                    match &demand.origin {
+                        ValueOrigin::Config(at) => writeln!(f, "set at {at}")?,
+                        ValueOrigin::Request(at) => writeln!(f, "requested at {at}")?,
+                        ValueOrigin::Dependency(by, dep) => {
+                            writeln!(f, "needed by {by} ({dep})")?;
+                        }
+                    }
+                    demand.chain.write_nested(f, 4)?;
+                }
+                write!(
+                    f,
+                    "  hint: put one of the dependents into another view, where it can have its own {name}"
+                )?;
+            }
+            ErrorKind::FixedConflict {
+                name: _,
+                text,
+                by,
+                chain,
+                value,
+                fixed,
+            } => {
+                head(f)?;
+                match by {
+                    Some(by) => writeln!(f, "{by} needs {text}")?,
+                    None => writeln!(f, "{text} requested at {}", chain.origin)?,
+                }
+                writeln!(f, "  demands {value}, but {} is set at {}", fixed.0, fixed.1)?;
+                chain.write_nested(f, 2)?;
+                let option = fixed.0.split('=').next().unwrap_or_default();
+                write!(
+                    f,
+                    "  hint: remove the setting, or set {option} with default(...) to let dependencies choose"
                 )?;
             }
             ErrorKind::AlternativeAbsent {

@@ -1403,7 +1403,39 @@ fn a_dependency_contradicting_a_fixed_value_cannot_select() {
         )],
     );
     let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
-    assert_eq!(e.code(), Some("S005"));
+    assert_eq!(e.code(), Some("S013"));
+    assert_eq!(
+        e.to_string(),
+        "error[S013]: view \"system\": blender 4.5.0-r1 needs mesa{vulkan=all}\n  \
+         demands vulkan=all, but vulkan=amd is set at /etc/laft/system.stav:14:5\n  \
+         requested at test:blender\n  \
+         hint: remove the setting, or set vulkan with default(...) to let dependencies choose"
+    );
+}
+
+#[test]
+fn two_dependents_contradicting_each_other_report_s012() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vaapi", "intel")]),
+            pkg("mesa 25.1.0").options(&[("vaapi", "amd")]),
+            pkg("blender 4.5.0").depends(&["mesa{vaapi=intel}"]),
+            pkg("game 1.0").depends(&["mesa{vaapi=amd}"]),
+        ],
+    );
+    let i = input("system", vec![req("blender"), req("game")], &[]);
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(e.code(), Some("S012"));
+    assert_eq!(
+        e.to_string(),
+        "error[S012]: view \"system\": mesa cannot have vaapi=intel and vaapi=amd\n  \
+         vaapi=intel needed by blender 4.5.0-r1 (mesa{vaapi=intel})\n    \
+         requested at test:blender\n  \
+         vaapi=amd needed by game 1.0-r1 (mesa{vaapi=amd})\n    \
+         requested at test:game\n  \
+         hint: put one of the dependents into another view, where it can have its own mesa"
+    );
 }
 
 #[test]
