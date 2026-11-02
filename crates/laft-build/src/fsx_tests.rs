@@ -92,3 +92,16 @@ fn a_bare_file_name_lives_in_the_working_directory() {
     assert_eq!(dir_of(Path::new("stages/record")), Path::new("stages"));
     assert_eq!(dir_of(Path::new("/build/record")), Path::new("/build"));
 }
+
+#[test]
+fn a_walk_fails_on_a_non_utf8_name() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = laft_test::tempdir();
+    let root = dir.path();
+    fs::write(root.join("fine"), b"x").unwrap();
+    fs::write(root.join(OsStr::from_bytes(b"\xff\xfe")), b"x").unwrap();
+    let error = walk(root).unwrap_err();
+    assert!(error.to_string().contains("not UTF-8"), "{error}");
+}

@@ -108,9 +108,15 @@ pub(crate) fn walk(root: &Path) -> Result<Vec<(String, Kind)>, BuildError> {
     while let Some((dir, prefix)) = pending.pop() {
         for item in fs::read_dir(&dir).map_err(io(&dir))? {
             let item = item.map_err(io(&dir))?;
-            let name = item.file_name().to_string_lossy().into_owned();
+            let raw = item.file_name();
+            let name = raw.to_str().ok_or_else(|| {
+                io(&dir)(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("file name is not UTF-8: {}", raw.to_string_lossy()),
+                ))
+            })?;
             let rel = if prefix.is_empty() {
-                name
+                name.to_owned()
             } else {
                 format!("{prefix}/{name}")
             };
