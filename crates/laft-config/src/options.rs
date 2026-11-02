@@ -222,12 +222,8 @@ pub(crate) fn values(
     let system_name = "system".parse::<Name>().expect("a valid name");
     let mut out = BTreeMap::new();
     out.insert(system_name, complete(system.clone(), options));
-    for (name, view) in views {
-        let mut merged = if view.inherit {
-            system.clone()
-        } else {
-            Contributions::default()
-        };
+    for name in views.keys() {
+        let mut merged = system.clone();
         let own = contributions(evaluated, &["system", "views", name.as_str(), "package"]);
         merged.merge_over(own);
         out.insert(name.clone(), complete(merged, options));

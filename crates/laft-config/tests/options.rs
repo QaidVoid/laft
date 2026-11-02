@@ -224,7 +224,7 @@ fn profile_values_are_preferred_and_lose_to_the_configuration() {
 }
 
 #[test]
-fn a_view_inherits_the_system_and_merges_over_it() {
+fn every_view_resolves_from_the_system_and_merges_over_it() {
     let mut options = mesa_options();
     options.profile.insert(
         "mesa".parse::<Name>().expect("a name"),
@@ -247,12 +247,13 @@ fn a_view_inherits_the_system_and_merges_over_it() {
     );
     assert!(!web.preferred[mesa].contains_key("vulkan"));
     let bare = &loaded.options[&"bare".parse::<Name>().expect("a name")];
-    assert!(!bare.fixed.contains_key(mesa));
     assert_eq!(
-        bare.preferred[mesa]["vulkan"],
-        OptionValue::Tag("all".to_owned())
+        bare.fixed[mesa]["vulkan"],
+        OptionValue::Tag("amd".to_owned()),
+        "inherit = none governs package requests, not option values"
     );
     assert_eq!(bare.preferred[mesa]["llvm"], OptionValue::Bool(false));
+    assert!(!bare.preferred[mesa].contains_key("vulkan"));
     let system = &loaded.options[&"system".parse::<Name>().expect("a name")];
     assert_eq!(
         system.fixed[mesa]["vulkan"],
