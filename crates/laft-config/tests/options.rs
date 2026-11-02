@@ -325,3 +325,54 @@ fn the_repositories_are_readable_when_the_options_do_not_type_check() {
     assert_eq!(core.url, "https://example.invalid/core");
     assert_eq!(core.channel.to_string(), "current");
 }
+
+#[test]
+fn an_option_the_module_leaves_out_is_reported() {
+    let mesa = "mesa".parse::<Name>().expect("a name");
+    let options = IndexOptions {
+        options: [(
+            mesa,
+            vec![
+                OptionDecl {
+                    name: "type".to_owned(),
+                    kind: OptionType::Bool("bool".to_owned()),
+                    default: OptionValue::Bool(true),
+                    doc: "d".to_owned(),
+                },
+                OptionDecl {
+                    name: "flavor".to_owned(),
+                    kind: OptionType::Tags(vec!["one".to_owned(), "none".to_owned()]),
+                    default: OptionValue::Tag("one".to_owned()),
+                    doc: "d".to_owned(),
+                },
+                OptionDecl {
+                    name: "keep".to_owned(),
+                    kind: OptionType::Bool("bool".to_owned()),
+                    default: OptionValue::Bool(true),
+                    doc: "d".to_owned(),
+                },
+            ],
+        )]
+        .into_iter()
+        .collect(),
+        profile: BTreeMap::new(),
+    };
+    let loaded = load("package.mesa.keep = false", &options).expect("loads");
+    let notes: Vec<String> = loaded
+        .warnings
+        .iter()
+        .filter(|d| d.diagnostic.code == "C0905")
+        .map(|d| d.diagnostic.message.clone())
+        .collect();
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert!(
+        notes[0].contains("the option type of package mesa is left out: type is a Stav keyword"),
+        "{notes:?}"
+    );
+    assert!(
+        notes[1].contains(
+            "the option flavor of package mesa is left out: the tag none cannot be a variant"
+        ),
+        "{notes:?}"
+    );
+}

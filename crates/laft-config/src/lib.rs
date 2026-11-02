@@ -50,6 +50,7 @@
 //! | `C0902` | alternatives group that is not a name, or a member that is not a bare package name |
 //! | `C0903` | view name that is not a package name, or `system` or `initrd` |
 //! | `C0904` | view user or group that is not declared |
+//! | `C0905` | package or option the generated module leaves out, because a name or a tag cannot be a Stav field or variant |
 //! | `C1101` | no root filesystem |
 //! | `C1102` | mountpoint not an absolute, normalized path |
 //! | `C1103` | mountpoint managed by Laft |
@@ -354,12 +355,13 @@ pub fn load(
     packages: &dyn Fn(&PkgRef) -> Result<(), PkgError>,
     options: &IndexOptions,
 ) -> Result<Loaded, Report> {
-    let package_module = options::module(options);
+    let (package_module, notes) = options::render(options);
     let Evaluation {
         checked, evaluated, ..
     } = evaluate_with(root_dir, &root_dir.join("system.stav"), &package_module)?;
     let cx = convert::Cx::new(&checked, &evaluated);
     let mut found = checked.warnings().iter().cloned().collect::<Vec<_>>();
+    found.extend(option_notes(&notes));
     let config = validate::validate(&cx, packages, &mut found);
     let report = evaluated.diagnostics(found);
     let files = checked
@@ -384,6 +386,22 @@ pub fn load(
         }
         _ => Err(report),
     }
+}
+
+/// One `C0905` warning per option the generated module leaves out.
+fn option_notes(notes: &[String]) -> Vec<stav::FileDiagnostic> {
+    notes
+        .iter()
+        .map(|note| stav::FileDiagnostic {
+            file: None,
+            diagnostic: stav::Diagnostic::warning(
+                "C0905",
+                stav::Span { start: 0, end: 0 },
+                note.clone(),
+            )
+            .with_help("the recipe declares it; rename it there, so configurations can set it"),
+        })
+        .collect()
 }
 
 /// The canonical JSON of the evaluated `system` value.
@@ -485,8 +503,12 @@ pub fn evaluate(
     entry: &Path,
     options: &IndexOptions,
 ) -> Result<Evaluation, Report> {
-    let module = options::module(options);
-    evaluate_with(root_dir, entry, &module)
+    let (module, notes) = options::render(options);
+    let mut evaluation = evaluate_with(root_dir, entry, &module)?;
+    if !notes.is_empty() {
+        evaluation.warnings = evaluation.warnings.with_items(option_notes(&notes));
+    }
+    Ok(evaluation)
 }
 
 /// As [`evaluate`], with the module of package options already rendered.

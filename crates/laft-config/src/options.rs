@@ -35,21 +35,37 @@ struct Rendered {
 
 /// Renders the Stav source of the `PackageOptions` module.
 ///
+/// As [`render`], but without the notes about what is left out, for
+/// readers that describe the module instead of loading a configuration
+/// against it.
+pub(crate) fn module(options: &IndexOptions) -> String {
+    render(options).0
+}
+
+/// Renders the Stav source of the `PackageOptions` module, with one note
+/// per package or option the module leaves out, and why.
+///
 /// Every package whose declarations the indexes publish gets one struct
 /// of options, one sum type per tag option, and a field in
 /// `PackageOptions` that defaults to the declared defaults. Packages and
 /// options whose name cannot be a field of a struct, because it is a
-/// keyword or does not lex as one name, are left out. The indexes record
-/// no declared sum-type names, so every generated type is named after the
-/// package and the option, `<Pascal_pkg>_<Pascal_opt>`, instead of the
-/// name the recipe gave it.
-pub(crate) fn module(options: &IndexOptions) -> String {
+/// keyword or does not lex as one name, are left out, and so are options
+/// with a tag that cannot be a variant. The indexes record no declared
+/// sum-type names, so every generated type is named after the package and
+/// the option, `<Pascal_pkg>_<Pascal_opt>`, instead of the name the
+/// recipe gave it.
+pub(crate) fn render(options: &IndexOptions) -> (String, Vec<String>) {
     let mut out = String::from(HEADER);
+    let mut notes = Vec::new();
     let mut used = BTreeSet::new();
     used.insert("PackageOptions".to_owned());
     let mut fields = Vec::new();
     for (name, decls) in &options.options {
         let Some(field) = field_name(name.as_str()) else {
+            notes.push(format!(
+                "the options of package {name} are left out: {}",
+                omitted(name.as_str())
+            ));
             continue;
         };
         let prefix = fresh(&pascal(name.as_str()), &mut used);
@@ -57,12 +73,22 @@ pub(crate) fn module(options: &IndexOptions) -> String {
         let mut own = Vec::new();
         for decl in decls {
             let Some(option) = field_name(&decl.name) else {
+                notes.push(format!(
+                    "the option {} of package {name} is left out: {}",
+                    decl.name,
+                    omitted(&decl.name)
+                ));
                 continue;
             };
             let (ty, sum) = match &decl.kind {
                 OptionType::Bool(_) => ("Bool".to_owned(), None),
                 OptionType::Tags(tags) => {
-                    if !tags.iter().all(|t| valid_tag(t)) {
+                    if let Some(tag) = tags.iter().find(|t| !valid_tag(t)) {
+                        notes.push(format!(
+                            "the option {} of package {name} is left out: the tag {tag} cannot \
+                             be a variant of the generated sum type",
+                            decl.name
+                        ));
                         continue;
                     }
                     let ty = fresh(&format!("{prefix}_{}", pascal(&decl.name)), &mut used);
@@ -105,14 +131,32 @@ pub(crate) fn module(options: &IndexOptions) -> String {
     }
     if fields.is_empty() {
         out.push_str("\n## No package declares options.\nstruct PackageOptions {}\n");
-        return out;
+        return (out, notes);
     }
     out.push_str("\n## The package options, by package name.\nstruct PackageOptions {\n");
     for field in &fields {
         out.push_str(field);
     }
     out.push_str("}\n");
-    out
+    (out, notes)
+}
+
+/// Why a name cannot be a field of a generated struct.
+fn omitted(name: &str) -> String {
+    if is_keyword(name) {
+        format!("{name} is a Stav keyword")
+    } else {
+        format!("{name} does not lex as one field name")
+    }
+}
+
+/// Whether the Stav grammar reserves `name` as a keyword.
+fn is_keyword(name: &str) -> bool {
+    const KEYWORDS: [&str; 19] = [
+        "let", "fn", "struct", "type", "match", "if", "else", "for", "in", "import", "include",
+        "as", "part", "self", "true", "false", "none", "where", "block",
+    ];
+    KEYWORDS.contains(&name)
 }
 
 /// Whether `tag` can be a variant of a generated sum type.
@@ -143,13 +187,9 @@ fn value(default: &OptionValue) -> String {
 /// The name as a field of a struct, when it lexes as one plain lowercase
 /// stav identifier that is no keyword.
 fn field_name(name: &str) -> Option<&str> {
-    const KEYWORDS: [&str; 19] = [
-        "let", "fn", "struct", "type", "match", "if", "else", "for", "in", "import", "include",
-        "as", "part", "self", "true", "false", "none", "where", "block",
-    ];
     let bytes = name.as_bytes();
     let ident = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_';
-    if bytes.is_empty() || !bytes[0].is_ascii_lowercase() || KEYWORDS.contains(&name) {
+    if bytes.is_empty() || !bytes[0].is_ascii_lowercase() || is_keyword(name) {
         return None;
     }
     for (i, &b) in bytes.iter().enumerate() {
