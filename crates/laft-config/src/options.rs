@@ -39,7 +39,10 @@ struct Rendered {
 /// of options, one sum type per tag option, and a field in
 /// `PackageOptions` that defaults to the declared defaults. Packages and
 /// options whose name cannot be a field of a struct, because it is a
-/// keyword or does not lex as one name, are left out.
+/// keyword or does not lex as one name, are left out. The indexes record
+/// no declared sum-type names, so every generated type is named after the
+/// package and the option, `<Pascal_pkg>_<Pascal_opt>`, instead of the
+/// name the recipe gave it.
 pub(crate) fn module(options: &IndexOptions) -> String {
     let mut out = String::from(HEADER);
     let mut used = BTreeSet::new();
