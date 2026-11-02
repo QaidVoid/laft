@@ -1175,8 +1175,9 @@ fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
 }
 
 /// The cross product of the non-default values of `decls`, as option sets,
-/// without the all-defaults combination and capped at
-/// [`KR012_COMBINATIONS`] entries.
+/// capped at [`KR012_COMBINATIONS`] entries. Every option contributes only
+/// its non-default values, so the result holds the all-defaults
+/// combination alone when no option has one, and never otherwise.
 fn value_combinations(decls: &[laft_index::OptionDecl]) -> Vec<BTreeMap<String, OptionValue>> {
     let mut combinations: Vec<BTreeMap<String, OptionValue>> = vec![BTreeMap::new()];
     for decl in decls {
