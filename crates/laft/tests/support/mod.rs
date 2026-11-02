@@ -383,6 +383,12 @@ impl Fixture {
     /// the second they are signed in, so this waits for the next second
     /// after an earlier publication.
     pub(crate) fn publish(&self, packages: Vec<Pkg>) {
+        self.publish_with_recipes(packages, None);
+    }
+
+    /// As [`Self::publish`], with the recipe repository `recipes` checked
+    /// into the index, which is where package options are declared.
+    pub(crate) fn publish_with_recipes(&self, packages: Vec<Pkg>, recipes: Option<&Path>) {
         static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let out = self.dir.path().join(format!(
             "out-{}",
@@ -395,18 +401,24 @@ impl Fixture {
         if repo.exists() {
             std::thread::sleep(std::time::Duration::from_millis(1100));
         }
-        repo_tool(&[
-            "index",
-            "--repo",
-            s(&repo),
-            "--name",
-            "core",
-            "--channel",
-            "current",
-            "--key",
-            s(&self.key),
-            s(&out),
-        ]);
+        let mut args = vec![
+            "index".to_owned(),
+            "--repo".to_owned(),
+            s(&repo).to_owned(),
+            "--name".to_owned(),
+            "core".to_owned(),
+            "--channel".to_owned(),
+            "current".to_owned(),
+            "--key".to_owned(),
+            s(&self.key).to_owned(),
+        ];
+        if let Some(recipes) = recipes {
+            args.push("--recipes".to_owned());
+            args.push(s(recipes).to_owned());
+        }
+        args.push(s(&out).to_owned());
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        repo_tool(&refs);
         repo_tool(&["publish", s(&repo), s(&self.dir.path().join("www"))]);
     }
 

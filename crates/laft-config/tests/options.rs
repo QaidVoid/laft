@@ -309,3 +309,18 @@ fn a_package_whose_option_is_named_options_still_type_checks() {
         OptionValue::Tag("slim".to_owned())
     );
 }
+
+#[test]
+fn the_repositories_are_readable_when_the_options_do_not_type_check() {
+    let body = concat!(
+        "repo core { url = \"https://example.invalid/core\", ",
+        "key = \"RWSO9Zvh1ju0E6MO5PDnzQFYnptNxsLpLdwYSfm5Cs4Jc+14umRuka1M\" }\n",
+        "package.mesa.vulkan = amd\n",
+    );
+    let dir = config_dir(&[("system.stav", &format!("system {{\n{DISKS}\n{body}\n}}\n"))]);
+    assert!(laft_config::load(dir.path(), &|_| Ok(()), &support::no_options()).is_err());
+    let repos = laft_config::repos(dir.path()).expect("the repositories are read");
+    let core = repos[&"core".parse::<Name>().expect("a name")].clone();
+    assert_eq!(core.url, "https://example.invalid/core");
+    assert_eq!(core.channel.to_string(), "current");
+}

@@ -1,6 +1,7 @@
 //! What every command works with: the root, the configuration, the lock,
 //! the repository indexes and the generations.
 
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
@@ -251,16 +252,46 @@ impl Env {
     /// Loads the configuration and the indexes of its repositories,
     /// syncing them as `mode` says under `lock`, and checks every package
     /// reference against the indexes.
+    ///
+    /// The first pass type checks the configuration against the cached
+    /// option declarations. When that fails, the repositories are read
+    /// with a prelude that accepts any package assignment, the indexes
+    /// are synced as `mode` says, and the configuration is loaded again
+    /// with their declarations. A failure of the second load is reported
+    /// as authoritative, with a hint about the cache, because the cached
+    /// declarations were the reason for the detour.
     pub(crate) fn load_with_indexes(
         &self,
         mode: SyncMode,
         lock: Option<&Lock>,
     ) -> Result<(Loaded, Vec<RepoIndex>), Failure> {
         let started = std::time::Instant::now();
-        let first = self.load(&|_| Ok(()))?;
-        let indexes = self.indexes(&first.config, mode, lock)?;
-        let options = options_of(&indexes);
-        let loaded = self.load_with(&options, &|pkg| known(&indexes, pkg))?;
+        let (loaded, indexes) = match self.load(&|_| Ok(())) {
+            Ok(first) => {
+                let indexes = self.indexes(&first.config.repos, mode, lock)?;
+                let options = options_of(&indexes);
+                let loaded = self.load_with(&options, &|pkg| known(&indexes, pkg))?;
+                (loaded, indexes)
+            }
+            Err(first) => {
+                let repos = match laft_config::repos(&self.config_dir()) {
+                    Ok(repos) => repos,
+                    Err(_) => return Err(first),
+                };
+                let indexes = self.indexes(&repos, mode, lock)?;
+                let options = options_of(&indexes);
+                let loaded = self
+                    .load_with(&options, &|pkg| known(&indexes, pkg))
+                    .map_err(|failure| {
+                        failure.hint(format!(
+                            "the cached option declarations in {} may be stale; \
+                             `laft repo sync` refreshes them",
+                            self.path("/laft/cache/index").display()
+                        ))
+                    })?;
+                (loaded, indexes)
+            }
+        };
         let files = loaded.files.len();
         self.ui.phase(
             "evaluating",
@@ -294,10 +325,18 @@ impl Env {
     /// publish, as the first guess a load type checks the configuration
     /// against.
     ///
-    /// Repositories are read in name order and the declarations of the
-    /// later one win, so the result is a guess that a command which
-    /// syncs replaces with the declarations of the indexes it just
-    /// accepted. A cache that cannot be read contributes nothing.
+    /// The scan takes every repository directory and every channel and
+    /// profile record below the cache, with no filter against the
+    /// configuration, so entries of repositories the configuration no
+    /// longer lists and of channels or profiles it no longer follow keep
+    /// contributing. Repositories are read in name order and the
+    /// declarations of the later one win. The commands that rely on the
+    /// guess are the first type check of every command that loads indexes
+    /// (`laft check`, `laft plan`, `laft apply`, `laft upgrade`,
+    /// `laft view build`), the `laft why` lookups that locate a file
+    /// block, and `laft options`. A load that syncs replaces the guess
+    /// with the declarations of the indexes it just accepted, and a cache
+    /// that cannot be read contributes nothing.
     pub(crate) fn cached_options(&self) -> IndexOptions {
         let mut out = IndexOptions::default();
         let state = self.index_state();
@@ -346,22 +385,22 @@ impl Env {
         out
     }
 
-    /// The accepted index of every enabled repository of `config`, synced
+    /// The accepted index of every enabled repository of `repos`, synced
     /// as `mode` says. Syncing needs `lock`. Without it, only the cache is
     /// read.
     pub(crate) fn indexes(
         &self,
-        config: &SystemConfig,
+        repos: &BTreeMap<Name, Repo>,
         mode: SyncMode,
         lock: Option<&Lock>,
     ) -> Result<Vec<RepoIndex>, Failure> {
-        self.indexes_of(config, mode, lock, &|_| true)
+        self.indexes_of(repos, mode, lock, &|_| true)
     }
 
     /// As [`Self::indexes`], for the repositories `wanted` selects.
     pub(crate) fn indexes_of(
         &self,
-        config: &SystemConfig,
+        repos: &BTreeMap<Name, Repo>,
         mode: SyncMode,
         lock: Option<&Lock>,
         wanted: &dyn Fn(&Name) -> bool,
@@ -370,7 +409,7 @@ impl Env {
         let state = self.index_state();
         let mut out = Vec::new();
         let now = Timestamp::now();
-        for (name, repo) in config.repos.iter().filter(|(n, r)| r.enable && wanted(n)) {
+        for (name, repo) in repos.iter().filter(|(n, r)| r.enable && wanted(n)) {
             let mirrors = Mirrors::new(&repo.url, &repo.mirrors, repo.allow_http)?;
             let trust = laft_index::Repo {
                 name: name.clone(),

@@ -12,6 +12,41 @@ fn hello() -> support::Pkg {
     pkg("hello", "1.0").file("usr/bin/hello", b"#!/bin/sh\necho hello\n")
 }
 
+/// The recipe sources of a `mesa` package that declares one option.
+fn mesa_recipes(dir: &std::path::Path) -> std::path::PathBuf {
+    let recipes = dir.join("recipes-src");
+    fs::create_dir_all(recipes.join("recipes/mesa")).expect("writable");
+    fs::write(recipes.join("recipes.stav"), "recipe_repo core {}\n").expect("writable");
+    fs::write(
+        recipes.join("recipes/mesa/package.stav"),
+        "package mesa {\n  version = \"1.0\"\n  summary = \"Mesa\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+    fs::write(
+        recipes.join("recipes/mesa/options.stav"),
+        "## The drivers.\ntype Drivers = all | amd\n\nstruct Options {\n  ## The drivers to build.\n  vulkan: Drivers = all\n}\n",
+    )
+    .expect("writable");
+    recipes
+}
+
+#[test]
+fn a_stale_option_cache_recovers_at_the_next_refresh() {
+    let fx = fixture!(hello());
+    fx.configure("", "");
+    fx.laft(&["repo", "sync"]).expect(0);
+    fx.publish_with_recipes(vec![hello()], Some(&mesa_recipes(fx.dir())));
+
+    fx.configure("", "package.mesa.vulkan = amd\n");
+    let stale = fx.laft(&["check"]).expect(11);
+    assert!(
+        stale.stderr.contains("repo sync"),
+        "the stale failure names the recovery: {}",
+        stale.stderr
+    );
+    fx.laft(&["check", "--refresh"]).expect(0);
+}
+
 #[test]
 fn boot_entries_trials_and_activation_at_boot() {
     let fx = fixture!(hello());

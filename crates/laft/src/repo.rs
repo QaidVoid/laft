@@ -42,7 +42,7 @@ pub(crate) fn sync(env: &Env, wanted: &[String]) -> Result<u8, Failure> {
         ));
     }
     let lock = env.lock("repo sync")?;
-    let synced = env.indexes_of(&loaded.config, SyncMode::Always, Some(&lock), &|n| {
+    let synced = env.indexes_of(&loaded.config.repos, SyncMode::Always, Some(&lock), &|n| {
         wanted.is_empty() || wanted.contains(n)
     })?;
     let repos: Vec<_> = synced

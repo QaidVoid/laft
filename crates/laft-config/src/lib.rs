@@ -399,6 +399,33 @@ fn system_json(evaluated: &stav::Evaluated) -> Vec<u8> {
         .expect("a checked configuration has a system value, by its default")
 }
 
+/// The repositories the configuration in `root_dir` declares, read with a
+/// prelude that accepts any package assignment, so that they are reachable
+/// even when the configuration does not type check against the cached
+/// option declarations, for example right after a repository declared an
+/// option the cache has never seen. The rest of the configuration is
+/// converted best effort; only the repositories are meaningful.
+///
+/// # Errors
+///
+/// Returns a [`Report`] when the configuration does not load or evaluate,
+/// or when it breaks a rule about repositories.
+pub fn repos(root_dir: &Path) -> Result<BTreeMap<Name, Repo>, Report> {
+    let host = host::host_lenient(root_dir);
+    let root = stav::RootSpec {
+        root_struct: "Root".to_owned(),
+        entries: vec![root_dir.join("system.stav")],
+        import_roots: vec![stav::ImportRoot::new(root_dir)],
+    };
+    let checked = stav::check(&host, &root)?;
+    let evaluated = checked.eval(&stav::Limits::default()).map_err(|errors| {
+        checked.diagnostics(errors.iter().chain(checked.warnings().iter()).cloned())
+    })?;
+    let cx = convert::Cx::new(&checked, &evaluated);
+    let mut found = Vec::new();
+    Ok(convert::repos(&cx, &mut found))
+}
+
 /// The schema of the system configuration: the types of the prelude,
 /// with the package options the indexes declare, checked without any
 /// configuration file, so that tools which describe the options need no

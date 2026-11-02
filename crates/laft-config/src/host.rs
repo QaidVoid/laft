@@ -28,6 +28,37 @@ pub(crate) fn host(root_dir: &Path, package_module: &str) -> Host {
     host.prelude
         .push(Source::new(crate::options::MODULE_NAME, package_module));
     host.prelude.push(Source::new(PRELUDE_NAME, PRELUDE));
+    finish(host)
+}
+
+/// Returns the host of a system configuration in `root_dir` whose
+/// `package` fields accept any assignment, for reads that need the
+/// repositories of a configuration whose option declarations may be
+/// stale. No package options module is part of this prelude.
+pub(crate) fn host_lenient(root_dir: &Path) -> Host {
+    const SYSTEM: &str = "  package:       PackageOptions = PackageOptions {}\n";
+    const VIEW: &str = "  package:      PackageOptions = PackageOptions {}\n";
+    let lenient = PRELUDE
+        .replace(
+            SYSTEM,
+            "  package:       Map<Str, Map<Str, OptValue>> = {}\n",
+        )
+        .replace(VIEW, "  package:      Map<Str, Map<Str, OptValue>> = {}\n");
+    let mut host = Host::new(DiskLoader::new(root_dir));
+    host.prelude.push(Source::new(PRELUDE_NAME, lenient));
+    let mut host = finish(host);
+    host.symbols.push(SymbolType {
+        name: "OptValue".to_owned(),
+        words: true,
+        strings: true,
+        constructor: "opt".to_owned(),
+        parse: |text| Ok(text.to_owned()),
+    });
+    host
+}
+
+/// Completes `host` with the parts every configuration shares.
+fn finish(mut host: Host) -> Host {
     host.implicit_parts.push(Source::new(BASE_NAME, BASE));
     host.symbols = vec![SymbolType {
         name: "Pkg".to_owned(),

@@ -636,7 +636,7 @@ fn indexes(env: &Env) -> Check {
     let Ok(loaded) = env.load(&|_| Ok(())) else {
         return skip("indexes", "the configuration does not load");
     };
-    let Ok(indexes) = env.indexes(&loaded.config, SyncMode::Cached, None) else {
+    let Ok(indexes) = env.indexes(&loaded.config.repos, SyncMode::Cached, None) else {
         return check("indexes", false, "an index is not synced");
     };
     let soon = Timestamp::now().as_secs() + 3 * 86_400;
@@ -738,7 +738,7 @@ fn clock(env: &Env) -> Check {
     let newest = env
         .load(&|_| Ok(()))
         .ok()
-        .and_then(|l| env.indexes(&l.config, SyncMode::Cached, None).ok())
+        .and_then(|l| env.indexes(&l.config.repos, SyncMode::Cached, None).ok())
         .and_then(|i| i.iter().map(|r| r.accepted.index.timestamp).max());
     match newest {
         Some(newest) => {

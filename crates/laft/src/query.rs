@@ -19,7 +19,7 @@ use crate::ui::{self, table};
 /// The cached indexes of the configured repositories.
 fn cached_indexes(env: &Env) -> Result<Vec<RepoIndex>, Failure> {
     let loaded = env.load(&|_| Ok(()))?;
-    env.indexes(&loaded.config, SyncMode::Cached, None)
+    env.indexes(&loaded.config.repos, SyncMode::Cached, None)
 }
 
 /// The active generation, if any.
