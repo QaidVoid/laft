@@ -405,6 +405,26 @@ pub(crate) fn gc(cx: &Cx<'_>, found: &mut Vec<FileDiagnostic>) -> Option<Gc> {
     })
 }
 
+/// The fields of the local build settings.
+#[derive(Deserialize)]
+struct BuildFields {
+    missing: crate::Missing,
+    dep_options: crate::DepOptions,
+    jobs: u16,
+    workers: u16,
+}
+
+/// Converts the local build settings.
+pub(crate) fn build(cx: &Cx<'_>, found: &mut Vec<FileDiagnostic>) -> Option<crate::Build> {
+    let build: BuildFields = cx.get(&["system", "build"], found)?;
+    Some(crate::Build {
+        missing: build.missing,
+        dep_options: build.dep_options,
+        jobs: build.jobs,
+        workers: build.workers,
+    })
+}
+
 /// The fields of a view other than its packages and alternatives.
 #[derive(Deserialize)]
 struct ViewFields {

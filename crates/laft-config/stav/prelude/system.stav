@@ -46,6 +46,8 @@ struct System {
   ## The package options of the enabled repositories. The schema of this
   ## block is rendered from the `options` members of their indexes.
   package:       PackageOptions = PackageOptions {}
+  ## Local builds of packages that no repository publishes.
+  build:         Build = Build {}
   ## The boot loader, kernel, boot counting and initramfs.
   boot:          Boot = Boot {}
   ## Mounted filesystems. Block label: the mountpoint.
@@ -200,6 +202,28 @@ struct Gc {
   auto:             Bool = true
   ## Keep downloaded package files after unpacking.
   keep_downloads:   Bool = false
+}
+
+## What happens when no repository publishes a package the resolution
+## selected.
+type Missing = fail | build
+
+## The option values the build dependencies of a local build resolve
+## with.
+type DepOptions = context | defaults
+
+## Local builds of packages that no repository publishes.
+struct Build {
+  ## fail: the resolution names what would have to be built. build: the
+  ## package is built on this machine.
+  missing:     Missing = fail
+  ## context: the option values of the view the package is built for.
+  ## defaults: the declared defaults.
+  dep_options: DepOptions = context
+  ## The job budget of local builds. 0 means one job per CPU.
+  jobs:        Int where 0..=1024 = 0
+  ## The most local builds at the same time. 0 means automatic.
+  workers:     Int where 0..=256 = 0
 }
 
 ## The only base a view can inherit from. `inherit = none` starts empty.

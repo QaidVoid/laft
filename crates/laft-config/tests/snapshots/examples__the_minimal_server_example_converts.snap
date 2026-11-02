@@ -577,5 +577,11 @@ SystemConfig {
         auto: true,
         keep_downloads: false,
     },
+    build: Build {
+        missing: Fail,
+        dep_options: Context,
+        jobs: 0,
+        workers: 0,
+    },
     repos: {},
 }

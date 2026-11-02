@@ -124,6 +124,8 @@ pub struct SystemConfig {
     pub views: BTreeMap<Name, View>,
     /// Retention of generations and automatic collection.
     pub gc: Gc,
+    /// What local builds do.
+    pub build: Build,
     /// The package repositories, by name.
     pub repos: BTreeMap<Name, Repo>,
 }
@@ -222,6 +224,41 @@ pub struct Gc {
     pub auto: bool,
     /// Whether downloaded package files are kept after unpacking.
     pub keep_downloads: bool,
+}
+
+/// What local builds do, as the configuration sets it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Build {
+    /// What happens when no repository publishes a package the resolver
+    /// selected.
+    pub missing: Missing,
+    /// The option values build dependencies resolve with.
+    pub dep_options: DepOptions,
+    /// The job budget of local builds. Zero means one job per CPU.
+    pub jobs: u16,
+    /// The most local builds at the same time. Zero means automatic.
+    pub workers: u16,
+}
+
+/// What happens when no repository publishes a package the resolver
+/// selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Missing {
+    /// The resolution fails, naming what would have to be built.
+    Fail,
+    /// The package is built on this machine.
+    Build,
+}
+
+/// The option values build dependencies resolve with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DepOptions {
+    /// Those of the view the package is built for.
+    Context,
+    /// The declared defaults, plus the constraints of the recipe.
+    Defaults,
 }
 
 /// A view besides the system view.

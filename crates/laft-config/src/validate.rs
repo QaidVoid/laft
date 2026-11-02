@@ -46,6 +46,7 @@ pub(crate) fn validate(
         alternatives: convert::alternatives(cx, &["system", "alternatives"], found),
         views,
         gc: convert::gc(cx, found)?,
+        build: convert::build(cx, found)?,
         repos: convert::repos(cx, found),
         etc: etc?,
         boot: boot?,
