@@ -1129,7 +1129,8 @@ fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
             ));
             continue;
         }
-        let combinations = value_combinations(&decls.declarations);
+        let (combinations, total) = value_combinations(&decls.declarations);
+        let truncated = total > combinations.len();
         let mut changes = false;
         let mut broken = false;
         for set in &combinations {
@@ -1165,11 +1166,19 @@ fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
                 .map(|decl| decl.name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            findings.push(finding(
+            let warned = finding(
                 "KR012",
                 Level::Warning,
                 format!("option without effect: {name}: {options}"),
-            ));
+            );
+            findings.push(if truncated {
+                warned.detail(format!(
+                    "evaluated the first {} of {total} combinations",
+                    combinations.len()
+                ))
+            } else {
+                warned
+            });
         }
     }
 }
@@ -1177,9 +1186,13 @@ fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
 /// The cross product of the non-default values of `decls`, as option sets,
 /// capped at [`KR012_COMBINATIONS`] entries. Every option contributes only
 /// its non-default values, so the result holds the all-defaults
-/// combination alone when no option has one, and never otherwise.
-fn value_combinations(decls: &[laft_index::OptionDecl]) -> Vec<BTreeMap<String, OptionValue>> {
+/// combination alone when no option has one, and never otherwise. The
+/// second element is the size of the uncapped product.
+fn value_combinations(
+    decls: &[laft_index::OptionDecl],
+) -> (Vec<BTreeMap<String, OptionValue>>, usize) {
     let mut combinations: Vec<BTreeMap<String, OptionValue>> = vec![BTreeMap::new()];
+    let mut total: usize = 1;
     for decl in decls {
         let values: Vec<OptionValue> = match &decl.kind {
             OptionType::Bool(_) => vec![OptionValue::Bool(decl.default == OptionValue::FALSE)],
@@ -1192,6 +1205,7 @@ fn value_combinations(decls: &[laft_index::OptionDecl]) -> Vec<BTreeMap<String, 
         if values.is_empty() {
             continue;
         }
+        total = total.saturating_mul(values.len());
         let mut next: Vec<BTreeMap<String, OptionValue>> =
             Vec::with_capacity(combinations.len() * values.len());
         for combination in &combinations {
@@ -1202,9 +1216,9 @@ fn value_combinations(decls: &[laft_index::OptionDecl]) -> Vec<BTreeMap<String, 
             }
         }
         combinations = next;
+        combinations.truncate(KR012_COMBINATIONS);
     }
-    combinations.truncate(KR012_COMBINATIONS);
-    combinations
+    (combinations, total)
 }
 
 /// The tag of a default value, for a tag option.

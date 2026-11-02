@@ -970,6 +970,48 @@ fn kr012_reports_an_effect_that_needs_two_options() {
 }
 
 #[test]
+fn kr012_notes_the_combinations_it_did_not_evaluate() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let packages = [pkg("app", "1.0").file("usr/bin/app", "app").write(&out)];
+    let repo = dir.path().join("repo");
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let names = ["a", "b", "c", "d", "e", "f", "g"];
+    let recipes = dir.path().join("recipes-src");
+    fs::create_dir_all(recipes.join("recipes/hello")).expect("writable");
+    fs::write(recipes.join("recipes.stav"), "recipe_repo core {}\n").expect("writable");
+    let mut options = String::new();
+    for name in names {
+        let kind = name.to_uppercase();
+        options.push_str(&format!("type {kind} = {name}0 | {name}1 | {name}2\n"));
+    }
+    options.push_str("struct Options {\n");
+    for name in names {
+        let kind = name.to_uppercase();
+        options.push_str(&format!(
+            "  ## The {name} flavor.\n  {name}: {kind} = {name}0\n"
+        ));
+    }
+    options.push_str("}\n");
+    fs::write(recipes.join("recipes/hello/options.stav"), options).expect("writable");
+    fs::write(
+        recipes.join("recipes/hello/package.stav"),
+        "package hello {\n  version = \"1.0\"\n  summary = \"Hello\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+    let (codes, report, success) = check(&repo, &["--recipes", s(&recipes)]);
+    assert_eq!(codes, ["KR012"], "{report}");
+    assert!(success, "a warning does not fail the check");
+    let message = report["findings"][0]["message"].as_str().unwrap();
+    assert!(message.contains("option without effect"), "{report}");
+    let detail = report["findings"][0]["details"][0].as_str().unwrap();
+    assert!(
+        detail.contains("the first 64 of 128 combinations"),
+        "{report}"
+    );
+}
+
+#[test]
 fn kr012_skips_a_recipe_that_builds_nothing_here() {
     let dir = laft_test::tempdir();
     let out = dir.path().join("out");
