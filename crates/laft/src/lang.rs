@@ -127,8 +127,8 @@ fn split(file: &Path) -> Result<(PathBuf, PathBuf), Failure> {
 pub(crate) fn check(env: &Env, file: Option<&Path>, refresh: bool) -> Result<u8, Failure> {
     if let Some(file) = file {
         let (dir, file) = split(file)?;
-        let evaluation = laft_config::evaluate(&dir, &file, &laft_config::IndexOptions::default())
-            .map_err(Failure::config)?;
+        let evaluation =
+            laft_config::evaluate(&dir, &file, &env.cached_options()).map_err(Failure::config)?;
         if !evaluation.warnings.is_empty() && !env.ui.json {
             crate::report::emit(&env.ui, &evaluation.warnings);
         }
@@ -183,8 +183,8 @@ pub(crate) fn eval(
         Some(file) => split(file)?,
         None => (env.config_dir(), env.config.clone()),
     };
-    let evaluation = laft_config::evaluate(&dir, &entry, &laft_config::IndexOptions::default())
-        .map_err(Failure::config)?;
+    let evaluation =
+        laft_config::evaluate(&dir, &entry, &env.cached_options()).map_err(Failure::config)?;
     let mut keys = vec!["system".to_owned()];
     if let Some(attr) = attr.filter(|a| !a.is_empty()) {
         let path: AttrPath = attr
@@ -277,8 +277,7 @@ fn options_of(schema: &SchemaIndex) -> Vec<ConfigOption> {
 
 /// `laft options`.
 pub(crate) fn options(env: &Env, prefix: Option<&str>, all: bool) -> Result<u8, Failure> {
-    let schema =
-        laft_config::schema(&laft_config::IndexOptions::default()).map_err(Failure::config)?;
+    let schema = laft_config::schema(&env.cached_options()).map_err(Failure::config)?;
     let options: Vec<ConfigOption> = options_of(&schema)
         .into_iter()
         .filter(|o| prefix.is_none_or(|p| o.path.starts_with(p)))

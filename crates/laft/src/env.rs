@@ -1,15 +1,15 @@
 //! What every command works with: the root, the configuration, the lock,
 //! the repository indexes and the generations.
 
-use std::fs;
-use std::io;
+use std::fs::{self, File};
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use laft_config::{Loaded, PkgError, Repo, SystemConfig};
-use laft_core::{Name, PkgRef, Timestamp};
+use laft_config::{IndexOptions, Loaded, PkgError, Repo, SystemConfig};
+use laft_core::{Blake3Hash, Name, PkgRef, Timestamp};
 use laft_fetch::{Config as FetchConfig, Fetcher, Mirrors, Source, SyncRequest};
-use laft_index::{AcceptedIndex, IndexState};
+use laft_index::{AcceptedIndex, Index, IndexRecord, IndexState, MAX_INDEX_SIZE};
 use laft_pkg::Arch;
 use laft_store::{Error as StoreError, Lock, Root};
 use serde_json::json;
@@ -50,6 +50,44 @@ pub(crate) enum SyncMode {
     IfStale,
     /// Every index is synced.
     Always,
+}
+
+/// The cached index a state record pins, when its file still matches.
+fn cached_index(path: &Path, record: &IndexRecord) -> Option<Index> {
+    let file = File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(MAX_INDEX_SIZE + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > MAX_INDEX_SIZE {
+        return None;
+    }
+    let Some(hash) = &record.blake3 else {
+        return None;
+    };
+    if Blake3Hash::of(&bytes) != *hash {
+        return None;
+    }
+    Index::decode(&bytes).ok()
+}
+
+/// The option declarations and profile values of the synced indexes, by
+/// the priority of their repositories: when several repositories declare
+/// options for one package, those of the repository with the highest
+/// priority win, and name order breaks a tie.
+pub(crate) fn options_of(indexes: &[RepoIndex]) -> IndexOptions {
+    let mut by_priority: Vec<&RepoIndex> = indexes.iter().collect();
+    by_priority.sort_by_key(|repo| (repo.repo.priority, repo.name.clone()));
+    let mut out = IndexOptions::default();
+    for repo in by_priority {
+        for (name, decls) in &repo.accepted.index.options {
+            out.options.insert(name.clone(), decls.clone());
+        }
+        if let Some(profile) = &repo.accepted.index.profile {
+            for (name, values) in &profile.values {
+                out.profile.insert(name.clone(), values.clone());
+            }
+        }
+    }
+    out
 }
 
 /// The accepted index of one enabled repository.
@@ -189,9 +227,19 @@ impl Env {
                 format!("{} does not exist", self.config.display()),
             ));
         }
-        let options = laft_config::IndexOptions::default();
+        let options = self.cached_options();
+        self.load_with(&options, packages)
+    }
+
+    /// As [`Self::load`], with the option declarations `options` given
+    /// instead of the cached ones.
+    pub(crate) fn load_with(
+        &self,
+        options: &IndexOptions,
+        packages: &dyn Fn(&PkgRef) -> Result<(), PkgError>,
+    ) -> Result<Loaded, Failure> {
         let mut loaded =
-            laft_config::load(&self.config_dir(), packages, &options).map_err(Failure::config)?;
+            laft_config::load(&self.config_dir(), packages, options).map_err(Failure::config)?;
         if !loaded.warnings.is_empty() && !self.ui.json {
             crate::report::emit(&self.ui, &loaded.warnings);
         }
@@ -211,7 +259,8 @@ impl Env {
         let started = std::time::Instant::now();
         let first = self.load(&|_| Ok(()))?;
         let indexes = self.indexes(&first.config, mode, lock)?;
-        let loaded = self.load(&|pkg| known(&indexes, pkg))?;
+        let options = options_of(&indexes);
+        let loaded = self.load_with(&options, &|pkg| known(&indexes, pkg))?;
         let files = loaded.files.len();
         self.ui.phase(
             "evaluating",
@@ -239,6 +288,62 @@ impl Env {
         let mut config = FetchConfig::new(self.path("/laft/cache"));
         config.offline = self.offline;
         Fetcher::new(config)
+    }
+
+    /// The option declarations and profile values the cached indexes
+    /// publish, as the first guess a load type checks the configuration
+    /// against.
+    ///
+    /// Repositories are read in name order and the declarations of the
+    /// later one win, so the result is a guess that a command which
+    /// syncs replaces with the declarations of the indexes it just
+    /// accepted. A cache that cannot be read contributes nothing.
+    pub(crate) fn cached_options(&self) -> IndexOptions {
+        let mut out = IndexOptions::default();
+        let state = self.index_state();
+        let cache = self.path("/laft/cache/index");
+        let Ok(repos) = fs::read_dir(&cache) else {
+            return out;
+        };
+        let mut names: Vec<String> = repos
+            .flatten()
+            .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        for name in names {
+            let Ok(name) = name.parse::<Name>() else {
+                continue;
+            };
+            let Ok(records) = state.index_records(&name) else {
+                continue;
+            };
+            let mut records: Vec<&IndexRecord> = records
+                .iter()
+                .filter(|record| record.arch == ARCH && record.blake3.is_some())
+                .collect();
+            records.sort_by(|a, b| (&a.channel, &a.profile).cmp(&(&b.channel, &b.profile)));
+            for record in records {
+                let path = cache
+                    .join(name.as_str())
+                    .join("channels")
+                    .join(record.channel.as_str())
+                    .join(ARCH.as_str())
+                    .join("index.json.zst");
+                let Some(index) = cached_index(&path, record) else {
+                    continue;
+                };
+                for (pkg, decls) in &index.options {
+                    out.options.insert(pkg.clone(), decls.clone());
+                }
+                if let Some(profile) = &index.profile {
+                    for (pkg, values) in &profile.values {
+                        out.profile.insert(pkg.clone(), values.clone());
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// The accepted index of every enabled repository of `config`, synced
