@@ -163,6 +163,21 @@ fn renames_generated_types_that_would_collide() {
 }
 
 #[test]
+fn keeps_a_tagged_option_named_options() {
+    let name = "mesa".parse::<Name>().expect("a name");
+    let decls = vec![OptionDecl {
+        name: "options".to_owned(),
+        kind: OptionType::Tags(vec!["full".to_owned(), "slim".to_owned()]),
+        default: OptionValue::Tag("full".to_owned()),
+        doc: "d".to_owned(),
+    }];
+    let text = options::module(&options_of(vec![(name, decls)]));
+    assert!(text.contains("struct Mesa_Options {"), "{text}");
+    assert!(text.contains("type Mesa_Options_2 = full | slim"), "{text}");
+    assert!(text.contains("options: Mesa_Options_2 = full"), "{text}");
+}
+
+#[test]
 fn keeps_the_option_of_a_package_whose_other_option_is_a_keyword() {
     let name = "pkg".parse::<Name>().expect("a name");
     let decls = vec![

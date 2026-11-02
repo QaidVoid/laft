@@ -284,3 +284,28 @@ fn the_schema_without_options_has_no_package_field() {
         .expect("the empty struct is in the schema");
     assert!(package.fields.is_empty());
 }
+
+#[test]
+fn a_package_whose_option_is_named_options_still_type_checks() {
+    let mesa = "mesa".parse::<Name>().expect("a name");
+    let options = IndexOptions {
+        options: [(
+            mesa.clone(),
+            vec![OptionDecl {
+                name: "options".to_owned(),
+                kind: OptionType::Tags(vec!["full".to_owned(), "slim".to_owned()]),
+                default: OptionValue::Tag("full".to_owned()),
+                doc: "The package shape.".to_owned(),
+            }],
+        )]
+        .into_iter()
+        .collect(),
+        profile: BTreeMap::new(),
+    };
+    let loaded = load("package.mesa.options = slim", &options).expect("loads");
+    let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
+    assert_eq!(
+        values.fixed[&mesa]["options"],
+        OptionValue::Tag("slim".to_owned())
+    );
+}

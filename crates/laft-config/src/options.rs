@@ -50,7 +50,7 @@ pub(crate) fn module(options: &IndexOptions) -> String {
             continue;
         };
         let prefix = fresh(&pascal(name.as_str()), &mut used);
-        let struct_name = format!("{prefix}_Options");
+        let struct_name = fresh(&format!("{prefix}_Options"), &mut used);
         let mut own = Vec::new();
         for decl in decls {
             let Some(option) = field_name(&decl.name) else {
@@ -81,7 +81,6 @@ pub(crate) fn module(options: &IndexOptions) -> String {
         if own.is_empty() {
             continue;
         }
-        used.insert(struct_name.clone());
         let width = own.iter().map(|o| o.field.len()).max().unwrap_or_default();
         let mut body = String::new();
         for option in &own {
