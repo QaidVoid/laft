@@ -6,7 +6,10 @@ use laft_core::{Blake3Hash, Name, StoreId, Timestamp};
 use laft_index::{Defaults, Index, IndexEntry, Yank};
 use laft_pkg::{Alternative, Arch, Meta};
 
-use crate::{Error, Installed, Repository, Request, Resolution, ResolveInput, Universe, Upgrade};
+use crate::{
+    Error, FixedValue, Installed, OptionRequest, Repository, Request, Resolution, ResolveInput,
+    Universe, Upgrade,
+};
 
 pub(crate) fn name(s: &str) -> Name {
     s.parse().expect("test name is valid")
@@ -58,6 +61,8 @@ pub(crate) trait MetaExt: Sized {
     fn replaces(self, deps: &[&str]) -> Self;
     fn alternative(self, group: &str, paths: &[&str]) -> Self;
     fn ranked_alternative(self, group: &str, paths: &[&str], priority: i64) -> Self;
+    /// The option values the package was built with.
+    fn options(self, opts: &[(&str, &str)]) -> Self;
 }
 
 fn parsed<T: std::str::FromStr + ToString>(items: &[&str]) -> Vec<T>
@@ -104,6 +109,16 @@ impl MetaExt for Meta {
             paths: paths.iter().map(|p| (*p).to_owned()).collect(),
             priority,
         });
+        self
+    }
+
+    fn options(mut self, opts: &[(&str, &str)]) -> Self {
+        for (opt, value) in opts {
+            self.options.insert(
+                (*opt).to_owned(),
+                (*value).parse().expect("test option value is valid"),
+            );
+        }
         self
     }
 }
@@ -193,7 +208,41 @@ pub(crate) fn input<'a>(
             .map(|meta| (meta.name.clone(), Installed { id: id(meta), meta }))
             .collect(),
         upgrade: Upgrade::None,
+        options: BTreeMap::new(),
     }
+}
+
+/// The `options` input from `(option, value, origin)` fixed values for one
+/// package name.
+pub(crate) fn fixed(of: &str, values: &[(&str, &str, &str)]) -> (Name, OptionRequest) {
+    let request = OptionRequest {
+        fixed: values
+            .iter()
+            .map(|(opt, value, origin)| {
+                (
+                    (*opt).to_owned(),
+                    FixedValue {
+                        value: (*value).parse().expect("test option value is valid"),
+                        origin: (*origin).to_owned(),
+                    },
+                )
+            })
+            .collect(),
+        preferred: BTreeMap::new(),
+    };
+    (name(of), request)
+}
+
+/// Like [`input`], with fixed and preferred option values.
+pub(crate) fn input_with<'a>(
+    view: &str,
+    requests: Vec<Request>,
+    installed: &[&'a Meta],
+    options: &[(Name, OptionRequest)],
+) -> ResolveInput<'a> {
+    let mut input = input(view, requests, installed);
+    input.options = options.iter().cloned().collect();
+    input
 }
 
 /// Resolves `requests` for view `system` against one repository `core`.

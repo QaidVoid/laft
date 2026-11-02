@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use laft_core::{
-    Dep, Name, OptionConstraints, PkgRef, StoreId, Variant, VersionPrefix, VersionReq,
+    Dep, Name, OptionConstraint, OptionConstraints, OptionValue, PkgRef, StoreId, Variant,
+    VersionPrefix, VersionReq,
 };
 use laft_index::Yank;
 use laft_pkg::Meta;
@@ -45,6 +46,28 @@ pub struct Installed<'a> {
     pub meta: &'a Meta,
 }
 
+/// The option values the configuration gives one package name.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OptionRequest {
+    /// Values set at normal or forced priority, with where each was set.
+    /// They are hard constraints: every candidate of the name must record
+    /// each fixed option, with exactly this value.
+    pub fixed: BTreeMap<String, FixedValue>,
+    /// Values set with `default(...)`, by a part or by a profile. They
+    /// steer the choice among candidates, and nothing requires them.
+    pub preferred: BTreeMap<String, OptionValue>,
+}
+
+/// A fixed option value and where the configuration set it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixedValue {
+    /// The value.
+    pub value: OptionValue,
+    /// Where the configuration set it, for example
+    /// `/etc/laft/system.stav:14:5`.
+    pub origin: String,
+}
+
 /// What to resolve: the requests of one view and its current state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResolveInput<'a> {
@@ -60,6 +83,8 @@ pub struct ResolveInput<'a> {
     pub installed: BTreeMap<Name, Installed<'a>>,
     /// Which installed packages may move to a newer version.
     pub upgrade: Upgrade,
+    /// The fixed and preferred option values, by package name.
+    pub options: BTreeMap<Name, OptionRequest>,
 }
 
 impl ResolveInput<'_> {
@@ -289,12 +314,26 @@ impl Fact<'_> {
     }
 }
 
-/// Whether `meta` satisfies `dep`: by its version for a dependency on its
-/// own name, by replacing the name for a dependency on another name, and by
-/// its provides otherwise.
+/// Whether every constraint holds for the recorded option values. A
+/// constraint on an option the values do not record fails.
+fn constraints_hold(
+    options: &BTreeMap<String, OptionValue>,
+    constraints: &OptionConstraints,
+) -> bool {
+    constraints
+        .as_slice()
+        .iter()
+        .all(|c| options.get(c.name()).is_some_and(|v| c.matches(v)))
+}
+
+/// Whether `meta` satisfies `dep`: by its version and options for a
+/// dependency on its own name, by replacing the name for a dependency on
+/// another name, and by its provides otherwise.
 fn satisfies(meta: &Meta, dep: &Dep) -> bool {
     match dep {
-        Dep::Pkg(name, req, _) if *name == meta.name => req.matches(&meta.version, meta.rev),
+        Dep::Pkg(name, req, opts) if *name == meta.name => {
+            req.matches(&meta.version, meta.rev) && constraints_hold(&meta.options, opts)
+        }
         Dep::Pkg(name, _, _) => meta
             .replaces
             .iter()
@@ -327,6 +366,8 @@ struct Normalized {
     name: Name,
     variant: Variant,
     prefix: Option<VersionPrefix>,
+    /// The option constraints of the requests, which agree.
+    options: OptionConstraints,
     /// The request whose prefix was kept, as written.
     text: String,
     origin: String,
@@ -585,10 +626,19 @@ impl<'u, 'a> Ctx<'u, 'a> {
                 }));
             }
             let (head, prefix) = kept.copied().unwrap_or(group[0]);
+            let mut options: Vec<OptionConstraint> = Vec::new();
+            for (r, _) in &group {
+                for c in r.pkg.options().as_slice() {
+                    if !options.contains(c) {
+                        options.push(c.clone());
+                    }
+                }
+            }
             normalized.push(Normalized {
                 name,
                 variant,
                 prefix: prefix.cloned(),
+                options: options.into(),
                 text: head.pkg.to_string(),
                 origin: head.origin.clone(),
                 reasons: group
@@ -680,13 +730,30 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         }
     }
 
-    /// Whether the constraints of the branch allow `candidate` of `name`.
+    /// Whether the branch allows `candidate` of `name`: not avoided, every
+    /// learned constraint satisfied, and every fixed option value of the
+    /// configuration recorded with exactly that value.
     fn allowed(&self, name: &Name, candidate: &Candidate<'_>) -> bool {
         !self.avoided.contains(&candidate.id)
+            && self.fixed_ok(name, &candidate.meta.options)
             && self
                 .required
                 .get(name)
                 .is_none_or(|deps| deps.iter().all(|dep| satisfies(candidate.meta, dep)))
+    }
+
+    /// Whether the configuration's fixed values all appear in `options`.
+    /// An option the package does not record fails, so a candidate built
+    /// before the recipe had options is never selected for a name whose
+    /// options the configuration sets.
+    fn fixed_ok(&self, name: &Name, options: &BTreeMap<String, OptionValue>) -> bool {
+        match self.ctx.input.options.get(name) {
+            None => true,
+            Some(req) => req
+                .fixed
+                .iter()
+                .all(|(opt, fixed)| options.get(opt) == Some(&fixed.value)),
+        }
     }
 
     fn select(&mut self, candidate: Candidate<'a>, reasons: Vec<Reason>, kept: bool) {
@@ -719,12 +786,14 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
 
     fn run(&mut self) -> Result<(), Stop<'a>> {
         for request in self.requests {
+            let options = &request.options;
             let accept = |c: &Candidate<'a>| {
                 c.meta.variant == request.variant
                     && request
                         .prefix
                         .as_ref()
                         .is_none_or(|p| p.matches(&c.meta.version))
+                    && constraints_hold(&c.meta.options, options)
                     && self.allowed(&request.name, c)
             };
             match self.ctx.best(&request.name, accept, false)? {
@@ -796,13 +865,16 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             .collect();
         constraints.extend(extra);
         if let Some(request) = self.requests.iter().find(|r| r.name == *name)
-            && let Some(prefix) = &request.prefix
+            && (request.prefix.is_some() || !request.options.is_empty())
         {
             constraints.push(Bound {
                 dep: Dep::Pkg(
                     name.clone(),
-                    VersionReq::Prefix(prefix.clone()),
-                    OptionConstraints::default(),
+                    request
+                        .prefix
+                        .as_ref()
+                        .map_or(VersionReq::Any, |p| VersionReq::Prefix(p.clone())),
+                    request.options.clone(),
                 ),
                 from: BoundSource::Request(request.origin.clone()),
             });
@@ -820,7 +892,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             dep: dep.clone(),
         };
         match (dep, Key::of_dep(dep)) {
-            (Dep::Pkg(name, req, _), _) => self.satisfy_name(dep, name, req, by, reason),
+            (Dep::Pkg(name, req, opts), _) => self.satisfy_name(dep, name, req, opts, by, reason),
             (_, Some(key)) => self.satisfy_provide(dep, key, by, reason),
             (_, None) => Ok(()),
         }
@@ -835,12 +907,13 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         dep: &'a Dep,
         name: &'a Name,
         req: &'a VersionReq,
+        opts: &'a OptionConstraints,
         by: Candidate<'a>,
         reason: Reason,
     ) -> Result<(), Stop<'a>> {
         if let Some(sel) = self.selected.get_mut(name) {
             let meta = sel.candidate.meta;
-            if req.matches(&meta.version, meta.rev) {
+            if req.matches(&meta.version, meta.rev) && constraints_hold(&meta.options, opts) {
                 sel.reasons.push(reason);
                 return Ok(());
             }
@@ -856,8 +929,11 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 ],
             });
         }
-        let accept =
-            |c: &Candidate<'a>| req.matches(&c.meta.version, c.meta.rev) && self.allowed(name, c);
+        let accept = |c: &Candidate<'a>| {
+            req.matches(&c.meta.version, c.meta.rev)
+                && constraints_hold(&c.meta.options, opts)
+                && self.allowed(name, c)
+        };
         if let Some((candidate, kept)) = self.ctx.best(name, accept, true)? {
             self.select(candidate, vec![reason], kept);
             return Ok(());

@@ -1244,6 +1244,168 @@ fn pkg_config_provider_default_is_keyed_by_the_bare_module() {
     assert_eq!(labels(&r), ["app 1-r1", "zlib-ng 2.2-r1"]);
 }
 
+#[test]
+fn an_option_constraint_rejects_a_candidate_built_with_other_values() {
+    let without_x11 = pkg("mesa 25.1.0").options(&[("x11", "false")]);
+    let with_x11 = pkg("mesa 25.2.0").options(&[("x11", "true")]);
+    let core = index(
+        "core",
+        vec![
+            with_x11,
+            without_x11.clone(),
+            pkg("kwin 6").depends(&["mesa{!x11}"]),
+        ],
+    );
+    let r = resolve_core(&core, &["kwin"], &[]).unwrap();
+    assert_eq!(labels(&r), ["kwin 6-r1", "mesa 25.1.0-r1"]);
+
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("x11", "true")]),
+            pkg("kwin 6").depends(&["mesa{!x11}"]),
+        ],
+    );
+    let e = resolve_core(&core, &["kwin"], &[]).unwrap_err();
+    assert_eq!(e.code(), Some("S005"));
+}
+
+#[test]
+fn an_option_constraint_restarts_over_the_newest_candidate() {
+    let intel = pkg("mesa 25.2.0").options(&[("vulkan", "intel")]);
+    let amd = pkg("mesa 25.1.0").options(&[("vulkan", "amd")]);
+    let core = index(
+        "core",
+        vec![
+            intel,
+            amd.clone(),
+            pkg("glbench 1").depends(&["mesa"]),
+            pkg("hevc 1").depends(&["mesa{vulkan=amd}"]),
+        ],
+    );
+    let r = resolve_core(&core, &["glbench", "hevc"], &[]).unwrap();
+    assert_eq!(labels(&r), ["glbench 1-r1", "hevc 1-r1", "mesa 25.1.0-r1"]);
+    assert_eq!(
+        r.learned
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["learned mesa{vulkan=amd} from hevc 1-r1"]
+    );
+}
+
+#[test]
+fn a_request_with_option_constraints_selects_a_matching_candidate() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vulkan", "all")]),
+            pkg("mesa 25.2.0").options(&[("vulkan", "amd"), ("llvm", "true")]),
+        ],
+    );
+    let u = universe(&[(&core, 0)]);
+    let r = u
+        .resolve(&input("system", vec![req("mesa{vulkan=amd}")], &[]))
+        .unwrap();
+    assert_eq!(labels(&r), ["mesa 25.2.0-r1"]);
+    let r = u
+        .resolve(&input("system", vec![req("mesa{llvm,!x11}")], &[]))
+        .unwrap_err();
+    assert_eq!(r.code(), Some("S005"));
+    let ErrorKind::Unsatisfiable { constraints, .. } = &*r.kind else {
+        panic!("expected S005, got {r}");
+    };
+    assert_eq!(
+        constraints
+            .iter()
+            .map(|b| b.dep.to_string())
+            .collect::<Vec<_>>(),
+        ["mesa{llvm,!x11}"]
+    );
+}
+
+#[test]
+fn fixed_values_rule_out_candidates_that_record_other_values() {
+    let without_x11 = pkg("mesa 25.1.0").options(&[("x11", "false")]);
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("x11", "true")]),
+            without_x11.clone(),
+        ],
+    );
+    let u = universe(&[(&core, 0)]);
+    let i = input_with(
+        "system",
+        vec![req("mesa")],
+        &[],
+        &[fixed(
+            "mesa",
+            &[("x11", "false", "/etc/laft/system.stav:3:5")],
+        )],
+    );
+    let r = u.resolve(&i).unwrap();
+    assert_eq!(labels(&r), ["mesa 25.1.0-r1"]);
+
+    let installed = pkg("mesa 25.2.0").options(&[("x11", "true")]);
+    let i = input_with(
+        "system",
+        vec![req("mesa")],
+        &[&installed],
+        &[fixed(
+            "mesa",
+            &[("x11", "false", "/etc/laft/system.stav:3:5")],
+        )],
+    );
+    let r = u.resolve(&i).unwrap();
+    assert_eq!(labels(&r), ["mesa 25.1.0-r1"]);
+    assert!(!r.packages[&name("mesa")].kept_installed);
+}
+
+#[test]
+fn a_fixed_option_must_be_recorded_by_the_selected_package() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0"),
+            pkg("mesa 25.1.0").options(&[("x11", "true")]),
+        ],
+    );
+    let i = input_with(
+        "system",
+        vec![req("mesa")],
+        &[],
+        &[fixed(
+            "mesa",
+            &[("x11", "false", "/etc/laft/system.stav:3:5")],
+        )],
+    );
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(e.code(), Some("S005"));
+}
+
+#[test]
+fn a_dependency_contradicting_a_fixed_value_cannot_select() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vulkan", "all")]),
+            pkg("blender 4.5").depends(&["mesa{vulkan=all}"]),
+        ],
+    );
+    let i = input_with(
+        "system",
+        vec![req("blender")],
+        &[],
+        &[fixed(
+            "mesa",
+            &[("vulkan", "amd", "/etc/laft/system.stav:14:5")],
+        )],
+    );
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(e.code(), Some("S005"));
+}
+
 /// A universe that is known to resolve, because it contains a planted
 /// solution next to decoys.
 #[derive(Debug, Clone)]

@@ -104,5 +104,7 @@ mod universe;
 
 pub use error::{Bound, BoundSource, Error, ErrorKind};
 pub use explain::{Chain, Learned, Package, Reason, Step, Warning, Why};
-pub use resolve::{Installed, Request, Resolution, ResolveInput, Selected, Upgrade};
+pub use resolve::{
+    FixedValue, Installed, OptionRequest, Request, Resolution, ResolveInput, Selected, Upgrade,
+};
 pub use universe::{Candidate, Repository, Source, Universe};
