@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use laft_core::{Blake3Hash, Name, StoreId, Timestamp};
-use laft_index::{Defaults, Index, IndexEntry, Yank};
+use laft_index::{Defaults, Index, IndexEntry, OptionDecl, OptionType, Yank};
 use laft_pkg::{Alternative, Arch, Meta};
 
 use crate::{
@@ -264,6 +264,58 @@ pub(crate) fn buildable(of: &str, version: &str, defaults: &[(&str, &str)]) -> B
             })
             .collect(),
     }
+}
+
+/// The declaration of a `Bool` option with a default.
+pub(crate) fn decl_bool(name: &str, default: &str) -> OptionDecl {
+    OptionDecl {
+        name: (*name).to_owned(),
+        kind: OptionType::Bool("bool".to_owned()),
+        default: default.parse().expect("test option value is valid"),
+        doc: String::new(),
+    }
+}
+
+/// The declaration of a tag option with its tags in declaration order and
+/// a default.
+pub(crate) fn decl_tags(name: &str, tags: &[&str], default: &str) -> OptionDecl {
+    OptionDecl {
+        name: (*name).to_owned(),
+        kind: OptionType::Tags(tags.iter().map(|t| (*t).to_owned()).collect()),
+        default: default.parse().expect("test option value is valid"),
+        doc: String::new(),
+    }
+}
+
+/// Preferred values for one package name.
+pub(crate) fn preferred(of: &str, values: &[(&str, &str)]) -> (Name, OptionRequest) {
+    let request = OptionRequest {
+        fixed: BTreeMap::new(),
+        preferred: values
+            .iter()
+            .map(|(opt, value)| {
+                (
+                    (*opt).to_owned(),
+                    (*value).parse().expect("test option value is valid"),
+                )
+            })
+            .collect(),
+    };
+    (name(of), request)
+}
+
+/// An index with packages and option declarations.
+pub(crate) fn index_declaring(
+    repo: &str,
+    packages: Vec<Meta>,
+    decls: Vec<(&str, Vec<OptionDecl>)>,
+) -> Index {
+    let mut index = index(repo, packages);
+    index.options = decls
+        .into_iter()
+        .map(|(of, list)| (name(of), list))
+        .collect();
+    index
 }
 
 /// Resolves `requests` for view `system` against one repository `core`.

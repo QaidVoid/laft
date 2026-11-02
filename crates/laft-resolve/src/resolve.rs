@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use laft_core::{
     Dep, Name, OptionConstraint, OptionConstraints, OptionValue, PkgRef, StoreId, Variant, Version,
@@ -9,7 +9,7 @@ use laft_pkg::Meta;
 
 use crate::error::{Bound, BoundSource, Error, ErrorKind, ValueOrigin};
 use crate::explain::{Chain, Learned, Package, Reason, Warning, Why};
-use crate::universe::{Candidate, Key, Source, Universe, order, provides};
+use crate::universe::{Candidate, Key, Source, Universe, option_order, order, provides};
 
 /// The most passes one resolution may take. A resolution without conflicts
 /// takes one pass, and each conflict usually costs one or two more.
@@ -432,6 +432,9 @@ struct Ctx<'u, 'a> {
     extra_provides: BTreeMap<Key<'a>, Vec<&'a Name>>,
     /// The packages a recipe snapshot can build, one per name.
     buildable: BTreeMap<&'u str, &'u Buildable>,
+    /// The candidates of names whose order the view's option values and the
+    /// declarations refine: best first by the preference order of the view.
+    option_sorted: HashMap<&'u str, Vec<Candidate<'a>>>,
 }
 
 impl<'u, 'a> Ctx<'u, 'a> {
@@ -492,12 +495,40 @@ impl<'u, 'a> Ctx<'u, 'a> {
             }
             installed.insert(name.as_str(), state);
         }
+        let mut option_sorted: HashMap<&'u str, Vec<Candidate<'a>>> = HashMap::new();
+        let names_with_values = input
+            .options
+            .keys()
+            .map(|n| n.as_str())
+            .chain(universe.decls.keys().copied());
+        for of in names_with_values {
+            let Some(owner) = universe.owner(of) else {
+                continue;
+            };
+            if owner.repos.len() != 1 || owner.candidates.len() < 2 {
+                continue;
+            }
+            let decls = universe.decls(of).unwrap_or(&[]);
+            let request = input
+                .options
+                .iter()
+                .find(|(n, _)| n.as_str() == of)
+                .map(|(_, r)| r);
+            let mut list = owner.candidates.clone();
+            list.sort_by(|a, b| {
+                order(a, b)
+                    .then_with(|| option_order(a, b, decls, request))
+                    .then_with(|| a.id.cmp(&b.id))
+            });
+            option_sorted.insert(of, list);
+        }
         Self {
             universe,
             input,
             installed,
             extra_provides,
             buildable,
+            option_sorted,
         }
     }
 
@@ -514,12 +545,20 @@ impl<'u, 'a> Ctx<'u, 'a> {
         }
     }
 
-    /// The candidates of `name`: the owner's, best first, and a visible
-    /// installed candidate that the owner does not list.
-    fn candidates(
-        &self,
+    /// The candidates of `name`: the owner's, best first by the preference
+    /// order of the view, and a visible installed candidate that the owner
+    /// does not list.
+    fn candidates<'s>(
+        &'s self,
         name: &str,
-    ) -> Result<(&'u [Candidate<'a>], Option<Candidate<'a>>), Box<ErrorKind>> {
+    ) -> Result<(&'s [Candidate<'a>], Option<Candidate<'a>>), Box<ErrorKind>> {
+        if let Some(sorted) = self.option_sorted.get(name) {
+            let extra = match self.installed.get(name) {
+                Some(InstalledState::Extra { candidate, .. }) => Some(*candidate),
+                _ => None,
+            };
+            return Ok((sorted.as_slice(), extra));
+        }
         let listed = match self.universe.owner(name) {
             Some(owner) if owner.repos.len() > 1 => {
                 return Err(Box::new(ErrorKind::EqualPriority {
@@ -539,10 +578,10 @@ impl<'u, 'a> Ctx<'u, 'a> {
     }
 
     /// Every candidate of `name`, best first.
-    fn ordered(
-        &self,
+    fn ordered<'s>(
+        &'s self,
         name: &str,
-    ) -> Result<impl Iterator<Item = Candidate<'a>> + 'u, Box<ErrorKind>> {
+    ) -> Result<impl Iterator<Item = Candidate<'a>> + 's, Box<ErrorKind>> {
         let (listed, extra) = self.candidates(name)?;
         let split = extra.map_or(listed.len(), |e| {
             listed.partition_point(|c| order(c, &e).is_lt())

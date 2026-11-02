@@ -2,9 +2,11 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 
-use laft_core::{Dep, Name, Provide, StoreId};
-use laft_index::{Index, IndexEntry, Yank};
+use laft_core::{Dep, Name, OptionValue, Provide, StoreId};
+use laft_index::{Index, IndexEntry, OptionDecl, OptionType, Yank};
 use laft_pkg::Meta;
+
+use crate::resolve::OptionRequest;
 
 /// An accepted index of an enabled repository and the repository's
 /// priority.
@@ -94,6 +96,9 @@ pub struct Universe<'a> {
     pub(crate) replaces: HashMap<&'a str, Vec<&'a Name>>,
     pub(crate) provider_defaults: HashMap<&'a str, &'a Name>,
     pub(crate) alternative_defaults: HashMap<&'a str, &'a Name>,
+    /// The option declarations of every recipe with options, by package
+    /// name, as the highest-priority repository that records them has them.
+    pub(crate) decls: HashMap<&'a str, &'a [OptionDecl]>,
 }
 
 /// The candidates of one package name.
@@ -273,12 +278,16 @@ impl<'a> Universe<'a> {
         });
         let mut provider_defaults = HashMap::new();
         let mut alternative_defaults = HashMap::new();
+        let mut decls: HashMap<&'a str, &'a [OptionDecl]> = HashMap::new();
         for repo in ranked {
             for (provide, name) in &repo.index.defaults.providers {
                 provider_defaults.entry(provide.as_str()).or_insert(name);
             }
             for (group, name) in &repo.index.defaults.alternatives {
                 alternative_defaults.entry(group.as_str()).or_insert(name);
+            }
+            for (name, list) in &repo.index.options {
+                decls.entry(name.as_str()).or_insert(list);
             }
         }
 
@@ -288,6 +297,7 @@ impl<'a> Universe<'a> {
             replaces,
             provider_defaults,
             alternative_defaults,
+            decls,
         }
     }
 
@@ -302,4 +312,93 @@ impl<'a> Universe<'a> {
     pub(crate) fn replacers(&self, name: &str) -> &[&'a Name] {
         self.replaces.get(name).map_or(&[], Vec::as_slice)
     }
+
+    /// The option declarations recorded for `name`, when the indexes have
+    /// any.
+    pub(crate) fn decls(&self, name: &str) -> Option<&'a [OptionDecl]> {
+        self.decls.get(name).copied()
+    }
+}
+
+/// The rank of an option value in the tie break of the preference order:
+/// an option the package does not record first, then `false`, then `true`,
+/// then the tags in declaration order.
+fn value_rank(value: Option<&OptionValue>, tags: &[String]) -> usize {
+    match value {
+        None => 0,
+        Some(OptionValue::Bool(false)) => 1,
+        Some(OptionValue::Bool(true)) => 2,
+        Some(OptionValue::Tag(tag)) => tags
+            .iter()
+            .position(|t| t == tag)
+            .map_or(usize::MAX, |at| 3 + at),
+    }
+}
+
+/// Compares two candidates of one name by their option values: the fewest
+/// free options that differ from their preferred values first, then the
+/// values option by option in declaration order, with `false` before
+/// `true` and tags in declaration order.
+pub(crate) fn option_order(
+    a: &Candidate<'_>,
+    b: &Candidate<'_>,
+    decls: &[OptionDecl],
+    request: Option<&OptionRequest>,
+) -> Ordering {
+    let fixed = request.map(|r| &r.fixed);
+    let preferred = request.map(|r| &r.preferred);
+    let is_free = |opt: &str| !fixed.is_some_and(|f| f.contains_key(opt));
+    let expected = |opt: &str| {
+        preferred
+            .and_then(|p| p.get(opt))
+            .or_else(|| decls.iter().find(|d| d.name == opt).map(|d| &d.default))
+    };
+    let deviations = |c: &Candidate<'_>| {
+        let mut count = 0;
+        for (opt, value) in &c.meta.options {
+            if is_free(opt) && expected(opt) != Some(value) {
+                count += 1;
+            }
+        }
+        if let Some(preferred) = preferred {
+            for opt in preferred.keys() {
+                if is_free(opt) && !c.meta.options.contains_key(opt) {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+    let by_deviations = deviations(a).cmp(&deviations(b));
+    if by_deviations.is_ne() {
+        return by_deviations;
+    }
+    let mut names: Vec<&str> = decls.iter().map(|d| d.name.as_str()).collect();
+    let mut extra: Vec<&str> = a
+        .meta
+        .options
+        .keys()
+        .chain(b.meta.options.keys())
+        .map(String::as_str)
+        .filter(|n| !names.contains(n))
+        .collect();
+    extra.sort_unstable();
+    extra.dedup();
+    names.extend(extra);
+    for opt in names {
+        let tags = decls
+            .iter()
+            .find(|d| d.name == opt)
+            .map(|d| match &d.kind {
+                OptionType::Tags(tags) => tags.as_slice(),
+                OptionType::Bool(_) => &[],
+            })
+            .unwrap_or(&[]);
+        let rank = |c: &Candidate<'_>| value_rank(c.meta.options.get(opt), tags);
+        let by_value = rank(a).cmp(&rank(b));
+        if by_value.is_ne() {
+            return by_value;
+        }
+    }
+    Ordering::Equal
 }

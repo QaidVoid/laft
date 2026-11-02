@@ -1561,6 +1561,89 @@ fn a_name_nobody_publishes_is_built_with_its_defaults() {
     );
 }
 
+#[test]
+fn the_fewest_deviations_from_the_preferred_values_win() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("x11", "true"), ("llvm", "true")]),
+            pkg("mesa 25.2.0").options(&[("x11", "false"), ("llvm", "true")]),
+        ],
+    );
+    let u = universe(&[(&core, 0)]);
+    let i = input("system", vec![req("mesa")], &[]);
+    let r = u.resolve(&i).unwrap();
+    assert_eq!(labels(&r), ["mesa 25.2.0-r1"]);
+
+    let i = input_with(
+        "system",
+        vec![req("mesa")],
+        &[],
+        &[preferred("mesa", &[("x11", "false")])],
+    );
+    let r = u.resolve(&i).unwrap();
+    assert_eq!(labels(&r), ["mesa 25.2.0-r1"]);
+}
+
+#[test]
+fn declared_defaults_decide_when_the_view_prefers_nothing() {
+    let core = index_declaring(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("x11", "true")]),
+            pkg("mesa 25.2.0").options(&[("x11", "false")]),
+        ],
+        vec![("mesa", vec![decl_bool("x11", "true")])],
+    );
+    let r = resolve_core(&core, &["mesa"], &[]).unwrap();
+    assert_eq!(labels(&r), ["mesa 25.2.0-r1"]);
+}
+
+#[test]
+fn false_comes_before_true_in_the_tie_break() {
+    let core = index_declaring(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vulkan", "amd"), ("llvm", "false")]),
+            pkg("mesa 25.2.0").options(&[("vulkan", "all"), ("llvm", "true")]),
+        ],
+        vec![(
+            "mesa",
+            vec![
+                decl_bool("llvm", "true"),
+                decl_tags("vulkan", &["amd", "all"], "all"),
+            ],
+        )],
+    );
+    let mut i = input("system", vec![req("mesa")], &[]);
+    // Both candidates deviate once, so the tie break compares llvm first,
+    // where false comes before true.
+    i.options = [preferred("mesa", &[("vulkan", "amd"), ("llvm", "true")])]
+        .into_iter()
+        .collect();
+    let r = universe(&[(&core, 0)]).resolve(&i).unwrap();
+    assert_eq!(labels(&r), ["mesa 25.2.0-r1"]);
+}
+
+#[test]
+fn tags_come_in_declaration_order_in_the_tie_break() {
+    let core = index_declaring(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vulkan", "intel")]),
+            pkg("mesa 25.2.0").options(&[("vulkan", "amd")]),
+        ],
+        vec![(
+            "mesa",
+            vec![decl_tags("vulkan", &["amd", "intel", "all"], "all")],
+        )],
+    );
+    // Both deviate once from the default, so the declaration order of the
+    // tags decides.
+    let r = resolve_core(&core, &["mesa"], &[]).unwrap();
+    assert_eq!(labels(&r), ["mesa 25.2.0-r1"]);
+}
+
 /// A universe that is known to resolve, because it contains a planted
 /// solution next to decoys.
 #[derive(Debug, Clone)]
