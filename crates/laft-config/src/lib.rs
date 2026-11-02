@@ -147,6 +147,18 @@ pub struct IndexOptions {
     pub profile: BTreeMap<Name, BTreeMap<String, OptionValue>>,
 }
 
+/// The option values one view of a generation resolves with.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OptionValues {
+    /// The values set at plain or forced priority, by package name and
+    /// option name. Hard constraints for the resolver.
+    pub fixed: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+    /// The values set with `default(...)`, by a profile, or the declared
+    /// default, by package name and option name. What the resolver
+    /// prefers when the option is not fixed.
+    pub preferred: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+}
+
 /// A configuration that passed every check, and what was suspicious but
 /// allowed.
 #[derive(Debug, Clone)]
@@ -165,6 +177,9 @@ pub struct Loaded {
     /// generation keeps so that later tools can explain the package
     /// options of the configuration.
     pub package_module: String,
+    /// The option values each view resolves with, by view name, the
+    /// system view included.
+    pub options: BTreeMap<Name, OptionValues>,
 }
 
 /// A configuration file that was type checked and evaluated, but neither
@@ -356,13 +371,17 @@ pub fn load(
         })
         .collect();
     match config {
-        Some(config) if !report.has_errors() => Ok(Loaded {
-            config,
-            warnings: report,
-            value: system_json(&evaluated),
-            files,
-            package_module,
-        }),
+        Some(config) if !report.has_errors() => {
+            let options = options::values(&evaluated, options, &config.views);
+            Ok(Loaded {
+                config,
+                warnings: report,
+                value: system_json(&evaluated),
+                files,
+                package_module,
+                options,
+            })
+        }
         _ => Err(report),
     }
 }

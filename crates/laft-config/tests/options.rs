@@ -163,6 +163,118 @@ fn the_schema_describes_the_generated_options() {
 }
 
 #[test]
+fn unset_options_prefer_their_declared_defaults() {
+    let loaded = load("", &mesa_options()).expect("loads");
+    let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
+    assert!(values.fixed.is_empty());
+    assert_eq!(
+        values.preferred[&"mesa".parse::<Name>().expect("a name")]["llvm"],
+        OptionValue::Bool(true)
+    );
+    assert_eq!(
+        values.preferred[&"mesa".parse::<Name>().expect("a name")]["vulkan"],
+        OptionValue::Tag("all".to_owned())
+    );
+}
+
+#[test]
+fn plain_and_forced_values_are_fixed_and_defaults_are_preferred() {
+    let body = "package { mesa { llvm = false, vulkan = default(amd) } }";
+    let loaded = load(body, &mesa_options()).expect("loads");
+    let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
+    let mesa = &"mesa".parse::<Name>().expect("a name");
+    assert_eq!(values.fixed[mesa]["llvm"], OptionValue::Bool(false));
+    assert_eq!(
+        values.preferred[mesa]["vulkan"],
+        OptionValue::Tag("amd".to_owned())
+    );
+    let body = "package.mesa.llvm = force(false)";
+    let loaded = load(body, &mesa_options()).expect("loads");
+    let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
+    assert_eq!(
+        values.fixed[&"mesa".parse::<Name>().expect("a name")]["llvm"],
+        OptionValue::Bool(false)
+    );
+}
+
+#[test]
+fn profile_values_are_preferred_and_lose_to_the_configuration() {
+    let mut options = mesa_options();
+    options.profile.insert(
+        "mesa".parse::<Name>().expect("a name"),
+        [("llvm".to_owned(), OptionValue::Bool(false))]
+            .into_iter()
+            .collect(),
+    );
+    let loaded = load("", &options).expect("loads");
+    let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
+    let mesa = &"mesa".parse::<Name>().expect("a name");
+    assert_eq!(values.preferred[mesa]["llvm"], OptionValue::Bool(false));
+    assert_eq!(
+        values.preferred[mesa]["vulkan"],
+        OptionValue::Tag("all".to_owned())
+    );
+    let loaded = load("package.mesa.llvm = default(true)", &options).expect("loads");
+    let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
+    assert_eq!(values.preferred[mesa]["llvm"], OptionValue::Bool(true));
+    let loaded = load("package.mesa.llvm = false", &options).expect("loads");
+    let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
+    assert_eq!(values.fixed[mesa]["llvm"], OptionValue::Bool(false));
+    assert!(!values.preferred[mesa].contains_key("llvm"));
+}
+
+#[test]
+fn a_view_inherits_the_system_and_merges_over_it() {
+    let mut options = mesa_options();
+    options.profile.insert(
+        "mesa".parse::<Name>().expect("a name"),
+        [("llvm".to_owned(), OptionValue::Bool(false))]
+            .into_iter()
+            .collect(),
+    );
+    let body = concat!(
+        "package.mesa.vulkan = amd\n",
+        "view web { package.mesa.vulkan = default(intel), package.mesa.llvm = false }\n",
+        "view bare { inherit = none }\n",
+    );
+    let loaded = load(body, &options).expect("loads");
+    let mesa = &"mesa".parse::<Name>().expect("a name");
+    let web = &loaded.options[&"web".parse::<Name>().expect("a name")];
+    assert_eq!(web.fixed[mesa]["llvm"], OptionValue::Bool(false));
+    assert_eq!(
+        web.fixed[mesa]["vulkan"],
+        OptionValue::Tag("amd".to_owned())
+    );
+    assert!(!web.preferred[mesa].contains_key("vulkan"));
+    let bare = &loaded.options[&"bare".parse::<Name>().expect("a name")];
+    assert!(!bare.fixed.contains_key(mesa));
+    assert_eq!(
+        bare.preferred[mesa]["vulkan"],
+        OptionValue::Tag("all".to_owned())
+    );
+    assert_eq!(bare.preferred[mesa]["llvm"], OptionValue::Bool(false));
+    let system = &loaded.options[&"system".parse::<Name>().expect("a name")];
+    assert_eq!(
+        system.fixed[mesa]["vulkan"],
+        OptionValue::Tag("amd".to_owned())
+    );
+    assert_eq!(system.preferred[mesa]["llvm"], OptionValue::Bool(false));
+}
+
+#[test]
+fn a_view_default_does_not_lift_a_fixed_value_of_the_system() {
+    let body = concat!(
+        "package.mesa.llvm = false\n",
+        "view web { package.mesa.llvm = default(true) }\n",
+    );
+    let loaded = load(body, &mesa_options()).expect("loads");
+    let mesa = &"mesa".parse::<Name>().expect("a name");
+    let web = &loaded.options[&"web".parse::<Name>().expect("a name")];
+    assert_eq!(web.fixed[mesa]["llvm"], OptionValue::Bool(false));
+    assert!(!web.preferred[mesa].contains_key("llvm"));
+}
+
+#[test]
 fn the_schema_without_options_has_no_package_field() {
     let schema = laft_config::schema(&support::no_options()).expect("the prelude checks");
     let package = schema

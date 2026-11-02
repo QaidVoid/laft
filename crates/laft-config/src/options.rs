@@ -6,12 +6,13 @@
 //! `package.<name>.<option>` is an ordinary, type checked attribute with
 //! the usual suggestions for typos.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use laft_core::{OptionValue, is_valid_name};
+use laft_core::{Name, OptionValue, is_valid_name};
 use laft_index::OptionType;
+use stav::{AttrPath, Evaluated, Priority, Value};
 
-use crate::IndexOptions;
+use crate::{IndexOptions, OptionValues, View};
 
 /// The name of the generated module in diagnostics.
 pub(crate) const MODULE_NAME: &str = "<prelude>/package-options.stav";
@@ -202,3 +203,152 @@ fn fresh(base: &str, used: &mut BTreeSet<String>) -> String {
 #[cfg(test)]
 #[path = "options_tests.rs"]
 mod tests;
+
+/// The option values each view resolves with, by view name, the system
+/// view included.
+///
+/// A value written plainly or with `force(...)`, in the system or in a
+/// view, is fixed. A value written with `default(...)` is preferred, over
+/// the values of the profiles and the declared defaults. A view that
+/// inherits from the system starts from its contributions, and its own
+/// values merge over them: a plain value of the view overrides a fixed
+/// value of the system, and a `default(...)` of the view overrides a
+/// preferred value of the system unless the system fixed the option.
+pub(crate) fn values(
+    evaluated: &Evaluated,
+    options: &IndexOptions,
+    views: &BTreeMap<Name, View>,
+) -> BTreeMap<Name, OptionValues> {
+    let system = contributions(evaluated, &["system", "package"]);
+    let system_name = "system".parse::<Name>().expect("a valid name");
+    let mut out = BTreeMap::new();
+    out.insert(system_name, complete(system.clone(), options));
+    for (name, view) in views {
+        let mut merged = if view.inherit {
+            system.clone()
+        } else {
+            Contributions::default()
+        };
+        let own = contributions(evaluated, &["system", "views", name.as_str(), "package"]);
+        merged.merge_over(own);
+        out.insert(name.clone(), complete(merged, options));
+    }
+    out
+}
+
+/// The contributions of one `package` block, before the profiles and the
+/// declared defaults.
+#[derive(Debug, Default, Clone)]
+struct Contributions {
+    fixed: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+    preferred: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+}
+
+impl Contributions {
+    /// Merges the contributions of a view over these.
+    fn merge_over(&mut self, over: Contributions) {
+        for (pkg, values) in over.fixed {
+            let entry = self.fixed.entry(pkg.clone()).or_default();
+            for (opt, value) in values {
+                if let Some(preferred) = self.preferred.get_mut(&pkg) {
+                    preferred.remove(&opt);
+                }
+                entry.insert(opt, value);
+            }
+        }
+        for (pkg, values) in over.preferred {
+            let entry = self.preferred.entry(pkg.clone()).or_default();
+            let fixed = self.fixed.get(&pkg);
+            for (opt, value) in values {
+                if !fixed.is_some_and(|f| f.contains_key(&opt)) {
+                    entry.insert(opt, value);
+                }
+            }
+        }
+    }
+}
+
+/// Reads the contributions of the `package` block at `path`.
+fn contributions(evaluated: &Evaluated, path: &[&str]) -> Contributions {
+    let mut out = Contributions::default();
+    let Ok(Value::Struct { fields, .. }) = evaluated.value_at(&AttrPath::new(path.iter().copied()))
+    else {
+        return out;
+    };
+    for (pkg, value) in fields {
+        let Ok(pkg) = pkg.parse::<Name>() else {
+            continue;
+        };
+        for (opt, option) in option_values(value) {
+            let mut keys: Vec<&str> = path.to_vec();
+            keys.push(pkg.as_str());
+            keys.push(opt.as_str());
+            match evaluated.priority(&AttrPath::new(keys)) {
+                Some(Priority::Plain | Priority::Force) => {
+                    out.fixed
+                        .entry(pkg.clone())
+                        .or_default()
+                        .insert(opt, option);
+                }
+                Some(Priority::Default) => {
+                    out.preferred
+                        .entry(pkg.clone())
+                        .or_default()
+                        .insert(opt, option);
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// The option values of one package, as the evaluated struct holds them.
+fn option_values(value: &Value) -> BTreeMap<String, OptionValue> {
+    let Value::Struct { fields, .. } = value else {
+        return BTreeMap::new();
+    };
+    fields
+        .iter()
+        .filter_map(|(name, value)| {
+            let found = match value {
+                Value::Bool(b) => OptionValue::Bool(*b),
+                Value::Variant {
+                    name, fields: None, ..
+                } => OptionValue::Tag(name.clone()),
+                _ => return None,
+            };
+            Some((name.clone(), found))
+        })
+        .collect()
+}
+
+/// Adds the values of the profiles and the declared defaults to the
+/// preferences, and yields the values the resolver works with.
+fn complete(contributions: Contributions, options: &IndexOptions) -> OptionValues {
+    let mut contributions = contributions;
+    for (pkg, values) in &options.profile {
+        let fixed = &contributions.fixed.get(pkg);
+        let entry = contributions.preferred.entry(pkg.clone()).or_default();
+        for (opt, value) in values {
+            if !fixed.is_some_and(|f| f.contains_key(opt)) {
+                entry.entry(opt.clone()).or_insert_with(|| value.clone());
+            }
+        }
+    }
+    for (pkg, decls) in &options.options {
+        let fixed = &contributions.fixed.get(pkg);
+        let entry = contributions.preferred.entry(pkg.clone()).or_default();
+        for decl in decls {
+            if !fixed.is_some_and(|f| f.contains_key(&decl.name)) {
+                entry
+                    .entry(decl.name.clone())
+                    .or_insert_with(|| decl.default.clone());
+            }
+        }
+    }
+    OptionValues {
+        fixed: contributions.fixed,
+        preferred: contributions.preferred,
+    }
+}
