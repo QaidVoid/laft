@@ -242,7 +242,10 @@ pub struct Gc {
     pub keep_downloads: bool,
 }
 
-/// What local builds do, as the configuration sets it.
+/// What local builds do, as the configuration sets it. The local-build
+/// wiring gives the commands their own flags; when such a flag is set to
+/// a nonzero value it overrides `jobs` or `workers`, and a zero flag
+/// keeps the configured value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Build {
     /// What happens when no repository publishes a package the resolver
