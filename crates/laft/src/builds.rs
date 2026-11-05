@@ -243,6 +243,7 @@ pub(crate) fn run(
 }
 
 /// Where a dependency of a build graph comes from.
+#[derive(Debug)]
 enum Where {
     /// A repository publishes it, so the group seeds it.
     Published,
@@ -269,11 +270,12 @@ struct Run<'a> {
 
 impl<'a> Run<'a> {
     /// Where `reference` comes from, with the request for it when another
-    /// snapshot builds it.
+    /// snapshot builds it. A reference a repository publishes is not
+    /// marked here: it is recorded only once it is actually seeded, so
+    /// that the group that needs it seeds it.
     fn depends_on(&mut self, reference: &PkgRef, view: &str) -> Result<Where, Failure> {
         let name = reference.name().clone();
         if self.candidate(reference, view).is_some() {
-            self.seeded.insert(name);
             return Ok(Where::Published);
         }
         match self.snapshots.get(&(name, reference.variant())) {
@@ -512,7 +514,7 @@ impl<'a> Run<'a> {
                 match found {
                     Some((entry, mirrors)) => {
                         self.seeded.insert(reference.name().clone());
-                        self.seed(&entry, &mirrors)?;
+                        self.seed(root, &entry, &mirrors)?;
                     }
                     None => {
                         return Err(Failure::new(
@@ -535,6 +537,7 @@ impl<'a> Run<'a> {
     /// the build-side store.
     fn seed(
         &mut self,
+        root: &BuildRoot,
         entry: &laft_index::IndexEntry,
         mirrors: &laft_fetch::Mirrors,
     ) -> Result<(), Failure> {
@@ -547,7 +550,7 @@ impl<'a> Run<'a> {
                     .progress("fetching", progress.done, progress.total.unwrap_or(0));
             })
             .map_err(|e| Failure::new(exit::NETWORK, format!("{}: {e}", entry.meta.name)))?;
-        self.exec_seed(&[path.as_path()])
+        self.exec_seed(root, &[path.as_path()])
     }
 
     /// Builds the requests of `blake3` through the `laft-build` binary,
@@ -611,16 +614,15 @@ impl<'a> Run<'a> {
             .names
             .extend(requests.iter().map(|request| request.name.clone()));
         let refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
-        self.exec_seed(&refs)
+        self.exec_seed(root, &refs)
     }
 
-    /// Runs `laft-build seed` on `files`.
-    fn exec_seed(&mut self, files: &[&Path]) -> Result<(), Failure> {
+    /// Runs `laft-build seed` on `files`, against the store of `root`.
+    fn exec_seed(&mut self, root: &BuildRoot, files: &[&Path]) -> Result<(), Failure> {
         if files.is_empty() {
             return Ok(());
         }
-        let mut arguments = vec!["seed".to_owned()];
-        arguments.extend(files.iter().map(|f| f.to_string_lossy().into_owned()));
+        let arguments = seed_arguments(root.path(), files);
         let status = self.exec(&arguments)?;
         if !status.success() {
             return Err(Failure::new(
@@ -657,6 +659,18 @@ impl<'a> Run<'a> {
         };
         status.map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", exe.display())))
     }
+}
+
+/// The arguments of `laft-build seed`: the build root the store lives
+/// under, then the files.
+fn seed_arguments(root: &Path, files: &[&Path]) -> Vec<String> {
+    let mut arguments = vec![
+        "--root".to_owned(),
+        root.to_string_lossy().into_owned(),
+        "seed".to_owned(),
+    ];
+    arguments.extend(files.iter().map(|f| f.to_string_lossy().into_owned()));
+    arguments
 }
 
 /// The groups in an order in which every group comes after the groups
