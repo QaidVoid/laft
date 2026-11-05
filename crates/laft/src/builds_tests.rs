@@ -1015,3 +1015,117 @@ fn a_round_seeds_builds_publishes_and_a_second_round_rests() {
         .collect();
     assert_eq!(locals.len(), 1, "no duplicate is published");
 }
+
+/// The builds run as the static `laft-build` account of the registry.
+#[test]
+fn the_build_account_is_the_static_laft_build_account() {
+    assert_eq!(laft_core::system_uid("laft-build"), Some(BUILD_UID));
+    assert_eq!(laft_core::system_gid("laft-build"), Some(BUILD_GID));
+}
+
+/// The build view of a dependency holds the option values of the view the
+/// package is for under `dep_options = context`, and the snapshot's
+/// defaults under `dep_options = defaults`.
+#[test]
+fn the_build_view_options_follow_the_dep_options_setting() {
+    let dir = laft_test::tempdir();
+    let env = env_of(dir.path());
+    let id = laft_core::StoreId::from_manifest_hash(&laft_core::Blake3Hash::of(b"m"));
+    let mut free = entry_of(meta_of("gtk4", "1.0"), id);
+    free.meta
+        .options
+        .insert("x11".to_owned(), laft_core::OptionValue::Bool(true));
+    let mut without_x11 = entry_of(meta_of("gtk4", "2.0"), id);
+    without_x11
+        .meta
+        .options
+        .insert("x11".to_owned(), laft_core::OptionValue::Bool(false));
+    let indexes = vec![
+        index_of("file:///tmp/core", free),
+        index_of("file:///tmp/core", without_x11),
+    ];
+    let source = SnapshotSource {
+        repo: "core".parse().expect("a name"),
+        snapshot: laft_index::RecipeSnapshot {
+            file: "recipes/x.tar.zst".to_owned(),
+            size: 1,
+            blake3: laft_core::Blake3Hash::of(b"x"),
+        },
+        name: "gtk4".parse().expect("a name"),
+        version: "3.0".parse().expect("a version"),
+        variant: Variant::default(),
+        defaults: BTreeMap::from([("x11".to_owned(), laft_core::OptionValue::Bool(true))]),
+    };
+    let snapshots = SnapshotMap::from_iter([(
+        ("gtk4".parse().expect("a name"), Variant::default()),
+        source,
+    )]);
+    let fixed = laft_config::OptionValues {
+        fixed: BTreeMap::from([(
+            "gtk4".parse().expect("a name"),
+            BTreeMap::from([(
+                "x11".to_owned(),
+                laft_config::FixedSetting {
+                    value: laft_core::OptionValue::Bool(false),
+                    origin: "/etc/laft/system.stav:1:1".to_owned(),
+                },
+            )]),
+        )]),
+        preferred: BTreeMap::new(),
+    };
+    let values = BTreeMap::from([("system".parse().expect("a name"), fixed)]);
+    let reference = PkgRef::new("gtk4".parse().expect("a name"), None, Variant::default());
+
+    let mut context = build_options();
+    context.dep_options = laft_config::DepOptions::Context;
+    let run = Run {
+        env: &env,
+        snapshots: &snapshots,
+        indexes: &indexes,
+        options: &context,
+        values: &values,
+        built: Built::default(),
+        seeded: BTreeSet::new(),
+    };
+    let source = &snapshots[&("gtk4".parse().expect("a name"), Variant::default())];
+    let request = run
+        .dependency(&reference, source, "system")
+        .expect("the context builds a request");
+    assert_eq!(
+        request.values.get("x11"),
+        Some(&laft_core::OptionValue::Bool(false)),
+        "the view's fixed value replaces the snapshot default"
+    );
+    let (entry, _) = run
+        .candidate(&reference, "system")
+        .expect("the context finds a candidate");
+    assert_eq!(entry.meta.version.as_str(), "2.0", "the X11-free build");
+
+    let mut defaults = build_options();
+    defaults.dep_options = laft_config::DepOptions::Defaults;
+    let run = Run {
+        env: &env,
+        snapshots: &snapshots,
+        indexes: &indexes,
+        options: &defaults,
+        values: &values,
+        built: Built::default(),
+        seeded: BTreeSet::new(),
+    };
+    let request = run
+        .dependency(&reference, source, "system")
+        .expect("the defaults build a request");
+    assert_eq!(
+        request.values.get("x11"),
+        Some(&laft_core::OptionValue::Bool(true)),
+        "the snapshot default, though the view drops X11"
+    );
+    let (entry, _) = run
+        .candidate(&reference, "system")
+        .expect("the defaults find a candidate");
+    assert_eq!(
+        entry.meta.version.as_str(),
+        "2.0",
+        "the newest published build, though the view drops X11"
+    );
+}
