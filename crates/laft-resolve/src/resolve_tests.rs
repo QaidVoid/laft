@@ -1447,6 +1447,27 @@ fn a_dependency_contradicting_a_fixed_value_cannot_select() {
 }
 
 #[test]
+fn a_buildable_takes_the_preferred_values_of_the_view() {
+    let core = index("core", vec![]);
+    let mut i = input("system", vec![req("mesa")], &[]);
+    i.buildable = vec![buildable("mesa", "25.3.0", &[("vaapi", "intel")])];
+    i.options.insert(
+        name("mesa"),
+        OptionRequest {
+            fixed: BTreeMap::new(),
+            preferred: BTreeMap::from([("vaapi".to_owned(), OptionValue::Tag("amd".into()))]),
+        },
+    );
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)]).resolve(&i).unwrap();
+    assert_eq!(r.builds.len(), 1);
+    assert_eq!(
+        r.builds[0].values.get("vaapi"),
+        Some(&OptionValue::Tag("amd".into()))
+    );
+}
+
+#[test]
 fn s011_names_a_name_nobody_publishes_at_all() {
     let core = index("core", vec![pkg("blender 4.5.0").depends(&["mesa"])]);
     let mut i = input("system", vec![req("blender")], &[]);

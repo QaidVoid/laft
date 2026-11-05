@@ -97,11 +97,11 @@ pub struct BuildRequest {
     /// The package the snapshot builds.
     pub buildable: Buildable,
     /// The option values it would be built with: the declared defaults,
-    /// with the fixed values of the view and every option constraint the
-    /// selection met applied over them. A build takes the option context
-    /// of the view it is for; how the dependencies of the build itself
-    /// resolve is the `dep_options` choice of the build planning, not
-    /// part of the request.
+    /// with the preferred and fixed values of the view and every option
+    /// constraint the selection met applied over them. A build takes the
+    /// option context of the view it is for; how the dependencies of the
+    /// build itself resolve is the `dep_options` choice of the build
+    /// planning, not part of the request.
     pub values: BTreeMap<String, OptionValue>,
     /// Why the view needs it: its requests first, then the dependencies it
     /// satisfies, in the order they were met.
@@ -479,8 +479,8 @@ impl<'u, 'a> Ctx<'u, 'a> {
         let mut installed = BTreeMap::new();
         let mut extra_provides: BTreeMap<Key<'a>, Vec<&'a Name>> = BTreeMap::new();
         let mut buildable: BTreeMap<&'u str, &'u Buildable> = BTreeMap::new();
-        fn rank(b: &Buildable) -> (&Version, u32, &Variant) {
-            (&b.version, b.rev, &b.variant)
+        fn rank(b: &Buildable) -> (&Version, u32, &Variant, &BTreeMap<String, OptionValue>) {
+            (&b.version, b.rev, &b.variant, &b.defaults)
         }
         for entry in &input.buildable {
             match buildable.entry(entry.name.as_str()) {
@@ -1004,11 +1004,11 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
 
     /// The values a build of `name` would use, when the snapshot has the
     /// package and the values satisfy `want` and every constraint of the
-    /// branch: the declared defaults, with the fixed values of the view and
-    /// the option constraints of the learned dependencies and of `want`
-    /// applied over them, in that order. The build takes the option
-    /// context of the view; `dep_options` of the build planning decides
-    /// how its build dependencies resolve.
+    /// branch: the declared defaults, with the preferred and fixed values
+    /// of the view and the option constraints of the learned dependencies
+    /// and of `want` applied over them, in that order. The build takes
+    /// the option context of the view; `dep_options` of the build
+    /// planning decides how its build dependencies resolve.
     fn buildable_values(
         &self,
         name: &Name,
@@ -1034,6 +1034,9 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         }
         let mut values = b.defaults.clone();
         if let Some(req) = self.ctx.input.options.get(name) {
+            for (opt, value) in &req.preferred {
+                values.insert(opt.clone(), value.clone());
+            }
             for (opt, fixed) in &req.fixed {
                 values.insert(opt.clone(), fixed.value.clone());
             }
