@@ -158,6 +158,19 @@ fn the_key_command_prints_the_public_key_of_the_local_repository() {
         "the key is stable"
     );
     assert!(first.stdout.trim().starts_with("RW"), "{}", first.stdout);
+    let public = fs::read_to_string(root.join("laft/state/local.key.pub"))
+        .expect("the public key file exists");
+    let stored = public
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .expect("the public key file has a key line");
+    assert_eq!(
+        first.stdout.trim(),
+        stored,
+        "the printed key is the stored one"
+    );
 
     let json = run(&[
         "--root",
