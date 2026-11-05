@@ -124,9 +124,13 @@ impl MetaExt for Meta {
 }
 
 /// A content address derived from the whole metadata, so equal metadata
-/// gets the same id in every index and in the installed set.
+/// gets the same id in every index and in the installed set. The test
+/// indexes hash the canonical JSON of the metadata, like the real
+/// manifests do, so ids match across equal metadata.
 pub(crate) fn id(meta: &Meta) -> StoreId {
-    StoreId::from_manifest_hash(&Blake3Hash::of(format!("{meta:?}").as_bytes()))
+    StoreId::from_manifest_hash(&Blake3Hash::of(
+        &meta.to_json().expect("generated metadata is valid"),
+    ))
 }
 
 pub(crate) fn entry(meta: Meta) -> IndexEntry {
