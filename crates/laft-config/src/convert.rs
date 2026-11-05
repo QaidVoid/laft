@@ -478,6 +478,7 @@ struct RepoFields {
     key: String,
     keys: Vec<String>,
     channel: String,
+    profile: Option<String>,
     priority: i64,
     enable: bool,
     allow_http: bool,
@@ -535,11 +536,23 @@ pub(crate) fn repos(cx: &Cx<'_>, found: &mut Vec<FileDiagnostic>) -> BTreeMap<Na
         };
         let main = key("key", &fields.key);
         let keys: Vec<Option<PublicKey>> = fields.keys.iter().map(|k| key("keys", k)).collect();
+        let profile = fields.profile.as_ref().map(|text| text.parse::<Name>());
+        if let Some(Err(e)) = &profile {
+            found.push(cx.error(
+                "C0804",
+                &["system", "repos", label, "profile"],
+                format!("repo {label}: {e}"),
+            ));
+        }
         if found.len() != errors {
             continue;
         }
-        let (Ok(name), Some(main), Ok(channel)) = (name, main, fields.channel.parse::<Name>())
-        else {
+        let (Ok(name), Some(main), Ok(channel), profile) = (
+            name,
+            main,
+            fields.channel.parse::<Name>(),
+            profile.map(Result::unwrap),
+        ) else {
             continue;
         };
         let repo = Repo {
@@ -548,6 +561,7 @@ pub(crate) fn repos(cx: &Cx<'_>, found: &mut Vec<FileDiagnostic>) -> BTreeMap<Na
             key: main,
             keys: keys.into_iter().flatten().collect(),
             channel,
+            profile,
             priority: fields.priority,
             enable: fields.enable,
             allow_http: fields.allow_http,

@@ -143,6 +143,11 @@ const TEXTS: &[(&str, &str, &str)] = &[
         "Use lowercase letters, digits and `-`.",
     ),
     (
+        "C0804",
+        "A repository profile is not a name.",
+        "Use a name of lowercase letters, digits, `_`, `-` and `.`, at most 64 characters, where every `.` is followed by a digit.",
+    ),
+    (
         "C0901",
         "A package reference does not resolve against the synced indexes.",
         "Fix the name, or run `laft repo sync` when the package is new.",

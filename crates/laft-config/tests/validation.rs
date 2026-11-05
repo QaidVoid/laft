@@ -3,6 +3,7 @@
 
 mod support;
 
+use laft_core::Name;
 use support::{codes, config_dir, load, load_body, pointed_at};
 
 const KEY: &str = "RWSO9Zvh1ju0E6MO5PDnzQFYnptNxsLpLdwYSfm5Cs4Jc+14umRuka1M";
@@ -195,6 +196,39 @@ fn repository_keys_must_be_minisign_keys() {
 fn repository_names_must_be_package_names() {
     let body = format!(r#"repo "My_Repo" {{ url = "https://x.example", key = "{KEY}" }}"#);
     assert_eq!(rejected(&body).0, ["C0803"]);
+}
+
+#[test]
+fn a_repository_follows_one_profile_of_its_channel() {
+    let body = format!(
+        r#"repo mine {{ url = "https://x.example", key = "{KEY}", profile = "wayland_only" }}"#
+    );
+    let loaded = load_body(&body).expect("the profile is valid");
+    let mine = &loaded.config.repos[&"mine".parse().expect("a name")];
+    assert_eq!(
+        mine.profile.as_ref().map(Name::as_str),
+        Some("wayland_only")
+    );
+}
+
+#[test]
+fn a_repository_without_a_profile_follows_the_default_index() {
+    let body = format!(r#"repo mine {{ url = "https://x.example", key = "{KEY}" }}"#);
+    let loaded = load_body(&body).expect("no profile is valid");
+    let mine = &loaded.config.repos[&"mine".parse().expect("a name")];
+    assert!(mine.profile.is_none());
+}
+
+#[test]
+fn a_repository_profile_must_be_a_name() {
+    let body =
+        format!(r#"repo mine {{ url = "https://x.example", key = "{KEY}", profile = "a..b" }}"#);
+    assert_rejected(rejected(&body), "C0804", r#""a..b""#);
+    let long = format!(
+        r#"repo mine {{ url = "https://x.example", key = "{KEY}", profile = "{}" }}"#,
+        "a".repeat(65)
+    );
+    assert_rejected(rejected(&long), "C0804", &format!("\"{}\"", "a".repeat(65)));
 }
 
 #[test]

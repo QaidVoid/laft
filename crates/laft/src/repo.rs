@@ -73,7 +73,7 @@ pub(crate) fn list(env: &Env) -> Result<u8, Failure> {
         let trust = laft_index::Repo {
             name: name.clone(),
             channel: repo.channel.clone(),
-            profile: None,
+            profile: repo.profile.clone(),
             arch: crate::env::ARCH,
             key: repo.key.clone(),
             keys: repo.keys.clone(),
@@ -102,7 +102,8 @@ pub(crate) fn list(env: &Env) -> Result<u8, Failure> {
             ui::duration(std::time::Duration::from_secs(left))
         });
         docs.push(json!({
-            "name": name, "url": repo.url, "channel": repo.channel, "priority": repo.priority,
+            "name": name, "url": repo.url, "channel": repo.channel, "profile": repo.profile,
+            "priority": repo.priority,
             "enabled": repo.enable,
             "generation": index.map(|i| i.generation),
             "timestamp": index.map(|i| i.timestamp.to_string()),

@@ -244,6 +244,7 @@ fn the_options_of_the_synced_indexes_follow_the_repository_priority() {
                 .expect("a key"),
             keys: Vec::new(),
             channel: "current".parse().expect("a name"),
+            profile: None,
             priority,
             enable: true,
             allow_http: false,

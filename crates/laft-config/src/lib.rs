@@ -46,6 +46,7 @@
 //! | `C0801` | repository URL with an unsupported scheme, or `http://` without `allow_http` |
 //! | `C0802` | repository key that is not a minisign public key |
 //! | `C0803` | repository name that is not a package name |
+//! | `C0804` | repository profile that is not a name |
 //! | `C0901` | package reference that does not resolve |
 //! | `C0902` | alternatives group that is not a name, or a member that is not a bare package name |
 //! | `C0903` | view name that is not a package name, or `system` or `initrd` |
@@ -310,6 +311,10 @@ pub struct Repo {
     pub keys: Vec<PublicKey>,
     /// The channel the client follows.
     pub channel: Name,
+    /// The profile of the channel the client follows, below
+    /// `channels/<channel>/<arch>/profiles/`. `None` follows the default
+    /// index of the channel.
+    pub profile: Option<Name>,
     /// Higher wins when several repositories offer a package.
     pub priority: i64,
     /// Whether the repository is used.

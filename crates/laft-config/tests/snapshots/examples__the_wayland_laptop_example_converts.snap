@@ -605,6 +605,7 @@ SystemConfig {
             channel: Name(
                 "current",
             ),
+            profile: None,
             priority: 10,
             enable: true,
             allow_http: false,

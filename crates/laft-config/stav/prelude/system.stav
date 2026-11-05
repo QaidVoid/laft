@@ -184,6 +184,9 @@ struct Repo {
   keys:       List<Str> = []
   ## The channel to follow.
   channel:    Channel = current
+  ## The profile of the channel to follow, below profiles/. Without one,
+  ## the client follows the default index of the channel.
+  profile:    Option<Str where matches(r"[a-z0-9][a-z0-9_.-]*")>
   ## Higher wins when several repositories offer a package.
   priority:   Int = 0
   ## Whether the repository is used.
