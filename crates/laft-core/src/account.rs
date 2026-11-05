@@ -43,6 +43,7 @@ const REGISTRY: &[(&str, u32, Kind)] = &[
     ("log", 40, Kind::UserAndGroup),
     ("shadow", 41, Kind::Group),
     ("plugdev", 42, Kind::Group),
+    ("laft-build", 43, Kind::UserAndGroup),
     ("users", 100, Kind::Group),
     ("nobody", 65534, Kind::User),
     ("nogroup", 65534, Kind::Group),

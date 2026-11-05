@@ -77,7 +77,7 @@ fn every_static_account_is_declared_with_its_fixed_id() {
     for (name, group) in &users.groups {
         assert_eq!(group.gid, system_gid(name), "group {name}");
     }
-    assert_eq!((users.accounts.len(), users.groups.len()), (13, 33));
+    assert_eq!((users.accounts.len(), users.groups.len()), (14, 34));
     assert_eq!(users.accounts["nobody"].group.as_deref(), Some("nogroup"));
     assert_eq!(users.accounts["root"].home.as_deref(), Some("/root"));
 }

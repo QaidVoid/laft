@@ -51,6 +51,8 @@ system {
     group log { gid = default(40), system = default(true) }
     group shadow { gid = default(41), system = default(true) }
     group plugdev { gid = default(42), system = default(true) }
+    user laft-build { uid = default(43), system = default(true) }
+    group laft-build { gid = default(43), system = default(true) }
 
     group users { gid = default(100), system = default(true) }
     user nobody { uid = default(65534), group = default(nogroup), system = default(true) }

@@ -347,7 +347,7 @@ Security settings.
 
 Every system includes a base part before its own file. It declares:
 
-- The static system accounts, with the same ids on every Laft system: `root` (0), the groups `tty` (5), `disk` (6), `lp` (7), `kmem` (9), `wheel` (10), `cdrom` (11), `mail` (12), `dialout` (18), `floppy` (19), `audio` (20), `video` (21), `utmp` (22), `input` (23), `kvm` (24), `render` (25), `tape` (26), `sgx` (27), `shadow` (41), `plugdev` (42) and `users` (100), the service accounts `messagebus`, `sshd`, `dhcpcd`, `chrony`, `polkitd`, `rtkit`, `uuidd`, `dnsmasq`, `avahi`, `tss` and `log` (30 to 40), and `nobody` with `nogroup` (65534).
+- The static system accounts, with the same ids on every Laft system: `root` (0), the groups `tty` (5), `disk` (6), `lp` (7), `kmem` (9), `wheel` (10), `cdrom` (11), `mail` (12), `dialout` (18), `floppy` (19), `audio` (20), `video` (21), `utmp` (22), `input` (23), `kvm` (24), `render` (25), `tape` (26), `sgx` (27), `shadow` (41), `plugdev` (42) and `users` (100), the service accounts `messagebus`, `sshd`, `dhcpcd`, `chrony`, `polkitd`, `rtkit`, `uuidd`, `dnsmasq`, `avahi`, `tss` and `log` (30 to 40), the build account `laft-build` (43, user and group), and `nobody` with `nogroup` (65534).
 - The early boot services `laft-activate`, `kernel-fs`, `kmod`, `udevd`, `udev-trigger`, `clock`, `hostname`, `mount-fs`, `swap`, `random-seed`, `sysctl`, `console` and `early`, then `turnstiled` and `boot-complete`.
 - `/etc/turnstile/turnstiled.conf`, which follows `session.rundir`.
 - A tmpfs on `/tmp`.
