@@ -1255,24 +1255,16 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 }
                 continue;
             }
-            for (opts, by) in self.facts.iter().filter_map(|fact| match *fact {
+            for (dep, opts, by) in self.facts.iter().filter_map(|fact| match *fact {
                 Fact::Require {
                     name: constrained,
-                    dep: Dep::Pkg(_, _, opts),
+                    dep: dep @ Dep::Pkg(_, _, opts),
                     by,
-                } if *constrained == *name => Some((opts, by)),
+                } if *constrained == *name => Some((dep, opts, by)),
                 _ => None,
             }) {
                 for fc in opts.as_slice() {
                     if fc.name() == c.name() && canonical(fc) != canonical(c) {
-                        let dep = self.facts.iter().find_map(|fact| match *fact {
-                            Fact::Require {
-                                dep: dep @ Dep::Pkg(_, _, own),
-                                ..
-                            } if *own == *opts => Some(dep),
-                            _ => None,
-                        });
-                        let Some(dep) = dep else { continue };
                         return Some(ErrorKind::OptionConflict {
                             name: name.clone(),
                             demands: vec![
@@ -1287,7 +1279,8 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         None
     }
 
-    /// S013 for a constraint that a fixed value contradicts.
+    /// S013 for a constraint that a fixed value contradicts. The chain of
+    /// a source that is not selected in this pass is unknown and left out.
     fn fixed_conflict(&self, c: &OptionConstraint, from: Asked<'_>, f: &FixedValue) -> ErrorKind {
         let (text, by, chain) = match from {
             Asked::Dependency(by, dep) => {
@@ -1297,11 +1290,11 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             Asked::Request { origin, text } => (
                 text.to_owned(),
                 None,
-                Chain {
+                Some(Chain {
                     steps: Vec::new(),
                     origin: origin.to_owned(),
                     request: text.to_owned(),
-                },
+                }),
             ),
         };
         ErrorKind::FixedConflict {
@@ -1314,21 +1307,17 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         }
     }
 
-    /// The demand of one option constraint, with its source and chain.
+    /// The demand of one option constraint, with its source and chain. The
+    /// chain of a source that is not selected in this pass is unknown and
+    /// left out, and a request has none: its origin line says where it
+    /// comes from.
     fn demand(&self, c: &OptionConstraint, from: Asked<'_>) -> Demand {
         let (origin, chain) = match from {
             Asked::Dependency(by, dep) => (
                 ValueOrigin::Dependency(Package::of(by), dep.to_string()),
                 self.chain(&by.name),
             ),
-            Asked::Request { origin, text } => (
-                ValueOrigin::Request(origin.to_owned()),
-                Chain {
-                    steps: Vec::new(),
-                    origin: origin.to_owned(),
-                    request: text.to_owned(),
-                },
-            ),
+            Asked::Request { origin, .. } => (ValueOrigin::Request(origin.to_owned()), None),
         };
         Demand {
             value: canonical_text(c),
@@ -1337,13 +1326,22 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         }
     }
 
-    fn chain(&self, name: &Name) -> Chain {
+    /// How `name` got into the view, when it is selected in this pass. A
+    /// fact may name a package that this pass never selected, so callers
+    /// that cannot require a selection degrade to `None` instead.
+    fn chain(&self, name: &Name) -> Option<Chain> {
         Chain::find(name, |n| {
             self.selected
                 .get(n)
                 .map(|s| (Package::of(s.candidate.meta), s.reasons.as_slice()))
         })
-        .expect("every selected package traces back to a request")
+    }
+
+    /// How the selected `name` got into the view. Only callers that hold
+    /// the invariant call this.
+    fn chain_selected(&self, name: &Name) -> Chain {
+        self.chain(name)
+            .expect("every selected package traces back to a request")
     }
 
     fn run(&mut self) -> Result<(), Stop<'a>> {
@@ -1584,13 +1582,13 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 yank,
                 dep.to_string(),
                 Some(Package::of(by.meta)),
-                self.chain(&by.meta.name),
+                self.chain_selected(&by.meta.name),
             )
         } else {
             ErrorKind::Unsatisfied {
                 dep: dep.clone(),
                 by: Package::of(by.meta),
-                chain: self.chain(&by.meta.name),
+                chain: self.chain_selected(&by.meta.name),
                 available: self.ctx.available(name.as_str()),
             }
         };
@@ -1631,7 +1629,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         let error = ErrorKind::Unsatisfied {
             dep: dep.clone(),
             by: Package::of(by.meta),
-            chain: self.chain(&by.meta.name),
+            chain: self.chain_selected(&by.meta.name),
             available: self.ctx.available(to.as_str()),
         };
         Err(Stop::failed(error, vec![Fact::Avoid(by)]))
@@ -1674,12 +1672,12 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                     yank,
                     dep.to_string(),
                     Some(Package::of(by.meta)),
-                    pass.chain(&by.meta.name),
+                    pass.chain_selected(&by.meta.name),
                 ),
                 None => ErrorKind::Unsatisfied {
                     dep: dep.clone(),
                     by: Package::of(by.meta),
-                    chain: pass.chain(&by.meta.name),
+                    chain: pass.chain_selected(&by.meta.name),
                     available: Vec::new(),
                 },
             }
@@ -1724,7 +1722,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                         by: Package::of(by.meta),
                         provider: Package::of(provider.meta),
                         selected: Package::of(sel.candidate.meta),
-                        chain: self.chain(name),
+                        chain: self.chain_selected(name),
                     });
                 }
             }
@@ -1769,7 +1767,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 dep: dep.clone(),
                 providers: usable.iter().map(|n| (*n).clone()).collect(),
                 by: Package::of(by.meta),
-                chain: self.chain(&by.meta.name),
+                chain: self.chain_selected(&by.meta.name),
             };
             return Err(Stop::failed(error, vec![Fact::Avoid(by)]));
         };
@@ -1796,9 +1794,9 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         };
         let error = ErrorKind::Conflict {
             package: Package::of(sel(a).candidate.meta),
-            package_chain: self.chain(a),
+            package_chain: self.chain_selected(a),
             other: Package::of(sel(b).candidate.meta),
-            other_chain: self.chain(b),
+            other_chain: self.chain_selected(b),
             replaces,
         };
         Stop::failed(

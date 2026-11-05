@@ -186,8 +186,8 @@ pub enum ErrorKind {
         text: String,
         /// The package whose dependency demands it, `None` for a request.
         by: Option<Package>,
-        /// How the demand got into the view.
-        chain: Chain,
+        /// How the demand got into the view, when it is selected.
+        chain: Option<Chain>,
         /// The value it demands, as `option=value`.
         value: String,
         /// The value the configuration fixes, as `option=value`, and where
@@ -252,9 +252,10 @@ pub struct Demand {
     pub value: String,
     /// Where the demand comes from.
     pub origin: ValueOrigin,
-    /// How the demanding package got into the view. Empty steps for a
-    /// request or the configuration.
-    pub chain: Chain,
+    /// How the demanding package got into the view, when it is selected.
+    /// `None` when the pass that failed never selected it, so the ancestry
+    /// is unknown.
+    pub chain: Option<Chain>,
 }
 
 impl Error {
@@ -575,7 +576,9 @@ impl fmt::Display for Error {
                             writeln!(f, "needed by {by} ({dep})")?;
                         }
                     }
-                    demand.chain.write_nested(f, 4)?;
+                    if let Some(chain) = &demand.chain {
+                        chain.write_nested(f, 4)?;
+                    }
                 }
                 write!(
                     f,
@@ -591,16 +594,19 @@ impl fmt::Display for Error {
                 fixed,
             } => {
                 head(f)?;
-                match by {
-                    Some(by) => writeln!(f, "{by} needs {text}")?,
-                    None => writeln!(f, "{text} requested at {}", chain.origin)?,
+                match (by, chain.as_ref()) {
+                    (Some(by), _) => writeln!(f, "{by} needs {text}")?,
+                    (None, Some(chain)) => writeln!(f, "{text} requested at {}", chain.origin)?,
+                    (None, None) => writeln!(f, "{text}")?,
                 }
                 writeln!(
                     f,
                     "  demands {value}, but {} is set at {}",
                     fixed.0, fixed.1
                 )?;
-                chain.write_nested(f, 2)?;
+                if let Some(chain) = &chain {
+                    chain.write_nested(f, 2)?;
+                }
                 let option = fixed.0.split('=').next().unwrap_or_default();
                 write!(
                     f,

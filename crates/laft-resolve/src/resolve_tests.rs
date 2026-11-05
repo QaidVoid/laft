@@ -1447,6 +1447,28 @@ fn a_dependency_contradicting_a_fixed_value_cannot_select() {
 }
 
 #[test]
+fn a_learned_constraint_contradicting_the_request_reports_s012() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vaapi", "intel")]),
+            pkg("mesa 25.1.0").options(&[("vaapi", "amd")]),
+            pkg("game 1").depends(&["mesa{vaapi=amd}"]),
+            pkg("app 1").depends(&["game"]),
+        ],
+    );
+    let e = resolve_core(&core, &["mesa{vaapi=intel}", "app"], &[]).unwrap_err();
+    assert_eq!(e.code(), Some("S012"));
+    assert_eq!(
+        e.to_string(),
+        "error[S012]: view \"system\": mesa cannot have vaapi=intel and vaapi=amd\n  \
+         vaapi=intel requested at test:mesa{vaapi=intel}\n  \
+         vaapi=amd needed by game 1-r1 (mesa{vaapi=amd})\n  \
+         hint: put one of the dependents into another view, where it can have its own mesa"
+    );
+}
+
+#[test]
 fn two_dependents_contradicting_each_other_report_s012() {
     let core = index(
         "core",
