@@ -1618,11 +1618,53 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 from: BoundSource::Request(request.origin.clone()),
             });
         }
+        let note = self.dropped_provide(name, &constraints);
         ErrorKind::Unsatisfiable {
             name: name.clone(),
             constraints,
             available: self.ctx.available(name.as_str()),
+            note,
         }
+    }
+
+    /// The hint for a name whose option bounds are why no candidate
+    /// provides what a dependency needs: which dependency needs it, and
+    /// the option values that exclude the builds providing it.
+    fn dropped_provide(&self, name: &Name, constraints: &[Bound]) -> Option<String> {
+        let mut needs = None;
+        let mut demanded: Vec<String> = Vec::new();
+        for bound in constraints {
+            match &bound.dep {
+                Dep::So(_) if needs.is_none() => {
+                    if let BoundSource::Package(by) = &bound.from {
+                        needs = Some((bound.dep.clone(), by.name.clone()));
+                    }
+                }
+                Dep::Pkg(n, _, opts) if n == name && !opts.as_slice().is_empty() => {
+                    demanded.extend(opts.as_slice().iter().map(|c| match c {
+                        OptionConstraint::True { name } => format!("{name}=true"),
+                        OptionConstraint::False { name } => format!("{name}=false"),
+                        OptionConstraint::Tag { name, tag } => format!("{name}={tag}"),
+                    }));
+                }
+                _ => {}
+            }
+        }
+        let (dep, by) = needs?;
+        if demanded.is_empty() {
+            return None;
+        }
+        let provided = self
+            .ctx
+            .ordered(name.as_str())
+            .ok()?
+            .any(|c| provides(c.meta, &dep));
+        provided.then(|| {
+            format!(
+                "{by} needs {dep}, which {name} with {} does not provide",
+                demanded.join(", ")
+            )
+        })
     }
 
     fn satisfy(&mut self, dep: &'a Dep, by: Candidate<'a>) -> Result<(), Stop<'a>> {

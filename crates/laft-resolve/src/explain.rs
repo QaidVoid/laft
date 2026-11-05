@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
-use laft_core::{Dep, Name, Timestamp, Variant, Version};
+use laft_core::{Dep, Name, OptionValue, Timestamp, Variant, Version};
 use laft_pkg::Meta;
 
 /// A package as people read it in messages: `ripgrep 14.1.1-r1`, or
@@ -16,6 +16,8 @@ pub struct Package {
     pub rev: u32,
     /// The variant.
     pub variant: Variant,
+    /// The option values the package was built with.
+    pub options: BTreeMap<String, OptionValue>,
 }
 
 impl Package {
@@ -26,6 +28,7 @@ impl Package {
             version: meta.version.clone(),
             rev: meta.rev,
             variant: meta.variant,
+            options: meta.options.clone(),
         }
     }
 

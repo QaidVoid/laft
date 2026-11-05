@@ -248,6 +248,64 @@ fn static_variant_does_not_provide_a_shared_library() {
     );
 }
 
+/// An option that removes a shared library: the error names the option
+/// values of the selected build that lost it.
+#[test]
+fn a_missing_library_names_the_option_of_the_selected_build() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0")
+                .options(&[("x11", "true")])
+                .provides(&["so:libEGL_mesa.so.0"]),
+            pkg("mesa 25.2.0").options(&[("x11", "false")]),
+            pkg("kwin 6.3.0").depends(&["so:libEGL_mesa.so.0"]),
+        ],
+    );
+    let i = input_with(
+        "system",
+        vec![req("kwin")],
+        &[],
+        &[fixed(
+            "mesa",
+            &[("x11", "false", "/etc/laft/system.stav:12:3")],
+        )],
+    );
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(e.code(), Some("S005"));
+    assert!(
+        e.to_string()
+            .contains("which mesa with x11=false does not provide"),
+        "{}",
+        e
+    );
+}
+
+/// The same loss on a build the view chose: the selected package is the
+/// wrong provider, and the error names its option values.
+#[test]
+fn an_installed_build_without_a_library_names_its_options() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0")
+                .options(&[("x11", "true")])
+                .provides(&["so:libEGL_mesa.so.0"]),
+            pkg("mesa 25.2.0").options(&[("x11", "false")]),
+            pkg("kwin 6.3.0").depends(&["so:libEGL_mesa.so.0"]),
+        ],
+    );
+    let i = input_with("system", vec![req("mesa{!x11}"), req("kwin")], &[], &[]);
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(e.code(), Some("S007"));
+    assert!(
+        e.to_string()
+            .contains("which mesa with x11=false does not provide"),
+        "{}",
+        e
+    );
+}
+
 #[test]
 fn requests_for_two_variants_conflict() {
     let core = index("core", vec![pkg("rg 14 static")]);
@@ -1819,6 +1877,67 @@ fn a_learned_constraint_contradicting_the_request_reports_s012() {
          vaapi=intel requested at test:mesa{vaapi=intel}\n  \
          vaapi=amd needed by game 1-r1 (mesa{vaapi=amd})\n  \
          hint: put one of the dependents into another view, where it can have its own mesa"
+    );
+}
+
+/// A dependency moves a free option off the value the view prefers: a
+/// preference only orders, so the constraint wins.
+#[test]
+fn a_dependency_moves_a_free_option_off_the_preferred_value() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vulkan", "amd")]),
+            pkg("mesa 25.1.0").options(&[("vulkan", "all")]),
+            pkg("blender 4.5.0").depends(&["mesa{vulkan=all}"]),
+        ],
+    );
+    let i = input_with(
+        "system",
+        vec![req("blender")],
+        &[],
+        &[preferred("mesa", &[("vulkan", "amd")])],
+    );
+    let r = universe(&[(&core, 0)]).resolve(&i).unwrap();
+    assert_eq!(options_of(&r, "mesa"), "vulkan=all");
+    assert_eq!(labels(&r), ["blender 4.5.0-r1", "mesa 25.1.0-r1"]);
+    assert_eq!(
+        r.packages[&name("mesa")].reasons,
+        vec![Reason::Dependency {
+            by: name("blender"),
+            dep: "mesa{vulkan=all}".parse().expect("a dependency"),
+        }],
+        "`laft why mesa` names blender and its constraint as the reason"
+    );
+}
+
+/// Two dependents needing different values of one option: each view holds
+/// one of them, and the two views keep different mesa builds.
+#[test]
+fn clashing_option_values_settle_across_two_views() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vaapi", "intel")]),
+            pkg("mesa 25.1.0").options(&[("vaapi", "amd")]),
+            pkg("blender 4.5.0").depends(&["mesa{vaapi=intel}"]),
+            pkg("game 1.0").depends(&["mesa{vaapi=amd}"]),
+        ],
+    );
+    let u = universe(&[(&core, 0)]);
+    let e = u
+        .resolve(&input("system", vec![req("blender"), req("game")], &[]))
+        .unwrap_err();
+    assert_eq!(e.code(), Some("S012"));
+    let system = u
+        .resolve(&input("system", vec![req("blender")], &[]))
+        .unwrap();
+    let game = u.resolve(&input("game", vec![req("game")], &[])).unwrap();
+    assert_eq!(options_of(&system, "mesa"), "vaapi=intel");
+    assert_eq!(options_of(&game, "mesa"), "vaapi=amd");
+    assert_ne!(
+        system.packages[&name("mesa")].candidate.id,
+        game.packages[&name("mesa")].candidate.id
     );
 }
 

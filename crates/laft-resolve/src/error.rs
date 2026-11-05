@@ -88,6 +88,10 @@ pub enum ErrorKind {
         constraints: Vec<Bound>,
         /// Every candidate of the name, best first.
         available: Vec<Package>,
+        /// The option values that exclude the only candidates providing
+        /// what a dependency needs, when that is why nothing satisfies
+        /// the bounds.
+        note: Option<String>,
     },
     /// S006: two selected packages conflict, or one replaces the other.
     Conflict {
@@ -378,6 +382,7 @@ impl fmt::Display for Error {
                 name,
                 constraints,
                 available,
+                note,
             } => {
                 head(f)?;
                 writeln!(f, "no version of {name} satisfies every constraint")?;
@@ -393,6 +398,9 @@ impl fmt::Display for Error {
                             writeln!(f, "  {}set at {origin}", pad(text, width))?;
                         }
                     }
+                }
+                if let Some(note) = note {
+                    writeln!(f, "  hint: {note}")?;
                 }
                 if available.is_empty() {
                     write!(f, "  available: none")?;
@@ -454,6 +462,12 @@ impl fmt::Display for Error {
                     )?;
                 }
                 chain.write_nested(f, 4)?;
+                let dropped: Vec<String> = selected
+                    .options
+                    .iter()
+                    .filter(|(opt, value)| provider.options.get(*opt) != Some(value))
+                    .map(|(opt, value)| format!("{opt}={value}"))
+                    .collect();
                 if variants_differ
                     && selected.variant == Variant::Static
                     && matches!(dep, Dep::So(_))
@@ -462,6 +476,13 @@ impl fmt::Display for Error {
                         f,
                         "  hint: static library variants do not provide shared libraries; remove {} from this view",
                         selected.reference()
+                    )?;
+                } else if !dropped.is_empty() {
+                    write!(
+                        f,
+                        "  hint: {by} needs {dep}, which {} with {} does not provide",
+                        selected.name,
+                        dropped.join(", ")
                     )?;
                 } else {
                     write!(
