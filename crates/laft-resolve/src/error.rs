@@ -595,7 +595,11 @@ impl fmt::Display for Error {
                     Some(by) => writeln!(f, "{by} needs {text}")?,
                     None => writeln!(f, "{text} requested at {}", chain.origin)?,
                 }
-                writeln!(f, "  demands {value}, but {} is set at {}", fixed.0, fixed.1)?;
+                writeln!(
+                    f,
+                    "  demands {value}, but {} is set at {}",
+                    fixed.0, fixed.1
+                )?;
                 chain.write_nested(f, 2)?;
                 let option = fixed.0.split('=').next().unwrap_or_default();
                 write!(

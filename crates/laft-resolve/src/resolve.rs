@@ -98,7 +98,10 @@ pub struct BuildRequest {
     pub buildable: Buildable,
     /// The option values it would be built with: the declared defaults,
     /// with the fixed values of the view and every option constraint the
-    /// selection met applied over them.
+    /// selection met applied over them. A build takes the option context
+    /// of the view it is for; how the dependencies of the build itself
+    /// resolve is the `dep_options` choice of the build planning, not
+    /// part of the request.
     pub values: BTreeMap<String, OptionValue>,
     /// Why the view needs it: its requests first, then the dependencies it
     /// satisfies, in the order they were met.
@@ -366,7 +369,23 @@ impl Fact<'_> {
 
 /// Whether every constraint holds for the recorded option values. A
 /// constraint on an option the values do not record fails.
+/// Whether the values a package records hold every constraint of a
+/// dependency on it. An option it does not record cannot be checked, so
+/// its constraint holds; `laft-repo check` names such constraints KR015.
 fn constraints_hold(
+    options: &BTreeMap<String, OptionValue>,
+    constraints: &OptionConstraints,
+) -> bool {
+    constraints
+        .as_slice()
+        .iter()
+        .all(|c| options.get(c.name()).is_none_or(|v| c.matches(v)))
+}
+
+/// Whether `options` holds every constraint, failing an option that the
+/// package does not record. A request comes from the configuration, so a
+/// missing value is a demand nothing satisfies.
+fn constraints_hold_strict(
     options: &BTreeMap<String, OptionValue>,
     constraints: &OptionConstraints,
 ) -> bool {
@@ -841,6 +860,11 @@ struct Want<'a> {
     dynamic_first: bool,
     /// The option constraints of the request or the dependency.
     options: &'a OptionConstraints,
+    /// Whether a candidate that does not record the constrained option
+    /// fails. A request comes from the configuration, which can demand
+    /// values no published package has; a dependency on a package that
+    /// records no options is unverifiable and holds.
+    strict: bool,
 }
 
 impl Want<'_> {
@@ -940,7 +964,11 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         let accept = |c: &Candidate<'a>| {
             want.matches(&c.meta.version, c.meta.rev)
                 && want.variant.is_none_or(|v| c.meta.variant == v)
-                && constraints_hold(&c.meta.options, want.options)
+                && (if want.strict {
+                    constraints_hold_strict(&c.meta.options, want.options)
+                } else {
+                    constraints_hold(&c.meta.options, want.options)
+                })
                 && self.allowed(name, c)
         };
         let best = self.ctx.best(name, accept, want.dynamic_first)?;
@@ -967,7 +995,9 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
     /// package and the values satisfy `want` and every constraint of the
     /// branch: the declared defaults, with the fixed values of the view and
     /// the option constraints of the learned dependencies and of `want`
-    /// applied over them, in that order.
+    /// applied over them, in that order. The build takes the option
+    /// context of the view; `dep_options` of the build planning decides
+    /// how its build dependencies resolve.
     fn buildable_values(
         &self,
         name: &Name,
@@ -1192,12 +1222,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             want.matches(&c.meta.version, c.meta.rev)
                 && want.variant.is_none_or(|v| c.meta.variant == v)
         };
-        if !self
-            .ctx
-            .ordered(name.as_str())
-            .ok()?
-            .any(|c| matches(&c))
-        {
+        if !self.ctx.ordered(name.as_str()).ok()?.any(|c| matches(&c)) {
             return None;
         }
         let empty = BTreeMap::new();
@@ -1331,6 +1356,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 variant: Some(request.variant),
                 dynamic_first: false,
                 options: &request.options,
+                strict: true,
             };
             match self.choose(&request.name, &want)? {
                 Some(Pick::Package(candidate, kept)) => {
@@ -1511,6 +1537,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             variant: None,
             dynamic_first: true,
             options: opts,
+            strict: false,
         };
         match self.choose(name, &want)? {
             Some(Pick::Package(candidate, kept)) => {

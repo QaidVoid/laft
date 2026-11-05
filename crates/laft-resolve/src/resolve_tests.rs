@@ -1295,6 +1295,39 @@ fn an_option_constraint_restarts_over_the_newest_candidate() {
 }
 
 #[test]
+fn an_option_constraint_rejects_an_already_selected_candidate() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("x11", "true")]),
+            pkg("kwin 6").depends(&["mesa{!x11}"]),
+        ],
+    );
+    let e = resolve_core(&core, &["mesa", "kwin"], &[]).unwrap_err();
+    assert_eq!(e.code(), Some("S005"));
+    let ErrorKind::Unsatisfiable { constraints, .. } = &*e.kind else {
+        panic!("expected S005, got {e}");
+    };
+    assert_eq!(
+        constraints
+            .iter()
+            .map(|b| b.dep.to_string())
+            .collect::<Vec<_>>(),
+        ["mesa{!x11}"]
+    );
+}
+
+#[test]
+fn an_option_constraint_holds_when_the_candidate_records_no_options() {
+    let core = index(
+        "core",
+        vec![pkg("zlib 1.2"), pkg("app 1.0").depends(&["zlib{tool}"])],
+    );
+    let r = resolve_core(&core, &["app"], &[]).unwrap();
+    assert_eq!(labels(&r), ["app 1.0-r1", "zlib 1.2-r1"]);
+}
+
+#[test]
 fn a_request_with_option_constraints_selects_a_matching_candidate() {
     let core = index(
         "core",
