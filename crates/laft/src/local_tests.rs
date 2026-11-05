@@ -105,6 +105,48 @@ fn a_local_key_is_generated_once_and_stays_secret() {
 }
 
 #[test]
+fn an_unreadable_key_is_never_replaced() {
+    if rustix::process::getuid().is_root() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("root");
+    let local = Local::of(&root);
+    local.public_key().expect("a key");
+    let key = root.join("laft/state/local.key");
+    let public = root.join("laft/state/local.key.pub");
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o000)).expect("chmod");
+    fs::remove_file(&public).expect("the public key is removed");
+    local
+        .public_key()
+        .expect_err("the key cannot be read, and no key is generated");
+    assert!(
+        fs::read(&key).is_err(),
+        "the unreadable key is still in place"
+    );
+}
+
+#[test]
+fn a_public_key_that_vanished_is_derived_from_the_key() {
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("root");
+    let local = Local::of(&root);
+    let first = local.public_key().expect("a key");
+    let key = root.join("laft/state/local.key");
+    let public = root.join("laft/state/local.key.pub");
+    let before = fs::read(&key).expect("readable");
+    fs::remove_file(&public).expect("the public key is removed");
+    let second = local.public_key().expect("a key");
+    assert_eq!(first, second);
+    assert_eq!(
+        before,
+        fs::read(&key).expect("readable"),
+        "the key is not rewritten"
+    );
+}
+
+#[test]
 fn an_added_package_is_listed_by_a_signed_index() {
     let dir = laft_test::tempdir();
     let out = dir.path().join("build/out");

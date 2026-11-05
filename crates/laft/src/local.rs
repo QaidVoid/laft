@@ -57,6 +57,9 @@ impl Local {
     }
 
     /// The public key of the repository, generated on the first call.
+    /// The key file is created exclusively and never replaced, so two
+    /// processes that generate at the same time agree on the key of the
+    /// winner, and a key that cannot be read is never rotated.
     ///
     /// # Errors
     ///
@@ -66,29 +69,41 @@ impl Local {
             return Ok(listed);
         }
         if let Some(secret) = self.read_secret()? {
-            let public = public_of(&secret)?;
+            let (public, listed) = self.listed_of(&secret)?;
             self.write_public(&public)?;
-            let listed: PublicKey = public
-                .to_base64()
-                .parse()
-                .map_err(|e| self.failed(format!("{e}")))?;
             return Ok(listed);
         }
         let pair = KeyPair::generate_unencrypted_keypair()
             .map_err(|e| self.failed(format!("{}: {e}", self.key.display())))?;
-        let public = public_of(&pair.sk)?;
-        let listed: PublicKey = public
-            .to_base64()
-            .parse()
-            .map_err(|e| self.failed(format!("{e}")))?;
+        let (public, listed) = self.listed_of(&pair.sk)?;
         let comment = format!("laft local repository key {}", listed.id());
         let boxed = pair
             .sk
             .to_box(Some(&comment))
             .map_err(|e| self.failed(format!("{}: {e}", self.key.display())))?;
-        self.write_secret(&boxed)?;
-        self.write_public(&public)?;
+        if self.write_secret_exclusive(&boxed)? {
+            self.write_public(&public)?;
+            return Ok(listed);
+        }
+        // Another process generated the key first; use its key.
+        let secret = self
+            .read_secret()?
+            .ok_or_else(|| self.failed("the local key does not exist yet"))?;
+        let (public, listed) = self.listed_of(&secret)?;
+        if self.read_public()?.is_none() {
+            self.write_public(&public)?;
+        }
         Ok(listed)
+    }
+
+    /// The public key that belongs to `secret`, as the index records it.
+    fn listed_of(&self, secret: &SecretKey) -> Result<(minisign::PublicKey, PublicKey), Failure> {
+        let public = public_of(secret)?;
+        let listed: PublicKey = public
+            .to_base64()
+            .parse()
+            .map_err(|e| self.failed(format!("{e}")))?;
+        Ok((public, listed))
     }
 
     /// The signed index of the local repository, or `None` when nothing
@@ -342,9 +357,13 @@ impl Local {
     }
 
     /// The unencrypted secret key of the repository, when it exists.
+    /// Only a key that does not exist means absent; one that cannot be
+    /// read fails.
     fn read_secret(&self) -> Result<Option<SecretKey>, Failure> {
-        let Ok(text) = fs::read_to_string(&self.key) else {
-            return Ok(None);
+        let text = match fs::read_to_string(&self.key) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(self.failed(format!("{}: {e}", self.key.display()))),
         };
         let boxed = SecretKeyBox::from_string(&text)
             .map_err(|e| self.failed(format!("{}: {e}", self.key.display())))?;
@@ -353,10 +372,14 @@ impl Local {
             .map_err(|e| self.failed(format!("{}: {e}", self.key.display())))
     }
 
-    /// The public key listed in the `.pub` file, when it exists.
+    /// The public key listed in the `.pub` file, when it exists. Only a
+    /// file that does not exist means absent; one that cannot be read
+    /// fails.
     fn read_public(&self) -> Result<Option<PublicKey>, Failure> {
-        let Ok(text) = fs::read_to_string(&self.public) else {
-            return Ok(None);
+        let text = match fs::read_to_string(&self.public) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(self.failed(format!("{}: {e}", self.public.display()))),
         };
         let line = text
             .lines()
@@ -380,10 +403,39 @@ impl Local {
         Ok(())
     }
 
-    /// Writes the secret key box to the key file, readable only by the
-    /// owner.
-    fn write_secret(&self, boxed: &SecretKeyBox) -> Result<(), Failure> {
-        write_file(&self.key, &boxed.to_bytes(), 0o600)
+    /// Writes the secret key box to the key file, unless the file exists
+    /// already, and says whether it wrote it. The key file appears
+    /// complete or not at all, readable only by the owner, and an
+    /// existing key is never replaced.
+    fn write_secret_exclusive(&self, boxed: &SecretKeyBox) -> Result<bool, Failure> {
+        let bytes = boxed.to_bytes();
+        if let Some(dir) = self.key.parent() {
+            fs::create_dir_all(dir).map_err(|e| self.failed(format!("{}: {e}", dir.display())))?;
+        }
+        let tmp = self.key.with_file_name(format!(
+            ".{}.laft-tmp",
+            self.key
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+        ));
+        let write = || -> std::io::Result<()> {
+            {
+                let mut file = fs::File::create(&tmp)?;
+                std::io::Write::write_all(&mut file, &bytes)?;
+                file.set_permissions(fs::Permissions::from_mode(0o600))?;
+                file.sync_all()?;
+            }
+            fs::hard_link(&tmp, &self.key)?;
+            Ok(())
+        };
+        let linked = write();
+        let _ = fs::remove_file(&tmp);
+        match linked {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(self.failed(format!("{}: {e}", self.key.display()))),
+        }
     }
 
     /// A [`Failure`] about the local repository.

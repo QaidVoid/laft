@@ -465,8 +465,8 @@ fn groups_of_one_snapshot_build_in_the_order_of_their_values() {
         reasons: Vec::new(),
     };
     let snapshot = Blake3Hash::of(b"recipes");
-    let parent = (snapshot.clone(), "llvm=false".to_owned());
-    let child = (snapshot.clone(), "llvm=true".to_owned());
+    let parent = (snapshot, "llvm=false".to_owned());
+    let child = (snapshot, "llvm=true".to_owned());
     let groups = BTreeMap::from([
         (parent.clone(), vec![request("zlib", false)]),
         (child.clone(), vec![request("mesa", true)]),
