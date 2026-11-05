@@ -198,3 +198,78 @@ fn keeps_the_option_of_a_package_whose_other_option_is_a_keyword() {
     assert!(text.contains("nls: Bool = true"));
     assert!(!text.contains("type:"));
 }
+
+#[test]
+fn values_collect_fixed_preferred_and_profile_contributions() {
+    let dir = laft_test::tempdir();
+    std::fs::write(
+        dir.path().join("part.stav"),
+        "system {\n  hostname = \"forge\"\n  package { mesa { llvm = false } }\n}\n",
+    )
+    .expect("the file can be written");
+    let (name, decls) = mesa();
+    let mut options = IndexOptions {
+        options: BTreeMap::from([(name.clone(), decls)]),
+        profile: BTreeMap::new(),
+    };
+    options.profile.insert(
+        name.clone(),
+        [("vulkan".to_owned(), OptionValue::Tag("amd".to_owned()))]
+            .into_iter()
+            .collect(),
+    );
+    let evaluation = crate::evaluate(dir.path(), &dir.path().join("part.stav"), &options)
+        .expect("the file evaluates");
+    let values = options::values(
+        &evaluation.checked,
+        &evaluation.evaluated,
+        &options,
+        &BTreeMap::new(),
+    );
+    let system = &values[&"system".parse::<Name>().expect("a name")];
+    assert_eq!(system.fixed[&name]["llvm"].value, OptionValue::Bool(false));
+    assert_eq!(
+        system.preferred[&name]["vulkan"],
+        OptionValue::Tag("amd".to_owned()),
+        "the profile of the index is preferred"
+    );
+    assert!(
+        !system.preferred[&name].contains_key("llvm"),
+        "a fixed value has no preferred value beside it"
+    );
+}
+
+#[test]
+fn values_prefer_nothing_a_fixed_value_already_holds() {
+    let dir = laft_test::tempdir();
+    std::fs::write(
+        dir.path().join("part.stav"),
+        "system {\n  hostname = \"forge\"\n  package.mesa.llvm = false\n}\n",
+    )
+    .expect("the file can be written");
+    let (name, decls) = mesa();
+    let mut options = IndexOptions {
+        options: BTreeMap::from([(name.clone(), decls)]),
+        profile: BTreeMap::new(),
+    };
+    options.profile.insert(
+        name.clone(),
+        [("llvm".to_owned(), OptionValue::Bool(false))]
+            .into_iter()
+            .collect(),
+    );
+    let evaluation = crate::evaluate(dir.path(), &dir.path().join("part.stav"), &options)
+        .expect("the file evaluates");
+    let values = options::values(
+        &evaluation.checked,
+        &evaluation.evaluated,
+        &options,
+        &BTreeMap::new(),
+    );
+    let system = &values[&"system".parse::<Name>().expect("a name")];
+    assert_eq!(system.fixed[&name]["llvm"].value, OptionValue::Bool(false));
+    assert!(
+        !system.preferred[&name].contains_key("llvm"),
+        "a fixed value has no preferred value beside it"
+    );
+}
