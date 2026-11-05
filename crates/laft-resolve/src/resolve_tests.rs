@@ -637,14 +637,34 @@ fn requests_of_a_missing_name_fail_with_the_available_versions() {
 /// every request and dependency satisfied, and no conflicts. An unversioned
 /// dependency on a name nothing selected may be met by a package that
 /// replaces the name.
-fn check_sound(r: &Resolution<'_>, requests: &[Request]) {
+fn check_sound(r: &Resolution<'_>, requests: &[Request], options: &BTreeMap<Name, OptionRequest>) {
     for (name, selected) in &r.packages {
         let meta = selected.candidate.meta;
         assert_eq!(&meta.name, name);
+        if let Some(req) = options.get(name) {
+            for (opt, value) in &req.preferred {
+                if let Some(recorded) = meta.options.get(opt) {
+                    assert_eq!(
+                        recorded, value,
+                        "{name} contradicts the preferred value of {opt}"
+                    );
+                }
+            }
+            for (opt, fixed) in &req.fixed {
+                assert_eq!(
+                    meta.options.get(opt),
+                    Some(&fixed.value),
+                    "{name} does not record the fixed value of {opt}"
+                );
+            }
+        }
         for dep in &meta.depends {
             let ok = match dep {
-                Dep::Pkg(n, req, _) => match r.packages.get(n) {
-                    Some(s) => req.matches(&s.candidate.meta.version, s.candidate.meta.rev),
+                Dep::Pkg(n, req, opts) => match r.packages.get(n) {
+                    Some(s) => {
+                        req.matches(&s.candidate.meta.version, s.candidate.meta.rev)
+                            && constraints_hold(&s.candidate.meta.options, opts)
+                    }
                     None => {
                         *req == VersionReq::Any
                             && r.packages.values().any(|s| {
@@ -682,6 +702,11 @@ fn check_sound(r: &Resolution<'_>, requests: &[Request]) {
             if let Some(prefix) = request.pkg.prefix() {
                 assert!(prefix.matches(&s.candidate.meta.version));
             }
+            assert!(
+                constraints_hold_strict(&s.candidate.meta.options, request.pkg.options()),
+                "request {} is met by a candidate without its option values",
+                request.pkg
+            );
         } else {
             assert!(
                 r.warnings.iter().any(
@@ -692,17 +717,48 @@ fn check_sound(r: &Resolution<'_>, requests: &[Request]) {
             );
         }
     }
+    for build in &r.builds {
+        if let Some(req) = options.get(&build.buildable.name) {
+            for (opt, fixed) in &req.fixed {
+                assert_eq!(
+                    build.values.get(opt),
+                    Some(&fixed.value),
+                    "the build of {} would ignore the fixed value of {opt}",
+                    build.buildable.name
+                );
+            }
+        }
+    }
 }
 
 /// A random universe: two repositories, packages `p0` to `p9` in a few
 /// versions and variants, `so:` and name dependencies, provides, conflicts
 /// and replaces, plus requests and an installed set.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct Scenario {
     repos: Vec<(Index, i64)>,
     requests: Vec<Request>,
     installed: Vec<Meta>,
     upgrade: bool,
+    /// The fixed and preferred option values of the view.
+    input_options: BTreeMap<Name, OptionRequest>,
+    /// The packages a recipe snapshot can build.
+    buildable: Vec<Buildable>,
+    /// Whether the view may select a package the snapshot builds.
+    allow_builds: bool,
+}
+
+/// The option values a generated package may record.
+fn recorded_option() -> impl Strategy<Value = (&'static str, &'static str)> {
+    prop_oneof![
+        Just(("x11", "true")),
+        Just(("x11", "false")),
+        Just(("llvm", "true")),
+        Just(("llvm", "false")),
+        Just(("vaapi", "amd")),
+        Just(("vaapi", "intel")),
+        Just(("vaapi", "all")),
+    ]
 }
 
 fn arb_scenario(max_packages: usize) -> impl Strategy<Value = Scenario> {
@@ -713,7 +769,13 @@ fn arb_scenario(max_packages: usize) -> impl Strategy<Value = Scenario> {
         (0..names).prop_map(|n| format!("p{n}<2")),
         (0..names).prop_map(|n| format!("p{n}>=2")),
         (0..names).prop_map(|n| format!("p{n}@1")),
+        (0..names).prop_map(|n| format!("p{n}{{x11}}")),
+        (0..names).prop_map(|n| format!("p{n}{{!x11}}")),
+        (0..names).prop_map(|n| format!("p{n}{{vaapi=amd}}")),
+        (0..names).prop_map(|n| format!("p{n}{{vaapi=intel}}")),
     ];
+    // One recorded option value of a generated package.
+    let recorded = recorded_option();
     let package = (
         0..names,
         prop::sample::select(vec!["1", "1.5", "2", "2.1~rc1", "3"]),
@@ -722,24 +784,37 @@ fn arb_scenario(max_packages: usize) -> impl Strategy<Value = Scenario> {
         prop::collection::vec(0..5usize, 0..3),
         prop::option::weighted(0.1, 0..names),
         prop::option::weighted(0.05, 0..names),
+        prop::collection::vec(recorded, 0..2),
         0..2usize,
     );
     let request = (any::<prop::sample::Index>(), prop::bool::weighted(0.15));
+    let view_value = (0..names, recorded_option(), any::<bool>());
     (
         prop::collection::vec(package, max_packages / 4..max_packages),
         prop::collection::vec(request, 1..5),
         0..3i64,
         prop_oneof![9 => Just(1i64), 9 => Just(-1), 1 => Just(0)],
         prop::collection::vec(any::<bool>(), max_packages),
+        prop::collection::vec(view_value, 0..3),
+        prop::bool::weighted(0.2),
         any::<bool>(),
     )
         .prop_map(
-            |(packages, requests, prio0, delta, installed_mask, upgrade)| {
+            |(
+                packages,
+                requests,
+                prio0,
+                delta,
+                installed_mask,
+                view_values,
+                allow_builds,
+                upgrade,
+            )| {
                 let mut repos = vec![(Vec::new(), prio0), (Vec::new(), prio0 + delta)];
                 let mut all: Vec<Meta> = Vec::new();
                 let mut seen = BTreeSet::new();
                 let mut installed: Vec<Meta> = Vec::new();
-                for (i, (n, version, is_static, deps, provides, conflict, replace, repo)) in
+                for (i, (n, version, is_static, deps, provides, conflict, replace, values, repo)) in
                     packages.into_iter().enumerate()
                 {
                     if !seen.insert((repo, n, version, is_static)) {
@@ -759,11 +834,17 @@ fn arb_scenario(max_packages: usize) -> impl Strategy<Value = Scenario> {
                         replace.map(|c| format!("p{c}<1")).into_iter().collect();
                     let replaces: Vec<&str> = replaces.iter().map(String::as_str).collect();
                     let variant = if is_static { " static" } else { "" };
+                    let mut recorded: BTreeMap<&str, &str> = BTreeMap::new();
+                    for (opt, value) in values {
+                        recorded.entry(opt).or_insert(value);
+                    }
+                    let recorded: Vec<(&str, &str)> = recorded.into_iter().collect();
                     let meta = pkg(&format!("p{n} {version}{variant}"))
                         .depends(&deps)
                         .provides(&provides)
                         .conflicts(&conflicts)
-                        .replaces(&replaces);
+                        .replaces(&replaces)
+                        .options(&recorded);
                     if installed_mask[i] && !installed.iter().any(|m| m.name == meta.name) {
                         installed.push(meta.clone());
                     }
@@ -794,11 +875,51 @@ fn arb_scenario(max_packages: usize) -> impl Strategy<Value = Scenario> {
                         req(&format!("{}{prefix}{variant}", meta.name))
                     })
                     .collect();
+                let mut input_options: BTreeMap<Name, OptionRequest> = BTreeMap::new();
+                for (n, (opt, value), fixed) in view_values {
+                    let value: OptionValue = value.parse().expect("test option value is valid");
+                    let req = input_options.entry(name(&format!("p{n}"))).or_default();
+                    if fixed && !req.fixed.contains_key(opt) {
+                        req.fixed.insert(
+                            opt.to_owned(),
+                            FixedValue {
+                                value,
+                                origin: "/etc/laft/gen.stav:1:1".to_owned(),
+                            },
+                        );
+                    } else if !fixed && !req.preferred.contains_key(opt) {
+                        req.preferred.insert(opt.to_owned(), value);
+                    }
+                }
+                let mut seen_buildable = BTreeSet::new();
+                let buildable: Vec<Buildable> = all
+                    .iter()
+                    .step_by(7)
+                    .filter(|m| {
+                        seen_buildable.insert((
+                            m.name.clone(),
+                            m.version.clone(),
+                            m.rev,
+                            m.variant,
+                            m.options.clone(),
+                        ))
+                    })
+                    .map(|m| Buildable {
+                        name: m.name.clone(),
+                        version: m.version.clone(),
+                        rev: m.rev,
+                        variant: m.variant,
+                        defaults: m.options.clone(),
+                    })
+                    .collect();
                 Scenario {
                     repos,
                     requests,
                     installed,
                     upgrade,
+                    input_options,
+                    buildable,
+                    allow_builds,
                 }
             },
         )
@@ -812,6 +933,9 @@ impl Scenario {
         if self.upgrade {
             i.upgrade = Upgrade::All;
         }
+        i.options = self.input_options.clone();
+        i.buildable = self.buildable.clone();
+        i.allow_builds = self.allow_builds;
         format!("{:?}", universe(&repos).resolve(&i))
     }
 
@@ -824,6 +948,7 @@ impl Scenario {
             rng.shuffle(&mut index.yanked);
         }
         rng.shuffle(&mut copy.requests);
+        rng.shuffle(&mut copy.buildable);
         copy
     }
 }
@@ -840,7 +965,7 @@ proptest! {
             i.upgrade = Upgrade::All;
         }
         if let Ok(r) = universe(&repos).resolve(&i) {
-            check_sound(&r, &scenario.requests);
+            check_sound(&r, &scenario.requests, &i.options);
         }
     }
 
@@ -848,8 +973,9 @@ proptest! {
     fn large_universes_resolve_soundly(scenario in arb_scenario(200)) {
         let repos: Vec<(&Index, i64)> = scenario.repos.iter().map(|(i, p)| (i, *p)).collect();
         let installed: Vec<&Meta> = scenario.installed.iter().collect();
-        if let Ok(r) = universe(&repos).resolve(&input("system", scenario.requests.clone(), &installed)) {
-            check_sound(&r, &scenario.requests);
+        let i = input("system", scenario.requests.clone(), &installed);
+        if let Ok(r) = universe(&repos).resolve(&i) {
+            check_sound(&r, &scenario.requests, &i.options);
         }
     }
 }
@@ -868,8 +994,7 @@ fn example_scenarios() -> Vec<Scenario> {
     let one = |packages: Vec<Meta>, requests: &[&str]| Scenario {
         repos: vec![(index("core", packages), 0)],
         requests: requests.iter().map(|r| req(r)).collect(),
-        installed: vec![],
-        upgrade: false,
+        ..Default::default()
     };
     let mut gl = gl_universe(Some("gb"));
     gl.defaults.alternatives.insert(name("vi"), name("vim"));
@@ -930,8 +1055,7 @@ fn example_scenarios() -> Vec<Scenario> {
         Scenario {
             repos: vec![(gl, 0)],
             requests: vec![req("app")],
-            installed: vec![],
-            upgrade: false,
+            ..Default::default()
         },
         one(
             gl_universe(None)
@@ -949,8 +1073,7 @@ fn example_scenarios() -> Vec<Scenario> {
                 (index("mine", vec![pkg("foo 1.5")]), 10),
             ],
             requests: vec![req("foo")],
-            installed: vec![],
-            upgrade: false,
+            ..Default::default()
         },
         Scenario {
             repos: vec![
@@ -958,8 +1081,7 @@ fn example_scenarios() -> Vec<Scenario> {
                 (index("extra", vec![pkg("foo 2.1")]), 0),
             ],
             requests: vec![req("foo")],
-            installed: vec![],
-            upgrade: false,
+            ..Default::default()
         },
         one(
             vec![
@@ -975,7 +1097,91 @@ fn example_scenarios() -> Vec<Scenario> {
             vec![pkg("a 1").depends(&["b"]), pkg("b 1").depends(&["a"])],
             &["a"],
         ),
+        // A dependency constraint restarts over the newest candidate.
+        one(
+            vec![
+                pkg("mesa 25.2").options(&[("vaapi", "intel")]),
+                pkg("mesa 25.1").options(&[("vaapi", "amd")]),
+                pkg("gl 1").depends(&["mesa"]),
+                pkg("hevc 1").depends(&["mesa{vaapi=amd}"]),
+            ],
+            &["gl", "hevc"],
+        ),
+        // Two requests demanding different values of one option.
+        one(
+            vec![
+                pkg("mesa 25.2").options(&[("vaapi", "intel")]),
+                pkg("mesa 25.1").options(&[("vaapi", "amd")]),
+            ],
+            &["mesa{vaapi=intel}", "mesa{vaapi=amd}"],
+        ),
+        // A fixed value contradicting a dependency.
+        Scenario {
+            repos: vec![(
+                index(
+                    "core",
+                    vec![
+                        pkg("mesa 25.2").options(&[("vulkan", "all")]),
+                        pkg("bl 1").depends(&["mesa{vulkan=all}"]),
+                    ],
+                ),
+                0,
+            )],
+            requests: vec![req("bl")],
+            input_options: BTreeMap::from([fixed_option(
+                "mesa",
+                ("vulkan", "amd", "/etc/laft/gen.stav:1:1"),
+            )]),
+            ..Default::default()
+        },
+        // A build the view selects with the preferred value of the view.
+        Scenario {
+            repos: vec![(index("core", vec![pkg("bl 1").depends(&["mesa"])]), 0)],
+            requests: vec![req("bl")],
+            input_options: BTreeMap::from([preferred_option("mesa", ("vaapi", "amd"))]),
+            buildable: vec![buildable("mesa", "25.3", &[("vaapi", "intel")])],
+            allow_builds: true,
+            ..Default::default()
+        },
+        // The same build without the permission fails with S011.
+        Scenario {
+            repos: vec![(index("core", vec![pkg("bl 1").depends(&["mesa"])]), 0)],
+            requests: vec![req("bl")],
+            buildable: vec![buildable("mesa", "25.3", &[])],
+            ..Default::default()
+        },
     ]
+}
+
+/// One fixed option value for the view, as a map entry for a scenario.
+fn fixed_option(of: &str, (opt, value, origin): (&str, &str, &str)) -> (Name, OptionRequest) {
+    (
+        name(of),
+        OptionRequest {
+            fixed: BTreeMap::from([(
+                opt.to_owned(),
+                FixedValue {
+                    value: value.parse().expect("test option value is valid"),
+                    origin: origin.to_owned(),
+                },
+            )]),
+            preferred: BTreeMap::new(),
+        },
+    )
+}
+
+/// One preferred option value for the view, as a map entry for a scenario.
+fn preferred_option(of: &str, (opt, value): (&str, &str)) -> (Name, OptionRequest) {
+    (
+        name(of),
+        OptionRequest {
+            fixed: BTreeMap::new(),
+            preferred: BTreeMap::from([(
+                opt.to_owned(),
+                value.parse().expect("test option value is valid"),
+            )]),
+        },
+    )
 }
 
 #[test]
@@ -2060,7 +2266,7 @@ proptest! {
         }
         let result = universe(&[(&planted.core, 0)]).resolve(&i);
         match result {
-            Ok(r) => check_sound(&r, &planted.requests),
+            Ok(r) => check_sound(&r, &planted.requests, &BTreeMap::new()),
             Err(e) => prop_assert!(false, "{e}"),
         }
     }
