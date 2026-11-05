@@ -183,7 +183,7 @@ fn plain_and_forced_values_are_fixed_and_defaults_are_preferred() {
     let loaded = load(body, &mesa_options()).expect("loads");
     let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
     let mesa = &"mesa".parse::<Name>().expect("a name");
-    assert_eq!(values.fixed[mesa]["llvm"], OptionValue::Bool(false));
+    assert_eq!(values.fixed[mesa]["llvm"].value, OptionValue::Bool(false));
     assert_eq!(
         values.preferred[mesa]["vulkan"],
         OptionValue::Tag("amd".to_owned())
@@ -192,7 +192,7 @@ fn plain_and_forced_values_are_fixed_and_defaults_are_preferred() {
     let loaded = load(body, &mesa_options()).expect("loads");
     let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
     assert_eq!(
-        values.fixed[&"mesa".parse::<Name>().expect("a name")]["llvm"],
+        values.fixed[&"mesa".parse::<Name>().expect("a name")]["llvm"].value,
         OptionValue::Bool(false)
     );
 }
@@ -219,7 +219,7 @@ fn profile_values_are_preferred_and_lose_to_the_configuration() {
     assert_eq!(values.preferred[mesa]["llvm"], OptionValue::Bool(true));
     let loaded = load("package.mesa.llvm = false", &options).expect("loads");
     let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
-    assert_eq!(values.fixed[mesa]["llvm"], OptionValue::Bool(false));
+    assert_eq!(values.fixed[mesa]["llvm"].value, OptionValue::Bool(false));
     assert!(!values.preferred[mesa].contains_key("llvm"));
 }
 
@@ -240,15 +240,15 @@ fn every_view_resolves_from_the_system_and_merges_over_it() {
     let loaded = load(body, &options).expect("loads");
     let mesa = &"mesa".parse::<Name>().expect("a name");
     let web = &loaded.options[&"web".parse::<Name>().expect("a name")];
-    assert_eq!(web.fixed[mesa]["llvm"], OptionValue::Bool(false));
+    assert_eq!(web.fixed[mesa]["llvm"].value, OptionValue::Bool(false));
     assert_eq!(
-        web.fixed[mesa]["vulkan"],
+        web.fixed[mesa]["vulkan"].value,
         OptionValue::Tag("amd".to_owned())
     );
     assert!(!web.preferred[mesa].contains_key("vulkan"));
     let bare = &loaded.options[&"bare".parse::<Name>().expect("a name")];
     assert_eq!(
-        bare.fixed[mesa]["vulkan"],
+        bare.fixed[mesa]["vulkan"].value,
         OptionValue::Tag("amd".to_owned()),
         "inherit = none governs package requests, not option values"
     );
@@ -256,7 +256,7 @@ fn every_view_resolves_from_the_system_and_merges_over_it() {
     assert!(!bare.preferred[mesa].contains_key("vulkan"));
     let system = &loaded.options[&"system".parse::<Name>().expect("a name")];
     assert_eq!(
-        system.fixed[mesa]["vulkan"],
+        system.fixed[mesa]["vulkan"].value,
         OptionValue::Tag("amd".to_owned())
     );
     assert_eq!(system.preferred[mesa]["llvm"], OptionValue::Bool(false));
@@ -271,7 +271,7 @@ fn a_view_default_does_not_lift_a_fixed_value_of_the_system() {
     let loaded = load(body, &mesa_options()).expect("loads");
     let mesa = &"mesa".parse::<Name>().expect("a name");
     let web = &loaded.options[&"web".parse::<Name>().expect("a name")];
-    assert_eq!(web.fixed[mesa]["llvm"], OptionValue::Bool(false));
+    assert_eq!(web.fixed[mesa]["llvm"].value, OptionValue::Bool(false));
     assert!(!web.preferred[mesa].contains_key("llvm"));
 }
 
@@ -306,7 +306,7 @@ fn a_package_whose_option_is_named_options_still_type_checks() {
     let loaded = load("package.mesa.options = slim", &options).expect("loads");
     let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
     assert_eq!(
-        values.fixed[&mesa]["options"],
+        values.fixed[&mesa]["options"].value,
         OptionValue::Tag("slim".to_owned())
     );
 }
@@ -375,4 +375,19 @@ fn an_option_the_module_leaves_out_is_reported() {
         ),
         "{notes:?}"
     );
+}
+
+#[test]
+fn fixed_values_remember_where_the_configuration_set_them() {
+    let loaded = load("package { mesa { llvm = false } }", &mesa_options()).expect("loads");
+    let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
+    let llvm = &values.fixed[&"mesa".parse::<Name>().expect("a name")]["llvm"];
+    assert_eq!(llvm.value, OptionValue::Bool(false));
+    assert!(llvm.origin.contains("system.stav"), "{}", llvm.origin);
+    let (rest, col) = llvm.origin.rsplit_once(':').expect("a column");
+    let (_, line) = rest.rsplit_once(':').expect("a line");
+    assert!(line.parse::<usize>().is_ok(), "{}", llvm.origin);
+    assert!(line != "0" && !col.is_empty(), "{}", llvm.origin);
+    let parsed: usize = col.parse().expect("a numeric column");
+    assert!(parsed >= 1, "{}", llvm.origin);
 }

@@ -154,11 +154,21 @@ pub struct IndexOptions {
 pub struct OptionValues {
     /// The values set at plain or forced priority, by package name and
     /// option name. Hard constraints for the resolver.
-    pub fixed: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+    pub fixed: BTreeMap<Name, BTreeMap<String, FixedSetting>>,
     /// The values set with `default(...)`, by a profile, or the declared
     /// default, by package name and option name. What the resolver
     /// prefers when the option is not fixed.
     pub preferred: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+}
+
+/// One fixed option value, and where the configuration set it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixedSetting {
+    /// The value.
+    pub value: OptionValue,
+    /// Where it was set, as `file:line:column`, for example
+    /// `/etc/laft/system.stav:14:5`.
+    pub origin: String,
 }
 
 /// A configuration that passed every check, and what was suspicious but
@@ -382,7 +392,7 @@ pub fn load(
         .collect();
     match config {
         Some(config) if !report.has_errors() => {
-            let options = options::values(&evaluated, options, &config.views);
+            let options = options::values(&checked, &evaluated, options, &config.views);
             Ok(Loaded {
                 config,
                 warnings: report,

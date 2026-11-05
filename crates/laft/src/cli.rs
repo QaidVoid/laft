@@ -277,6 +277,9 @@ pub(crate) struct PlanArgs {
     /// Exit with status 12 when the plan contains changes.
     #[arg(long)]
     pub(crate) exit_code: bool,
+    /// Build the packages no repository publishes, for this run.
+    #[arg(long)]
+    pub(crate) build_missing: bool,
 }
 
 /// Options of `laft apply`.
@@ -310,6 +313,9 @@ pub(crate) struct ApplyArgs {
     /// Build a generation even when nothing changed.
     #[arg(long)]
     pub(crate) force: bool,
+    /// Build the packages no repository publishes, for this run.
+    #[arg(long)]
+    pub(crate) build_missing: bool,
     /// Skip the automatic garbage collection.
     #[arg(long)]
     pub(crate) no_gc: bool,

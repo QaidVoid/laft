@@ -61,6 +61,12 @@ fn view_access(loaded: &Loaded) -> BTreeMap<Name, (Vec<String>, Vec<String>)> {
         .collect()
 }
 
+/// Whether the resolution may select a package a recipe snapshot builds:
+/// `--build-missing`, or `build.missing = build` in the configuration.
+fn allow_builds(config: &laft_config::SystemConfig, flag: bool) -> bool {
+    flag || config.build.missing == laft_config::Missing::Build
+}
+
 /// Resolves and plans. The resolutions borrow from `indexes` and
 /// `installed`, which the caller keeps alive.
 fn compute<'i>(
@@ -68,10 +74,11 @@ fn compute<'i>(
     loaded: Loaded,
     indexes: &'i [RepoIndex],
     installed: &'i InstalledMetas,
-    active: Option<laft_store::Generation>,
     upgrade: &Upgrade,
     rebuild: &BTreeSet<Name>,
+    builds_allowed: bool,
 ) -> Result<Planned<'i>, Failure> {
+    let active = env.active()?.map(|n| env.generation(n)).transpose()?;
     if let Some(unknown) = rebuild
         .iter()
         .find(|n| !loaded.config.views.contains_key(*n))
@@ -84,9 +91,15 @@ fn compute<'i>(
     let services = resolve::services(&loaded.config)?;
     let universe = resolve::universe(indexes);
     let host = host(env, &loaded.config);
+    let context = resolve::ViewContext {
+        options: &loaded.options,
+        buildable: &resolve::buildables(indexes),
+        allow_builds: allow_builds(&loaded.config, builds_allowed),
+    };
     let resolved = resolve::resolve(
         &universe,
         &loaded.config,
+        &context,
         &services,
         installed,
         upgrade,
@@ -173,7 +186,15 @@ fn plan_selected(
     }
     let active = env.active()?.map(|n| env.generation(n)).transpose()?;
     let installed = InstalledMetas::of(&env.root, active.as_ref());
-    let planned = compute(env, loaded, &indexes, &installed, active, upgrade, rebuild)?;
+    let planned = compute(
+        env,
+        loaded,
+        &indexes,
+        &installed,
+        upgrade,
+        rebuild,
+        args.build_missing,
+    )?;
     if env.ui.json {
         env.ui.doc(planned.plan.to_json());
     } else {
@@ -196,6 +217,7 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
                 upgrade: args.upgrade,
                 refresh: args.refresh,
                 exit_code: false,
+                build_missing: args.build_missing,
             },
             &request.upgrade,
             &request.rebuild,
@@ -217,9 +239,9 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
         loaded,
         &indexes,
         &installed,
-        active,
         &request.upgrade,
         &request.rebuild,
+        args.build_missing,
     )?;
     let plan = &planned.plan;
     let forced = args.force || !request.rebuild.is_empty();

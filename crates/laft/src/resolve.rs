@@ -5,7 +5,10 @@ use std::collections::BTreeMap;
 use laft_config::SystemConfig;
 use laft_core::{Name, PkgRef, StoreId, Variant};
 use laft_pkg::Meta;
-use laft_resolve::{Installed, Repository, Request, Resolution, ResolveInput, Universe, Upgrade};
+use laft_resolve::{
+    Buildable, Installed, OptionRequest, Repository, Request, Resolution, ResolveInput, Universe,
+    Upgrade,
+};
 use laft_store::{Generation, Root};
 use laft_svc::ServiceSet;
 
@@ -86,6 +89,92 @@ pub(crate) fn universe(indexes: &[RepoIndex]) -> Universe<'_> {
     Universe::new(&repos)
 }
 
+/// The packages the accepted indexes can build from their recipe
+/// snapshots, one per name.
+///
+/// Only a repository that publishes a snapshot contributes. The newest
+/// entry wins for a name; a tie goes to the repository with the higher
+/// priority, then to the greater name, as the option declarations do. The
+/// declared defaults of the winning repository are the values a build
+/// starts from.
+pub(crate) fn buildables(indexes: &[RepoIndex]) -> Vec<Buildable> {
+    let mut by_priority: Vec<&RepoIndex> = indexes
+        .iter()
+        .filter(|repo| repo.accepted.index.recipes.is_some())
+        .collect();
+    by_priority.sort_by_key(|repo| (repo.repo.priority, repo.name.clone()));
+    let mut newest: BTreeMap<Name, (&laft_index::IndexEntry, &RepoIndex)> = BTreeMap::new();
+    for repo in by_priority {
+        for entry in &repo.accepted.index.packages {
+            let rank =
+                |e: &laft_index::IndexEntry| (e.meta.version.clone(), e.meta.rev, e.meta.variant);
+            match newest.entry(entry.meta.name.clone()) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert((entry, repo));
+                }
+                std::collections::btree_map::Entry::Occupied(mut slot) => {
+                    if rank(entry) >= rank(slot.get().0) {
+                        slot.insert((entry, repo));
+                    }
+                }
+            }
+        }
+    }
+    newest
+        .into_iter()
+        .map(|(name, (entry, repo))| {
+            let defaults = repo
+                .accepted
+                .index
+                .options
+                .get(&name)
+                .map(|decls| {
+                    decls
+                        .iter()
+                        .map(|decl| (decl.name.clone(), decl.default.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Buildable {
+                name,
+                version: entry.meta.version.clone(),
+                rev: entry.meta.rev,
+                variant: entry.meta.variant,
+                defaults,
+            }
+        })
+        .collect()
+}
+
+/// The fixed and preferred values of one view, as the resolver asks for
+/// them: by package name.
+pub(crate) fn option_request(values: &laft_config::OptionValues) -> BTreeMap<Name, OptionRequest> {
+    values
+        .fixed
+        .iter()
+        .map(|(pkg, opts)| {
+            (
+                pkg.clone(),
+                OptionRequest {
+                    fixed: opts
+                        .iter()
+                        .map(|(opt, setting)| {
+                            (
+                                opt.clone(),
+                                laft_resolve::FixedValue {
+                                    value: setting.value.clone(),
+                                    origin: setting.origin.clone(),
+                                },
+                            )
+                        })
+                        .collect(),
+                    preferred: values.preferred.get(pkg).cloned().unwrap_or_default(),
+                },
+            )
+        })
+        .collect()
+}
+
 /// The services of `config`, validated.
 pub(crate) fn services(config: &SystemConfig) -> Result<ServiceSet, Failure> {
     ServiceSet::new(&config.services).map_err(|errors| {
@@ -155,20 +244,50 @@ pub(crate) fn view_requests(
 }
 
 /// Resolves the system view and every declared view of `config`.
+/// What the views resolve with besides their requests.
+pub(crate) struct ViewContext<'a> {
+    /// The fixed and preferred option values, by view name, the system
+    /// view included.
+    pub(crate) options: &'a BTreeMap<Name, laft_config::OptionValues>,
+    /// The packages a recipe snapshot can build.
+    pub(crate) buildable: &'a [Buildable],
+    /// Whether the views may select a package that a recipe snapshot
+    /// builds after the resolution.
+    pub(crate) allow_builds: bool,
+}
+
+/// Resolves the system view and every declared view of `config`.
+///
+/// Every view resolves with its fixed and preferred option values from
+/// `context`. When `allow_builds` is false, selecting a package that
+/// `buildable` can build fails with S011, and when it is true, the
+/// resolution carries the build requests to run.
 pub(crate) fn resolve<'a>(
     universe: &Universe<'a>,
     config: &SystemConfig,
+    context: &ViewContext<'_>,
     services: &ServiceSet,
     installed: &'a InstalledMetas,
     upgrade: &Upgrade,
     host: &laft_activate::Host,
 ) -> Result<Resolved<'a>, Failure> {
+    let ViewContext {
+        options,
+        buildable,
+        allow_builds,
+    } = *context;
     let requests = system_requests(config, services);
     let mut input = ResolveInput::new(SYSTEM);
     input.requests = requests.clone();
     input.alternatives = config.alternatives.clone();
     input.installed = installed.view(SYSTEM);
     input.upgrade = upgrade.clone();
+    input.options = options
+        .get(&SYSTEM.parse().expect("a valid name"))
+        .map(option_request)
+        .unwrap_or_default();
+    input.buildable = buildable.to_vec();
+    input.allow_builds = allow_builds;
     let system = universe.resolve(&input)?;
     let mut input = ResolveInput::new(INITRD);
     input.requests = laft_activate::initrd_packages(&config.boot, host)
@@ -189,6 +308,9 @@ pub(crate) fn resolve<'a>(
         input.alternatives = alternatives;
         input.installed = installed.view(name.as_str());
         input.upgrade = upgrade.clone();
+        input.options = options.get(name).map(option_request).unwrap_or_default();
+        input.buildable = buildable.to_vec();
+        input.allow_builds = allow_builds;
         views.insert(name.clone(), universe.resolve(&input)?);
     }
     Ok(Resolved {

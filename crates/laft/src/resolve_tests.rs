@@ -1,5 +1,9 @@
 use super::*;
 
+use crate::env::ARCH;
+use laft_core::Timestamp;
+use laft_index::Index;
+
 fn request(text: &str, origin: &str) -> Request {
     Request {
         pkg: text.parse().expect("valid reference"),
@@ -60,4 +64,237 @@ fn the_system_requests_add_the_kernel_and_service_packages_once() {
     let names: Vec<&str> = requests.iter().map(|r| r.pkg.name().as_str()).collect();
     let unique: std::collections::BTreeSet<&&str> = names.iter().collect();
     assert_eq!(unique.len(), names.len());
+}
+
+/// The metadata of one published package of `name`, with the recorded
+/// option values `options`.
+fn meta_of(
+    name: &str,
+    version: &str,
+    options: &[(&str, laft_core::OptionValue)],
+) -> laft_pkg::Meta {
+    laft_pkg::Meta {
+        format: laft_pkg::FORMAT,
+        name: name.parse().expect("a name"),
+        version: version.parse().expect("a version"),
+        rev: 1,
+        variant: Variant::default(),
+        arch: ARCH,
+        origin: name.parse().expect("a name"),
+        summary: format!("The {name} test package"),
+        homepage: None,
+        license: vec!["MIT".to_owned()],
+        depends: Vec::new(),
+        provides: Vec::new(),
+        conflicts: Vec::new(),
+        replaces: Vec::new(),
+        alternatives: Vec::new(),
+        triggers: Vec::new(),
+        static_deps: Vec::new(),
+        abi: BTreeMap::new(),
+        abi_epoch: 0,
+        options: options
+            .iter()
+            .map(|(o, v)| ((*o).to_owned(), v.clone()))
+            .collect(),
+        requested_privileges: Vec::new(),
+        installed_size: 0,
+    }
+}
+
+/// The declaration of one bool option.
+fn bool_decl(name: &str, default: bool) -> laft_index::OptionDecl {
+    laft_index::OptionDecl {
+        name: name.to_owned(),
+        kind: laft_index::OptionType::Bool("bool".to_owned()),
+        default: laft_core::OptionValue::Bool(default),
+        doc: "d".to_owned(),
+    }
+}
+
+/// The snapshot member of an index that publishes recipe snapshots.
+fn snapshot() -> laft_index::RecipeSnapshot {
+    laft_index::RecipeSnapshot {
+        file: "recipes/aa.tar.zst".to_owned(),
+        size: 1,
+        blake3: laft_core::Blake3Hash::of(b"aa"),
+    }
+}
+
+/// The parts of an index every buildable test needs.
+fn index_base(repo: &str) -> Index {
+    Index {
+        format: Index::FORMAT,
+        repo: repo.parse().expect("a name"),
+        channel: "current".parse().expect("a name"),
+        arch: ARCH,
+        generation: 1,
+        timestamp: Timestamp::now(),
+        expires: laft_core::Timestamp::from_secs(
+            laft_core::Timestamp::now().as_secs() + laft_index::MAX_VALIDITY_SECS,
+        ),
+        defaults: Default::default(),
+        packages: Vec::new(),
+        yanked: Vec::new(),
+        options: BTreeMap::new(),
+        recipes: None,
+        profile: None,
+    }
+}
+
+/// An accepted index of `repo` that publishes `packages` and `options`
+/// from a recipe snapshot, unless `recipes` says otherwise.
+fn repo_index(
+    repo: &str,
+    priority: i64,
+    packages: Vec<laft_index::IndexEntry>,
+    options: BTreeMap<Name, Vec<laft_index::OptionDecl>>,
+    recipes: bool,
+) -> RepoIndex {
+    let none: Vec<String> = Vec::new();
+    let mut index = index_base(repo);
+    index.packages = packages;
+    index.options = options;
+    index.recipes = recipes.then(snapshot);
+    RepoIndex {
+        name: repo.parse().expect("a name"),
+        repo: laft_config::Repo {
+            url: "file:///tmp/none".to_owned(),
+            mirrors: Vec::new(),
+            key: "RWSO9Zvh1ju0E6MO5PDnzQFYnptNxsLpLdwYSfm5Cs4Jc+14umRuka1M"
+                .parse()
+                .expect("a key"),
+            keys: Vec::new(),
+            channel: "current".parse().expect("a name"),
+            profile: None,
+            priority,
+            enable: true,
+            allow_http: false,
+        },
+        accepted: laft_index::AcceptedIndex {
+            index,
+            record: laft_index::IndexRecord {
+                channel: "current".parse().expect("a name"),
+                profile: None,
+                arch: ARCH,
+                generation: 1,
+                blake3: Some(laft_core::Blake3Hash::of(b"x")),
+                signer: "0123456789abcdef".parse().expect("a key id"),
+            },
+            expired: false,
+        },
+        mirrors: laft_fetch::Mirrors::new("file:///tmp/none", &none, false).expect("a mirror"),
+        synced: None,
+    }
+}
+
+/// One entry of an index.
+fn entry(meta: laft_pkg::Meta, id: &str) -> laft_index::IndexEntry {
+    laft_index::IndexEntry {
+        meta,
+        id: laft_core::StoreId::from_manifest_hash(&laft_core::Blake3Hash::of(id.as_bytes())),
+        file: format!("pool/{}.lpkg", id),
+        size: 1,
+        blake3: laft_core::Blake3Hash::of(id.as_bytes()),
+    }
+}
+
+#[test]
+fn buildables_take_the_newest_entry_and_the_higher_priority_breaks_a_tie() {
+    let low = repo_index(
+        "low",
+        1,
+        vec![entry(meta_of("mesa", "25.1.0", &[]), "low")],
+        BTreeMap::from([(
+            "mesa".parse().expect("a name"),
+            vec![bool_decl("llvm", true)],
+        )]),
+        true,
+    );
+    let high = repo_index(
+        "high",
+        5,
+        vec![entry(meta_of("mesa", "25.2.0", &[]), "high")],
+        BTreeMap::from([(
+            "mesa".parse().expect("a name"),
+            vec![bool_decl("llvm", false)],
+        )]),
+        true,
+    );
+    let no_snapshot = repo_index(
+        "bare",
+        7,
+        vec![entry(meta_of("mesa", "25.3.0", &[]), "bare")],
+        BTreeMap::new(),
+        false,
+    );
+    let twin = repo_index(
+        "twin",
+        5,
+        vec![entry(meta_of("mesa", "25.2.0", &[]), "high")],
+        BTreeMap::from([(
+            "mesa".parse().expect("a name"),
+            vec![bool_decl("llvm", true)],
+        )]),
+        true,
+    );
+    let found = buildables(&[low, no_snapshot, high, twin]);
+    assert_eq!(found.len(), 1);
+    let mesa = &found[0];
+    assert_eq!(mesa.name.as_str(), "mesa");
+    assert_eq!(mesa.version.to_string(), "25.2.0");
+    assert_eq!(mesa.rev, 1);
+    assert_eq!(mesa.variant, Variant::default());
+    assert_eq!(
+        mesa.defaults.get("llvm"),
+        Some(&laft_core::OptionValue::Bool(true))
+    );
+}
+
+#[test]
+fn a_repository_without_a_snapshot_contributes_no_buildables() {
+    let plain = repo_index(
+        "core",
+        1,
+        vec![entry(meta_of("mesa", "25.2.0", &[]), "c")],
+        BTreeMap::new(),
+        false,
+    );
+    assert!(buildables(&[plain]).is_empty());
+}
+
+#[test]
+fn the_options_of_a_view_become_the_fixed_and_preferred_values_of_the_resolver() {
+    let values = laft_config::OptionValues {
+        fixed: BTreeMap::from([(
+            "mesa".parse().expect("a name"),
+            BTreeMap::from([(
+                "llvm".to_owned(),
+                laft_config::FixedSetting {
+                    value: laft_core::OptionValue::Bool(false),
+                    origin: "/etc/laft/system.stav:9:5".to_owned(),
+                },
+            )]),
+        )]),
+        preferred: BTreeMap::from([(
+            "mesa".parse().expect("a name"),
+            BTreeMap::from([(
+                "vulkan".to_owned(),
+                laft_core::OptionValue::Tag("amd".to_owned()),
+            )]),
+        )]),
+    };
+    let input = option_request(&values);
+    assert_eq!(input.len(), 1);
+    let mesa = &input[&"mesa".parse::<Name>().expect("a name")];
+    assert_eq!(
+        mesa.fixed["llvm"].value,
+        laft_core::OptionValue::Bool(false)
+    );
+    assert_eq!(mesa.fixed["llvm"].origin, "/etc/laft/system.stav:9:5");
+    assert_eq!(
+        mesa.preferred["vulkan"],
+        laft_core::OptionValue::Tag("amd".to_owned())
+    );
+    assert!(option_request(&laft_config::OptionValues::default()).is_empty());
 }

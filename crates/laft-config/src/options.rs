@@ -12,7 +12,7 @@ use laft_core::{Name, OptionValue, is_valid_name};
 use laft_index::OptionType;
 use stav::{AttrPath, Evaluated, Priority, Value};
 
-use crate::{IndexOptions, OptionValues, View};
+use crate::{FixedSetting, IndexOptions, OptionValues, View};
 
 /// The name of the generated module in diagnostics.
 pub(crate) const MODULE_NAME: &str = "<prelude>/package-options.stav";
@@ -257,17 +257,22 @@ mod tests;
 /// value of the system, and a `default(...)` of the view overrides a
 /// preferred value of the system unless the system fixed the option.
 pub(crate) fn values(
+    checked: &stav::Checked,
     evaluated: &Evaluated,
     options: &IndexOptions,
     views: &BTreeMap<Name, View>,
 ) -> BTreeMap<Name, OptionValues> {
-    let system = contributions(evaluated, &["system", "package"]);
+    let system = contributions(checked, evaluated, &["system", "package"]);
     let system_name = "system".parse::<Name>().expect("a valid name");
     let mut out = BTreeMap::new();
     out.insert(system_name, complete(system.clone(), options));
     for name in views.keys() {
         let mut merged = system.clone();
-        let own = contributions(evaluated, &["system", "views", name.as_str(), "package"]);
+        let own = contributions(
+            checked,
+            evaluated,
+            &["system", "views", name.as_str(), "package"],
+        );
         merged.merge_over(own);
         out.insert(name.clone(), complete(merged, options));
     }
@@ -278,7 +283,7 @@ pub(crate) fn values(
 /// declared defaults.
 #[derive(Debug, Default, Clone)]
 struct Contributions {
-    fixed: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+    fixed: BTreeMap<Name, BTreeMap<String, FixedSetting>>,
     preferred: BTreeMap<Name, BTreeMap<String, OptionValue>>,
 }
 
@@ -307,7 +312,7 @@ impl Contributions {
 }
 
 /// Reads the contributions of the `package` block at `path`.
-fn contributions(evaluated: &Evaluated, path: &[&str]) -> Contributions {
+fn contributions(checked: &stav::Checked, evaluated: &Evaluated, path: &[&str]) -> Contributions {
     let mut out = Contributions::default();
     let Ok(Value::Struct { fields, .. }) = evaluated.value_at(&AttrPath::new(path.iter().copied()))
     else {
@@ -321,12 +326,17 @@ fn contributions(evaluated: &Evaluated, path: &[&str]) -> Contributions {
             let mut keys: Vec<&str> = path.to_vec();
             keys.push(pkg.as_str());
             keys.push(opt.as_str());
-            match evaluated.priority(&AttrPath::new(keys)) {
+            let at = AttrPath::new(keys);
+            match evaluated.priority(&at) {
                 Some(Priority::Plain | Priority::Force) => {
-                    out.fixed
-                        .entry(pkg.clone())
-                        .or_default()
-                        .insert(opt, option);
+                    let origin = origin_of(checked, evaluated, &at).unwrap_or_default();
+                    out.fixed.entry(pkg.clone()).or_default().insert(
+                        opt,
+                        FixedSetting {
+                            value: option,
+                            origin,
+                        },
+                    );
                 }
                 Some(Priority::Default) => {
                     out.preferred
@@ -359,6 +369,25 @@ fn option_values(value: &Value) -> BTreeMap<String, OptionValue> {
             Some((name.clone(), found))
         })
         .collect()
+}
+
+/// Where the attribute at `path` was set, as `file:line:column`.
+fn origin_of(checked: &stav::Checked, evaluated: &Evaluated, path: &AttrPath) -> Option<String> {
+    let span = *evaluated.spans(path).first()?;
+    let name = checked
+        .files()
+        .find(|(id, _)| *id == span.file)?
+        .1
+        .to_owned();
+    let source = checked.source(span.file)?;
+    let before = &source.as_bytes()[..span.span.start];
+    let line = 1 + before.iter().filter(|&&b| b == b'\n').count();
+    let line_start = before
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map_or(0, |i| i + 1);
+    let col = source[line_start..span.span.start].chars().count() + 1;
+    Some(format!("{name}:{line}:{col}"))
 }
 
 /// Adds the values of the profiles and the declared defaults to the

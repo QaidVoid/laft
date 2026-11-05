@@ -152,9 +152,15 @@ pub(crate) fn check(env: &Env, file: Option<&Path>, refresh: bool) -> Result<u8,
     let services = resolve::services(&loaded.config)?;
     let universe = resolve::universe(&indexes);
     let host = laft_activate::Host::detect(&loaded.config.boot, env.root.path());
+    let context = resolve::ViewContext {
+        options: &loaded.options,
+        buildable: &resolve::buildables(&indexes),
+        allow_builds: loaded.config.build.missing == laft_config::Missing::Build,
+    };
     resolve::resolve(
         &universe,
         &loaded.config,
+        &context,
         &services,
         &installed,
         &Upgrade::None,
