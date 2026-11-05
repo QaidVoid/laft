@@ -1738,7 +1738,7 @@ fn the_fewest_deviations_from_the_preferred_values_win() {
     let u = universe(&[(&core, 0)]);
     let i = input("system", vec![req("mesa")], &[]);
     let r = u.resolve(&i).unwrap();
-    assert_eq!(labels(&r), ["mesa 25.2.0-r1"]);
+    assert_eq!(options_of(&r, "mesa"), "llvm=true, x11=false");
 
     let i = input_with(
         "system",
@@ -1747,7 +1747,7 @@ fn the_fewest_deviations_from_the_preferred_values_win() {
         &[preferred("mesa", &[("x11", "false")])],
     );
     let r = u.resolve(&i).unwrap();
-    assert_eq!(labels(&r), ["mesa 25.2.0-r1"]);
+    assert_eq!(options_of(&r, "mesa"), "llvm=true, x11=false");
 }
 
 #[test]
@@ -1761,7 +1761,7 @@ fn declared_defaults_decide_when_the_view_prefers_nothing() {
         vec![("mesa", vec![decl_bool("x11", "true")])],
     );
     let r = resolve_core(&core, &["mesa"], &[]).unwrap();
-    assert_eq!(labels(&r), ["mesa 25.2.0-r1"]);
+    assert_eq!(options_of(&r, "mesa"), "x11=true");
 }
 
 #[test]
@@ -1787,7 +1787,7 @@ fn false_comes_before_true_in_the_tie_break() {
         .into_iter()
         .collect();
     let r = universe(&[(&core, 0)]).resolve(&i).unwrap();
-    assert_eq!(labels(&r), ["mesa 25.2.0-r1"]);
+    assert_eq!(options_of(&r, "mesa"), "llvm=false, vulkan=amd");
 }
 
 #[test]
@@ -1806,7 +1806,20 @@ fn tags_come_in_declaration_order_in_the_tie_break() {
     // Both deviate once from the default, so the declaration order of the
     // tags decides.
     let r = resolve_core(&core, &["mesa"], &[]).unwrap();
-    assert_eq!(labels(&r), ["mesa 25.2.0-r1"]);
+    assert_eq!(options_of(&r, "mesa"), "vulkan=amd");
+}
+
+/// The option values the resolution records for `of`, as `key=value`
+/// texts joined key sorted.
+fn options_of(r: &Resolution<'_>, of: &str) -> String {
+    r.packages[&name(of)]
+        .candidate
+        .meta
+        .options
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A universe that is known to resolve, because it contains a planted

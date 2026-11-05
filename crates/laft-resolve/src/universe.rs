@@ -174,13 +174,15 @@ pub(crate) fn provides(meta: &Meta, dep: &Dep) -> bool {
 
 /// Best first: newest version and revision, then dynamic before static,
 /// then by store id so that the order is total.
+/// Compares two candidates by version, revision and variant, best first.
+/// Equal candidates stay tied: the sites that need a total order add the
+/// store id or the option order themselves.
 pub(crate) fn order(a: &Candidate<'_>, b: &Candidate<'_>) -> Ordering {
     let (x, y) = (a.meta, b.meta);
     y.version
         .cmp(&x.version)
         .then(y.rev.cmp(&x.rev))
         .then(x.variant.cmp(&y.variant))
-        .then(a.id.cmp(&b.id))
 }
 
 impl<'a> Universe<'a> {

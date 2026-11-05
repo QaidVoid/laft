@@ -537,7 +537,7 @@ impl<'u, 'a> Ctx<'u, 'a> {
             .options
             .keys()
             .map(|n| n.as_str())
-            .chain(universe.decls.keys().copied());
+            .chain(universe.names.keys().copied());
         for of in names_with_values {
             let Some(owner) = universe.owner(of) else {
                 continue;
