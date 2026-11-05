@@ -329,10 +329,8 @@ fn a_snapshot_that_cannot_be_unpacked_leaves_no_tree_behind() {
         built: Built::default(),
         seeded: BTreeSet::new(),
     };
-    let error = run
-        .unpack(&source)
+    run.unpack(&source)
         .expect_err("the bytes are not a tarball");
-    eprintln!("unpack error = {error:?}");
     let target = snapshot_dir(&env, &source.snapshot.blake3);
     assert!(!target.exists(), "no tree is left behind: {target:?}");
     let staging = target.with_file_name(format!(
@@ -373,9 +371,7 @@ fn a_snapshot_unpacks_into_the_cache_of_its_hash() {
     run.unpack(&source).expect("the snapshot unpacks");
     let target = snapshot_dir(&env, &source.snapshot.blake3);
     assert!(
-        target
-            .join("recipes/mesa/package.stav")
-            .is_file(),
+        target.join("recipes/mesa/package.stav").is_file(),
         "{target:?}"
     );
     let downloaded = run.built.bytes;

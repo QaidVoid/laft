@@ -411,15 +411,37 @@ impl<'a> Run<'a> {
     }
 
     /// Fetches the snapshot of `source` and unpacks it into the recipe
-    /// cache, unless that already happened.
+    /// cache, unless that already happened. The archive goes into a
+    /// sibling staging tree that is renamed into place, so an unpack
+    /// that is interrupted leaves no tree a later run takes for
+    /// complete.
     fn unpack(&mut self, source: &SnapshotSource) -> Result<(), Failure> {
         let dir = snapshot_dir(self.env, &source.snapshot.blake3);
         if dir.join("recipes").is_dir() {
             return Ok(());
         }
+        let staging = dir.with_file_name(format!(
+            "{}.part",
+            dir.file_name().and_then(|n| n.to_str()).unwrap_or_default()
+        ));
+        let _ = fs::remove_dir_all(&staging);
         let archive = self.fetch(source)?;
-        laft_build::unpack_normalized_tarball(&archive, &dir)
-            .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", dir.display())))?;
+        if let Err(e) = laft_build::unpack_normalized_tarball(&archive, &staging) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(Failure::new(
+                exit::FAILURE,
+                format!("{}: {e}", dir.display()),
+            ));
+        }
+        if let Err(e) = fs::rename(&staging, &dir) {
+            let _ = fs::remove_dir_all(&staging);
+            if !dir.join("recipes").is_dir() {
+                return Err(Failure::new(
+                    exit::FAILURE,
+                    format!("{}: {e}", dir.display()),
+                ));
+            }
+        }
         self.built.bytes += source.snapshot.size;
         Ok(())
     }
