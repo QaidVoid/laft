@@ -411,16 +411,19 @@ fn canonical_text(c: &OptionConstraint) -> String {
 
 /// Whether `meta` satisfies `dep`: by its version and options for a
 /// dependency on its own name, by replacing the name for a dependency on
-/// another name, and by its provides otherwise.
+/// another name, whose option constraints must hold on the replacer, and
+/// by its provides otherwise.
 fn satisfies(meta: &Meta, dep: &Dep) -> bool {
     match dep {
         Dep::Pkg(name, req, opts) if *name == meta.name => {
             req.matches(&meta.version, meta.rev) && constraints_hold(&meta.options, opts)
         }
-        Dep::Pkg(name, _, _) => meta
-            .replaces
-            .iter()
-            .any(|r| matches!(r, Dep::Pkg(replaced, _, _) if replaced == name)),
+        Dep::Pkg(name, _, opts) => {
+            meta.replaces
+                .iter()
+                .any(|r| matches!(r, Dep::Pkg(replaced, _, _) if replaced == name))
+                && constraints_hold(&meta.options, opts)
+        }
         _ => provides(meta, dep),
     }
 }
@@ -1676,6 +1679,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         let accept = |c: &Candidate<'a>| satisfies(c.meta, dep) && self.allowed(to, c);
         if let Some((candidate, kept)) = self.ctx.best(to, accept, true)? {
             self.select(candidate, vec![reason], kept);
+            self.required.entry(to).or_default().push(dep);
             return Ok(());
         }
         let error = ErrorKind::Unsatisfied {

@@ -1165,6 +1165,32 @@ fn prefixed_request_for_a_replaced_name_names_the_replacer() {
 }
 
 #[test]
+fn a_renamed_dependency_checks_its_option_constraints() {
+    let core = index(
+        "core",
+        vec![
+            pkg("bar 2")
+                .options(&[("vaapi", "intel")])
+                .replaces(&["foo"]),
+            pkg("app 1").depends(&["foo{vaapi=amd}"]),
+        ],
+    );
+    assert_eq!(code(resolve_core(&core, &["app"], &[])), "S003");
+
+    let core = index(
+        "core",
+        vec![
+            pkg("bar 2")
+                .options(&[("vaapi", "intel")])
+                .replaces(&["foo"]),
+            pkg("app 1").depends(&["foo{vaapi=intel}"]),
+        ],
+    );
+    let r = resolve_core(&core, &["app"], &[]).unwrap();
+    assert_eq!(labels(&r), ["app 1-r1", "bar 2-r1"]);
+}
+
+#[test]
 fn dependency_on_a_replaced_name_follows_the_rename() {
     let core = index(
         "core",
