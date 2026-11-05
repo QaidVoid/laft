@@ -30,7 +30,7 @@ mod trigger;
 mod variant;
 mod version;
 
-pub use account::{system_gid, system_uid};
+pub use account::{system_accounts, system_gid, system_uid};
 pub use boot_state::{
     BOOT_STATE_VERSION, BootEvent, BootEventKind, BootState, BootStateError, BootTrial,
     MAX_BOOT_EVENTS,

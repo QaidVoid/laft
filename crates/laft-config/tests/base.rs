@@ -5,7 +5,7 @@ mod support;
 use std::collections::BTreeSet;
 
 use laft_config::RundirOwner;
-use laft_core::{system_gid, system_uid};
+use laft_core::{system_accounts, system_gid, system_uid};
 use laft_svc::{
     ACTIVATE, BOOT_COMPLETE, EARLY, ETC_INPUTS, OnChange, ServiceKind, ServiceSet, TURNSTILED,
 };
@@ -78,6 +78,20 @@ fn every_static_account_is_declared_with_its_fixed_id() {
         assert_eq!(group.gid, system_gid(name), "group {name}");
     }
     assert_eq!((users.accounts.len(), users.groups.len()), (14, 34));
+    let mut declared: Vec<&str> = users
+        .accounts
+        .keys()
+        .chain(users.groups.keys())
+        .map(String::as_str)
+        .collect();
+    declared.sort_unstable();
+    declared.dedup();
+    let mut registry: Vec<&str> = system_accounts().collect();
+    registry.sort_unstable();
+    assert_eq!(
+        declared, registry,
+        "base.stav declares exactly the registry accounts"
+    );
     assert_eq!(users.accounts["nobody"].group.as_deref(), Some("nogroup"));
     assert_eq!(users.accounts["root"].home.as_deref(), Some("/root"));
 }

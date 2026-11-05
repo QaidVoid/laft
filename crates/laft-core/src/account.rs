@@ -74,6 +74,16 @@ pub fn system_gid(name: &str) -> Option<u32> {
     lookup(name, Kind::Group)
 }
 
+/// The names of every account in the static system account registry,
+/// users and groups alike.
+///
+/// ```
+/// assert!(laft_core::system_accounts().any(|name| name == "root"));
+/// ```
+pub fn system_accounts() -> impl Iterator<Item = &'static str> {
+    REGISTRY.iter().map(|&(name, _, _)| name)
+}
+
 fn lookup(name: &str, wanted: Kind) -> Option<u32> {
     REGISTRY
         .iter()
