@@ -7,6 +7,7 @@ use std::net::TcpStream;
 /// directory that must outlive it.
 struct Fixture {
     addr: std::net::SocketAddr,
+    root: std::path::PathBuf,
     _dir: laft_test::TempDir,
 }
 
@@ -19,7 +20,11 @@ impl Fixture {
         let server = Serve::bind(&root, Some("127.0.0.1:0")).expect("the server binds");
         let addr = server.addr();
         thread::spawn(move || server.run(true));
-        Self { addr, _dir: dir }
+        Self {
+            addr,
+            root,
+            _dir: dir,
+        }
     }
 
     /// Sends a raw request and reads the whole answer.
@@ -147,6 +152,76 @@ fn methods_that_are_not_get_or_head_are_refused() {
     let answer = fx.ask("PUT /pool.txt HTTP/1.1\r\n\r\nhello");
     assert_eq!(Fixture::status(&answer), "HTTP/1.1 405 Method Not Allowed");
     assert!(Fixture::body(&answer).is_empty());
+}
+
+#[test]
+fn methods_are_case_sensitive() {
+    let fx = Fixture::start();
+    let answer = fx.ask("get /pool.txt HTTP/1.1\r\n\r\n");
+    assert_eq!(Fixture::status(&answer), "HTTP/1.1 405 Method Not Allowed");
+}
+
+#[test]
+fn the_last_bytes_of_a_file_are_served_for_a_suffix_range() {
+    let fx = Fixture::start();
+    let answer = fx.ask("GET /pool.txt HTTP/1.1\r\nRange: bytes=-5\r\n\r\n");
+    assert_eq!(
+        Fixture::status(&answer),
+        "HTTP/1.1 206 Partial Content",
+        "{}",
+        String::from_utf8_lossy(&answer)
+    );
+    assert_eq!(
+        Fixture::header(&answer, "content-range"),
+        Some("bytes 6-10/11")
+    );
+    assert_eq!(Fixture::body(&answer), b"world");
+    let answer = fx.ask("GET /pool.txt HTTP/1.1\r\nRange: bytes=-0\r\n\r\n");
+    assert_eq!(
+        Fixture::status(&answer),
+        "HTTP/1.1 416 Range Not Satisfiable"
+    );
+}
+
+#[test]
+fn only_regular_files_are_served() {
+    let fx = Fixture::start();
+    std::os::unix::fs::symlink("/etc/hostname", fx.root.join("outside")).expect("linked");
+    std::os::unix::fs::symlink("pool.txt", fx.root.join("inside")).expect("linked");
+    for target in ["/outside", "/inside"] {
+        let answer = fx.ask(format!("GET {target} HTTP/1.1\r\n\r\n").as_str());
+        assert_ne!(
+            Fixture::status(&answer),
+            "HTTP/1.1 200 OK",
+            "{target} is a symlink and is not served"
+        );
+    }
+}
+
+#[test]
+fn too_many_header_lines_are_refused() {
+    let fx = Fixture::start();
+    let headers: String = (0..100).map(|i| format!("X-{i}: y\r\n")).collect();
+    let answer = fx.ask(format!("GET /pool.txt HTTP/1.1\r\n{headers}\r\n").as_str());
+    assert_eq!(Fixture::status(&answer), "HTTP/1.1 400 Bad Request");
+}
+
+#[test]
+fn a_line_that_is_too_long_is_refused() {
+    let fx = Fixture::start();
+    let long = format!("X: {}a\r\n", "a".repeat(MAX_HEADER));
+    let answer = fx.ask(format!("GET /pool.txt HTTP/1.1\r\n{long}\r\n").as_str());
+    assert_eq!(Fixture::status(&answer), "HTTP/1.1 400 Bad Request");
+    let mut stream = TcpStream::connect(fx.addr).expect("the server is listening");
+    stream.write_all(b"GET /").expect("sent");
+    let rest = vec![b'a'; MAX_HEADER + 1];
+    stream.write_all(&rest).expect("sent");
+    stream.shutdown(std::net::Shutdown::Write).expect("closed");
+    let mut answer = Vec::new();
+    stream
+        .read_to_end(&mut answer)
+        .expect("the connection closes");
+    assert_eq!(Fixture::status(&answer), "HTTP/1.1 400 Bad Request");
 }
 
 #[test]

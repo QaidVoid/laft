@@ -1,18 +1,25 @@
 //! A read-only HTTP file server for the local repository, behind
 //! `laft repo serve`.
 //!
-//! The server answers `GET` and `HEAD` for the files under the repository
-//! directory and nothing else: it accepts no uploads, lists no directories
-//! and follows no paths outside the root. Partial downloads resume, because
-//! every range request of the form `bytes=<n>-` is answered with the rest
-//! of the file. Each connection serves one request, and every response is
-//! sent with `Connection: close`, which every client of a repository
-//! understands.
+//! The server answers `GET` and `HEAD` for regular files under the
+//! repository directory and nothing else: it accepts no uploads, lists no
+//! directories, follows no paths outside the root and no symlink under
+//! it. A client cannot make it buffer without bound: lines are read with
+//! a fixed cap, the headers are counted, connections pause at most half
+//! a minute between bytes in each direction, and at most sixty-four are
+//! served at the same time. Partial downloads resume, because every range
+//! request of the form `bytes=<n>-` or `bytes=-<n>` is answered. Each
+//! connection serves one request, and every response is sent with
+//! `Connection: close`, which every client of a repository understands.
 
-use std::io::{BufRead, BufReader, Write};
+use std::fs;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
+use std::time::Duration;
 
 use crate::failure::{Failure, exit};
 
@@ -21,6 +28,15 @@ const DEFAULT_LISTEN: &str = "127.0.0.1:7979";
 
 /// The largest request line or header the server reads.
 const MAX_HEADER: usize = 8 * 1024;
+
+/// The most header lines one request may hold.
+const MAX_HEADERS: usize = 64;
+
+/// The most connections the server serves at the same time.
+const MAX_CONNECTIONS: usize = 64;
+
+/// How long one connection may pause between bytes, in each direction.
+const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The read-only file server of a local repository.
 pub(crate) struct Serve {
@@ -59,17 +75,29 @@ impl Serve {
     }
 
     /// Answers requests until the process is stopped. Unless `quiet`, every
-    /// request is reported on standard error.
+    /// request is reported on standard error. At most [`MAX_CONNECTIONS`]
+    /// connections are served at the same time; the rest are closed
+    /// without an answer.
     pub(crate) fn run(self, quiet: bool) {
         let Self { root, listener } = self;
-        let root = std::sync::Arc::from(root);
+        let root = Arc::from(root);
+        let live = Arc::new(AtomicUsize::new(0));
         for stream in listener.incoming().flatten() {
-            let root = std::sync::Arc::clone(&root);
+            if live.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
+                continue;
+            }
+            live.fetch_add(1, Ordering::Relaxed);
+            let live = Arc::clone(&live);
+            let _ = stream.set_read_timeout(Some(TIMEOUT));
+            let _ = stream.set_write_timeout(Some(TIMEOUT));
+            let _ = stream.set_nodelay(true);
+            let root = Arc::clone(&root);
             thread::spawn(move || {
                 let line = handle(stream, &root);
                 if !quiet {
                     eprintln!("{line}");
                 }
+                live.fetch_sub(1, Ordering::Relaxed);
             });
         }
     }
@@ -93,15 +121,37 @@ fn handle(stream: TcpStream, root: &Path) -> String {
     format!("{peer} {line}")
 }
 
-/// Reads one request, serves it and returns its log line.
-fn request(reader: &mut BufReader<TcpStream>, root: &Path) -> Result<String, Status> {
-    let mut line = String::new();
-    reader
-        .read_line(&mut line)
+/// Reads one line of at most [`MAX_HEADER`] bytes, so that a client
+/// cannot make the server buffer without bound.
+fn read_line(reader: &mut BufReader<TcpStream>) -> Result<String, Status> {
+    let mut buf = Vec::new();
+    (&mut *reader)
+        .take(MAX_HEADER as u64 + 1)
+        .read_until(b'\n', &mut buf)
         .map_err(|_| Status::BadRequest)?;
-    if line.len() > MAX_HEADER {
+    if buf.len() > MAX_HEADER || buf.last() != Some(&b'\n') {
         return Err(Status::BadRequest);
     }
+    String::from_utf8(buf).map_err(|_| Status::BadRequest)
+}
+
+/// The request target as it may be logged: every control character is
+/// escaped, so that a client cannot forge log lines.
+fn clean(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_control() {
+            out.push_str(&format!("\\x{:02x}", character as u32));
+        } else {
+            out.push(character);
+        }
+    }
+    out
+}
+
+/// Reads one request, serves it and returns its log line.
+fn request(reader: &mut BufReader<TcpStream>, root: &Path) -> Result<String, Status> {
+    let line = read_line(reader)?;
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or_default().to_owned();
     let target = parts.next().unwrap_or_default().to_owned();
@@ -109,16 +159,12 @@ fn request(reader: &mut BufReader<TcpStream>, root: &Path) -> Result<String, Sta
         return Err(Status::BadRequest);
     }
     let mut range = None;
-    loop {
-        let mut header = String::new();
-        reader
-            .read_line(&mut header)
-            .map_err(|_| Status::BadRequest)?;
-        if header.len() > MAX_HEADER {
-            return Err(Status::BadRequest);
-        }
+    let mut ended = false;
+    for _ in 0..MAX_HEADERS {
+        let header = read_line(reader)?;
         let trimmed = header.trim();
         if trimmed.is_empty() {
+            ended = true;
             break;
         }
         if let Some((name, value)) = trimmed.split_once(':')
@@ -127,8 +173,11 @@ fn request(reader: &mut BufReader<TcpStream>, root: &Path) -> Result<String, Sta
             range = Some(value.trim().to_owned());
         }
     }
-    let head = method.eq_ignore_ascii_case("HEAD");
-    if !head && !method.eq_ignore_ascii_case("GET") {
+    if !ended {
+        return Err(Status::BadRequest);
+    }
+    let head = method == "HEAD";
+    if !head && method != "GET" {
         return Err(Status::MethodNotAllowed);
     }
     let path = resolve(root, &target)?;
@@ -141,26 +190,28 @@ fn request(reader: &mut BufReader<TcpStream>, root: &Path) -> Result<String, Sta
     match range {
         None => {
             respond(stream, Status::Ok, &bytes, head)?;
-            Ok(format!("{target} 200 {}", bytes.len()))
+            Ok(format!("{} 200 {}", clean(&target), bytes.len()))
         }
         Some(range) => match slice(&bytes, &range) {
             Some((first, last)) => {
                 let body = &bytes[first..=last];
                 let extra = format!("Content-Range: bytes {first}-{last}/{}\r\n", bytes.len());
                 respond_with(stream, Status::PartialContent, &extra, body, head)?;
-                Ok(format!("{target} 206 {first}-{last}"))
+                Ok(format!("{} 206 {first}-{last}", clean(&target)))
             }
             None => {
                 let extra = format!("Content-Range: bytes */{}\r\n", bytes.len());
                 respond_with(stream, Status::RangeNotSatisfiable, &extra, &[], head)?;
-                Ok(format!("{target} 416 {range}"))
+                Ok(format!("{} 416 {}", clean(&target), clean(&range)))
             }
         },
     }
 }
 
 /// The file under `root` that `target` names, or an error status. Percent
-/// escapes are decoded, and a target that leaves `root` is refused.
+/// escapes are decoded, a target that leaves `root` is refused, and every
+/// component must be a directory or a regular file of its own, so no
+/// symlink under the tree is ever followed.
 fn resolve(root: &Path, target: &str) -> Result<PathBuf, Status> {
     let path = target.split('?').next().unwrap_or(target);
     let path = percent_decode(path);
@@ -171,12 +222,22 @@ fn resolve(root: &Path, target: &str) -> Result<PathBuf, Status> {
     let mut file = root.to_path_buf();
     for part in Path::new(path).components() {
         match part {
-            Component::Normal(part) => file.push(part),
+            Component::Normal(part) => {
+                file.push(part);
+                let meta = file.symlink_metadata().map_err(|_| Status::NotFound)?;
+                if meta.file_type().is_symlink() {
+                    return Err(Status::Forbidden);
+                }
+            }
             Component::CurDir => {}
             _ => return Err(Status::Forbidden),
         }
     }
-    Ok(file)
+    match fs::symlink_metadata(&file) {
+        Ok(meta) if meta.is_file() => Ok(file),
+        Ok(_) => Err(Status::Forbidden),
+        Err(_) => Err(Status::NotFound),
+    }
 }
 
 /// Decodes every `%XX` escape of `text`.
@@ -200,10 +261,18 @@ fn percent_decode(text: &str) -> String {
 }
 
 /// The first and last byte of the slice that `range` names, such as
-/// `bytes=2-` or `bytes=2-7`.
+/// `bytes=2-`, `bytes=2-7` or `bytes=-5` for the last five bytes.
 fn slice(bytes: &[u8], range: &str) -> Option<(usize, usize)> {
     let spec = range.trim().strip_prefix("bytes=")?.trim();
     let (first, last) = spec.split_once('-')?;
+    if first.trim().is_empty() {
+        let count: usize = last.trim().parse().ok()?;
+        if count == 0 || bytes.is_empty() {
+            return None;
+        }
+        let count = count.min(bytes.len());
+        return Some((bytes.len() - count, bytes.len() - 1));
+    }
     let first: usize = first.trim().parse().ok()?;
     let last = if last.trim().is_empty() {
         bytes.len().checked_sub(1)?
