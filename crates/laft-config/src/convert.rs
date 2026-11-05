@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use laft_activate::{BootConfig, EtcConfig, Fs, Group};
-use laft_core::{Name, PkgRef, Variant};
+use laft_core::{Name, PkgRef, Variant, is_valid_name};
 use laft_index::PublicKey;
 use laft_resolve::Request;
 use laft_store::GcPolicy;
@@ -542,6 +542,18 @@ pub(crate) fn repos(cx: &Cx<'_>, found: &mut Vec<FileDiagnostic>) -> BTreeMap<Na
                 "C0804",
                 &["system", "repos", label, "profile"],
                 format!("repo {label}: {e}"),
+            ));
+        }
+        if let Some(Ok(name)) = &profile
+            && !is_valid_name(name.as_str())
+        {
+            found.push(cx.error(
+                "C0804",
+                &["system", "repos", label, "profile"],
+                format!(
+                    "repo {label}: the profile {name} is not written like an option name, \
+                     which the index of the profile requires"
+                ),
             ));
         }
         if found.len() != errors {

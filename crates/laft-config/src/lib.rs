@@ -459,7 +459,13 @@ pub fn repos(root_dir: &Path) -> Result<BTreeMap<Name, Repo>, Report> {
     })?;
     let cx = convert::Cx::new(&checked, &evaluated);
     let mut found = Vec::new();
-    Ok(convert::repos(&cx, &mut found))
+    let repos = convert::repos(&cx, &mut found);
+    let report = evaluated.diagnostics(found);
+    if report.has_errors() {
+        Err(report)
+    } else {
+        Ok(repos)
+    }
 }
 
 /// The schema of the system configuration: the types of the prelude,
