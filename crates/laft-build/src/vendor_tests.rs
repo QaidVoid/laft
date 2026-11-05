@@ -154,6 +154,39 @@ fn an_entry_outside_the_root_is_refused() {
     assert!(!dir.path().join("escape").exists(), "nothing escapes");
 }
 
+#[test]
+fn a_control_character_in_a_path_is_refused() {
+    let dir = laft_test::tempdir();
+    let tarball = pack(dir.path(), &[("recipes/a/\u{7}file.rs", b"no")]);
+    let dest = dir.path().join("out");
+    let error = unpack_normalized_tarball(&tarball, &dest).unwrap_err();
+    assert!(
+        error.to_string().contains("not a plain relative path"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_file_does_not_follow_a_symlink_planted_at_its_path() {
+    let dir = laft_test::tempdir();
+    let tarball = pack(dir.path(), &[("recipes/a/file.rs", b"real")]);
+    let dest = dir.path().join("out");
+    fs::create_dir_all(dest.join("recipes/a")).unwrap();
+    std::os::unix::fs::symlink(dir.path().join("victim"), dest.join("recipes/a/file.rs")).unwrap();
+    unpack_normalized_tarball(&tarball, &dest).expect("the file is written");
+    assert!(
+        fs::symlink_metadata(dest.join("recipes/a/file.rs"))
+            .unwrap()
+            .file_type()
+            .is_file(),
+        "the planted symlink is replaced"
+    );
+    assert!(
+        !dir.path().join("victim").exists(),
+        "the symlink is not followed"
+    );
+}
+
 /// A tar.zst of `files` at `dir/v.tar.zst`.
 fn pack(dir: &Path, files: &[(&str, &[u8])]) -> PathBuf {
     let raw = dir.join("plain.tar");

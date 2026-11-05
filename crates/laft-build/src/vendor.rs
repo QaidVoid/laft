@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -151,6 +152,9 @@ pub fn unpack_normalized_tarball(archive: &Path, dest: &Path) -> Result<(), Buil
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent).map_err(io(parent))?;
                 }
+                // `remove_file` first, so `create` never writes through a
+                // symlink planted at the target.
+                let _ = fs::remove_file(&target);
                 let mut out = File::create(&target).map_err(io(&target))?;
                 std::io::copy(&mut entry, &mut out).map_err(io(&target))?;
                 out.sync_all().map_err(io(&target))?;
@@ -189,12 +193,18 @@ pub fn unpack_normalized_tarball(archive: &Path, dest: &Path) -> Result<(), Buil
 }
 
 /// The plain relative path of `path`, or `None` when it is absolute,
-/// holds a component that leaves the root, or is empty.
+/// holds a component that leaves the root, holds a control character, or
+/// is empty.
 fn plain_rel(path: &Path) -> Option<PathBuf> {
     let mut out = PathBuf::new();
     for part in path.components() {
         match part {
-            std::path::Component::Normal(part) => out.push(part),
+            std::path::Component::Normal(part) => {
+                if part.as_bytes().iter().any(|b| *b < 0x20 || *b == 0x7f) {
+                    return None;
+                }
+                out.push(part);
+            }
             std::path::Component::CurDir => {}
             _ => return None,
         }
