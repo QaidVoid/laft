@@ -40,6 +40,7 @@
 //! the real, effective and saved ids, and the hook that sets up a sandbox
 //! between `fork` and `exec`, each with the reason it is sound next to it.
 
+mod as_user;
 mod enter;
 mod error;
 mod fixed;
@@ -51,6 +52,7 @@ mod sys;
 #[cfg(test)]
 mod test_support;
 
+pub use as_user::run_as;
 pub use enter::{enter_view, private_mount_namespace};
 pub use error::Error;
 pub use fixed::{FixedSandbox, NOBODY};
