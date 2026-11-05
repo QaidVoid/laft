@@ -102,3 +102,89 @@ fn entries_are_sorted_and_normalized() {
         ]
     );
 }
+
+#[test]
+fn a_normalized_tarball_unpacks_to_the_same_tree() {
+    let dir = laft_test::tempdir();
+    let root = tree(dir.path(), 0o755);
+    let raw = dir.path().join("v.tar");
+    normalized_tarball(&root, &raw).unwrap();
+    let tarball = dir.path().join("v.tar.zst");
+    let mut bytes = Vec::new();
+    {
+        let mut writer = zstd::stream::write::Encoder::new(&mut bytes, 3).unwrap();
+        std::io::copy(&mut File::open(&raw).unwrap(), &mut writer).unwrap();
+        writer.finish().unwrap();
+    }
+    std::fs::write(&tarball, &bytes).unwrap();
+    let dest = dir.path().join("out");
+    unpack_normalized_tarball(&tarball, &dest).unwrap();
+    let alias = fs::read_link(dest.join("b/alias.rs")).unwrap();
+    assert_eq!(alias.to_string_lossy(), "lib.rs");
+    assert_eq!(fs::read_to_string(dest.join("b/lib.rs")).unwrap(), "lib");
+    let mode = crate::test_support::mode(&dest.join("a/build.sh"));
+    assert_eq!(mode & 0o777, 0o755, "the executable bit survives");
+    assert_eq!(
+        fs::read_to_string(dest.join("a/build.sh")).unwrap(),
+        "#!/bin/sh"
+    );
+    assert!(
+        dest.join(format!("deep/{}/file.rs", "x".repeat(150)))
+            .is_file()
+    );
+}
+
+#[test]
+fn an_entry_outside_the_root_is_refused() {
+    let dir = laft_test::tempdir();
+    let tarball = pack(
+        dir.path(),
+        &[
+            ("recipes/a/package.stav", b"package a {}"),
+            ("../escape", b"no"),
+        ],
+    );
+    let dest = dir.path().join("out");
+    let error = unpack_normalized_tarball(&tarball, &dest).unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains("cannot be read") || message.contains("../escape"),
+        "{message}"
+    );
+    assert!(!dir.path().join("escape").exists(), "nothing escapes");
+}
+
+/// A tar.zst of `files` at `dir/v.tar.zst`.
+fn pack(dir: &Path, files: &[(&str, &[u8])]) -> PathBuf {
+    let raw = dir.join("plain.tar");
+    {
+        let file = File::create(&raw).unwrap();
+        let mut builder = tar::Builder::new(file);
+        for (name, content) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            if *name == "../escape" {
+                // `set_path` refuses paths that leave the root, so the
+                // name goes into the header field directly, like a
+                // hand-written archive would hold it.
+                let field = &mut header.as_gnu_mut().unwrap().name;
+                field[..name.len()].copy_from_slice(name.as_bytes());
+                builder.append(&header, *content).unwrap();
+            } else {
+                builder.append_data(&mut header, name, *content).unwrap();
+            }
+        }
+        builder.into_inner().unwrap().sync_all().unwrap();
+    }
+    let mut bytes = Vec::new();
+    {
+        let mut writer = zstd::stream::write::Encoder::new(&mut bytes, 3).unwrap();
+        std::io::copy(&mut File::open(&raw).unwrap(), &mut writer).unwrap();
+        writer.finish().unwrap();
+    }
+    let packed = dir.join("v.tar.zst");
+    std::fs::write(&packed, &bytes).unwrap();
+    packed
+}

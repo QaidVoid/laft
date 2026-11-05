@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
-use std::io::BufWriter;
+use std::io::{BufReader, BufWriter};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -106,6 +106,120 @@ pub fn normalized_tarball(dir: &Path, file: &Path) -> Result<(), BuildError> {
 /// directory, which never belongs into a reproducible archive.
 fn vcs(rel: &str) -> bool {
     rel.split('/').any(|part| part == ".git" || part == ".jj")
+}
+
+/// Unpacks the normalized tarball at `archive` into `dest`, which is
+/// created. The inverse of [`normalized_tarball`] for a `.tar` file, and
+/// the client side of a recipe snapshot: the recipe repository that
+/// produced an index generation, unpacked for builds to evaluate.
+///
+/// Only plain relative paths inside `dest` are written: directories,
+/// regular files with their recorded mode, and relative symlinks that
+/// stay below `dest`. Entries outside it, absolute paths, device files
+/// and other kinds are refused.
+///
+/// # Errors
+///
+/// Fails when the archive cannot be read, an entry would leave `dest`, or
+/// a file cannot be written.
+pub fn unpack_normalized_tarball(archive: &Path, dest: &Path) -> Result<(), BuildError> {
+    fs::create_dir_all(dest).map_err(io(dest))?;
+    let file = File::open(archive).map_err(io(archive))?;
+    let reader = zstd::stream::read::Decoder::new(BufReader::new(file))
+        .map_err(|e| BuildError::problem("B024", format!("{}: {e}", archive.display())))?;
+    let mut tar = tar::Archive::new(reader);
+    let entries = tar.entries().map_err(|e| refused_io(archive, e))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| refused_io(archive, e))?;
+        let raw = entry
+            .path()
+            .map_err(|e| refused_io(archive, e))?
+            .into_owned();
+        let plain = plain_rel(&raw).ok_or_else(|| {
+            refused(
+                archive,
+                &raw.to_string_lossy(),
+                "the path is not a plain relative path",
+            )
+        })?;
+        let target = dest.join(&plain);
+        match entry.header().entry_type() {
+            tar::EntryType::Directory => {
+                fs::create_dir_all(&target).map_err(io(&target))?;
+            }
+            tar::EntryType::Regular | tar::EntryType::Continuous => {
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).map_err(io(parent))?;
+                }
+                let mut out = File::create(&target).map_err(io(&target))?;
+                std::io::copy(&mut entry, &mut out).map_err(io(&target))?;
+                out.sync_all().map_err(io(&target))?;
+                let mode = entry.header().mode().map_err(|e| refused_io(archive, e))?;
+                fs::set_permissions(&target, fs::Permissions::from_mode(mode & 0o777))
+                    .map_err(io(&target))?;
+            }
+            tar::EntryType::Symlink => {
+                let link = entry
+                    .link_name()
+                    .map_err(|e| refused_io(archive, e))?
+                    .unwrap_or_default()
+                    .into_owned();
+                if plain_rel(Path::new(&link)).is_none() {
+                    return Err(refused(
+                        archive,
+                        &raw.to_string_lossy(),
+                        "the symlink target is not a plain relative path",
+                    ));
+                }
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).map_err(io(parent))?;
+                }
+                std::os::unix::fs::symlink(&link, &target).map_err(io(&target))?;
+            }
+            other => {
+                return Err(refused(
+                    archive,
+                    &raw.to_string_lossy(),
+                    format!("which is a {other:?} entry"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The plain relative path of `path`, or `None` when it is absolute,
+/// holds a component that leaves the root, or is empty.
+fn plain_rel(path: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::Normal(part) => out.push(part),
+            std::path::Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    if out.as_os_str().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+/// A `B024` problem about `archive` that cannot be read.
+fn refused_io(archive: &Path, error: impl std::fmt::Display) -> BuildError {
+    BuildError::problem(
+        "B024",
+        format!("{} cannot be read: {error}", archive.display()),
+    )
+}
+
+/// A `B024` problem about `entry` of `archive`.
+fn refused(archive: &Path, entry: &str, reason: impl std::fmt::Display) -> BuildError {
+    BuildError::problem(
+        "B024",
+        format!("{} holds {entry}, {reason}", archive.display()),
+    )
 }
 
 /// The command that vendors the dependencies of `vendor` into

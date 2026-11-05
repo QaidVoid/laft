@@ -192,7 +192,7 @@ pub use stage::{
     Install, Place, Stage, StageEvent, StageOptions, StageState, Step, Work, run_stage,
 };
 pub use target::{ARCH, CPU, GNU_TRIPLE, MUSL_TRIPLE, SYSROOT, Target};
-pub use vendor::normalized_tarball;
+pub use vendor::{normalized_tarball, unpack_normalized_tarball};
 
 /// Diagnostics about Stav files, with the names and texts of the files
 /// they point at, ready for a front end to render.
