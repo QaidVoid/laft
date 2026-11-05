@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+use std::path::Path;
+
 use super::*;
 use crate::Config;
 use crate::test_support::{
@@ -66,6 +69,69 @@ fn cache_failure(synced: &Synced) -> &Error {
         Source::Cache { failure } => failure,
         Source::Mirror { base, .. } => panic!("expected the cache, got {base}"),
     }
+}
+
+/// Publishes the base index of `core` and, below `profiles/stable/`, the
+/// index of that profile, like the repository tool lays a repository out.
+fn publish_profile(root: &TestKey, dir: &Path) -> String {
+    let mut profile = index(T0);
+    profile.profile = Some(laft_index::ProfileMember {
+        name: "stable".to_owned(),
+        values: BTreeMap::from([(
+            "hello".parse().expect("valid name"),
+            BTreeMap::from([("llvm".to_owned(), laft_core::OptionValue::Bool(true))]),
+        )]),
+    });
+    profile.options = BTreeMap::from([(
+        "hello".parse().expect("valid name"),
+        vec![laft_index::OptionDecl {
+            name: "llvm".to_owned(),
+            kind: laft_index::OptionType::Bool("bool".to_owned()),
+            default: laft_core::OptionValue::Bool(false),
+            doc: "Link against LLVM".to_owned(),
+        }],
+    )]);
+    let mut files = publish(root, None, &index(T0));
+    let prefix = format!("{CHANNEL}/profiles/stable");
+    let bytes = profile.encode().expect("the sample profile index is valid");
+    let signature = root.sign(&bytes, &profile.comment().to_string());
+    let snapshot = format!("{prefix}/snapshots/{}.json.zst", profile.generation);
+    files.insert(format!("{snapshot}.minisig"), signature.clone());
+    files.insert(snapshot, bytes.clone());
+    files.insert(format!("{prefix}/index.json.zst.minisig"), signature);
+    files.insert(format!("{prefix}/index.json.zst"), bytes);
+    write_tree(dir, &files);
+    format!("file://{}", Path::new(dir).display())
+}
+
+#[test]
+fn a_profile_repository_syncs_its_own_index() {
+    let root = TestKey::generate();
+    let dir = laft_test::tempdir();
+    let url = publish_profile(&root, dir.path());
+    let mut client = Client::new(&root);
+    client.repo.profile = Some("stable".parse().expect("valid name"));
+    let synced = client.sync(&[url]).expect("the profile index syncs");
+    assert_eq!(
+        synced.index.record.profile.as_ref().map(|p| p.as_str()),
+        Some("stable")
+    );
+    assert_eq!(
+        synced.index.index.profile.as_ref().map(|p| p.name.as_str()),
+        Some("stable")
+    );
+    let cached = client.fetcher.config().cache.join(format!(
+        "index/core/{CHANNEL}/profiles/stable/index.json.zst"
+    ));
+    assert_eq!(
+        std::fs::read(cached).expect("cached"),
+        std::fs::read(
+            dir.path()
+                .join(CHANNEL)
+                .join("profiles/stable/index.json.zst")
+        )
+        .expect("published")
+    );
 }
 
 #[test]

@@ -133,7 +133,13 @@ impl Fetcher {
             }
         }
         let repo = request.repo;
-        let what = format!("repo {} channel {}/{}", repo.name, repo.channel, repo.arch);
+        let what = match &repo.profile {
+            Some(profile) => format!(
+                "repo {} channel {}/{} profile {profile}",
+                repo.name, repo.channel, repo.arch
+            ),
+            None => format!("repo {} channel {}/{}", repo.name, repo.channel, repo.arch),
+        };
         match self.cached_index(request, trust.as_ref()) {
             Ok(index) => Ok(Synced {
                 index,
@@ -306,7 +312,7 @@ impl Fetcher {
             .index_records(&repo.name)
             .map_err(trust_error)?
             .into_iter()
-            .find(|r| r.channel == repo.channel && r.arch == repo.arch)
+            .find(|r| r.channel == repo.channel && r.arch == repo.arch && r.profile == repo.profile)
             .ok_or_else(|| Error::new(&url, ErrorKind::NotFound))?;
         let expected = record.blake3.ok_or_else(|| {
             let generation = record.generation;
@@ -358,8 +364,13 @@ impl Fetcher {
 }
 
 /// The directory of a channel's index, relative to the repository base.
+/// A repository that follows a profile serves its index below
+/// `profiles/<profile>`, which is where the publisher writes it.
 fn channel_dir(repo: &Repo) -> String {
-    format!("channels/{}/{}", repo.channel, repo.arch)
+    match &repo.profile {
+        Some(profile) => format!("channels/{}/{}/profiles/{profile}", repo.channel, repo.arch),
+        None => format!("channels/{}/{}", repo.channel, repo.arch),
+    }
 }
 
 fn trust_kind(error: &Error) -> Option<&laft_index::ErrorKind> {

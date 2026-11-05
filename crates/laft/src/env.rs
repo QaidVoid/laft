@@ -363,12 +363,15 @@ impl Env {
                 .collect();
             records.sort_by(|a, b| (&a.channel, &a.profile).cmp(&(&b.channel, &b.profile)));
             for record in records {
-                let path = cache
+                let mut path = cache
                     .join(name.as_str())
                     .join("channels")
                     .join(record.channel.as_str())
-                    .join(ARCH.as_str())
-                    .join("index.json.zst");
+                    .join(ARCH.as_str());
+                if let Some(profile) = &record.profile {
+                    path = path.join("profiles").join(profile.as_str());
+                }
+                let path = path.join("index.json.zst");
                 let Some(index) = cached_index(&path, record) else {
                     continue;
                 };
@@ -484,9 +487,16 @@ impl Env {
                     }
                 }
                 (_, _, None) => {
+                    let profile = match &repo.profile {
+                        Some(profile) => format!(" profile {profile}"),
+                        None => String::new(),
+                    };
                     return Err(Failure::new(
                         exit::NETWORK,
-                        format!("repo {name}: no index has been synced yet"),
+                        format!(
+                            "repo {name} channel {}/{ARCH}{profile}: no index has been synced yet",
+                            repo.channel
+                        ),
                     )
                     .hint("run `laft repo sync` as root"));
                 }
