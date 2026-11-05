@@ -47,11 +47,13 @@ mod gens;
 mod install;
 mod lang;
 mod live;
+mod local;
 mod plan;
 mod query;
 mod repo;
 mod report;
 mod resolve;
+mod serve;
 mod svc;
 mod tz;
 mod ui;
@@ -183,6 +185,8 @@ fn run(env: &Env, global: &cli::Global, command: Command) -> Result<u8, Failure>
         Command::Why { name, view, all } => query::why(env, &name, view.as_deref(), all),
         Command::Repo(RepoCommand::Sync { names }) => repo::sync(env, &names),
         Command::Repo(RepoCommand::List) => repo::list(env),
+        Command::Repo(RepoCommand::Serve { listen }) => repo::serve(env, listen.as_deref()),
+        Command::Repo(RepoCommand::Key { repository }) => repo::key(env, &repository),
         Command::Repo(RepoCommand::Reset { name }) => repo::reset(env, &name),
         Command::View(ViewCommand::List) => repo::view_list(env),
         Command::View(ViewCommand::Show { name }) => repo::view_show(env, &name),

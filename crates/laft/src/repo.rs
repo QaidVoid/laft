@@ -61,6 +61,48 @@ pub(crate) fn sync(env: &Env, wanted: &[String]) -> Result<u8, Failure> {
     Ok(0)
 }
 
+/// `laft repo serve`: serves the local repository read-only over HTTP.
+///
+/// This never returns: the process serves until it is stopped.
+pub(crate) fn serve(env: &Env, listen: Option<&str>) -> Result<u8, Failure> {
+    let root = env.root.path().join("laft/local");
+    let server = crate::serve::Serve::bind(&root, listen)?;
+    let addr = server.addr();
+    if env.ui.json {
+        env.ui.doc(serde_json::json!({
+            "repo": "local",
+            "root": root.display().to_string(),
+            "listen": addr.to_string(),
+        }));
+    } else {
+        env.ui
+            .note(format!("serving {} on http://{addr}", root.display()));
+    }
+    server.run(env.ui.quiet);
+    Ok(0)
+}
+
+/// `laft repo key local`: prints the public key of the local repository.
+pub(crate) fn key(env: &Env, repository: &str) -> Result<u8, Failure> {
+    if repository != "local" {
+        return Err(Failure::new(
+            exit::USAGE,
+            format!(
+                "no key of repository {repository} is kept on this machine; \
+                 only `laft repo key local` exists"
+            ),
+        ));
+    }
+    let key = crate::local::Local::of(env.root.path()).public_key()?;
+    if env.ui.json {
+        env.ui
+            .doc(serde_json::json!({"repo": "local", "key": key.to_string()}));
+    } else {
+        env.ui.out(key.to_string());
+    }
+    Ok(0)
+}
+
 /// `laft repo list`.
 pub(crate) fn list(env: &Env) -> Result<u8, Failure> {
     let loaded = env.load(&|_| Ok(()))?;

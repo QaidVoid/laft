@@ -394,7 +394,11 @@ impl Env {
         mode: SyncMode,
         lock: Option<&Lock>,
     ) -> Result<Vec<RepoIndex>, Failure> {
-        self.indexes_of(repos, mode, lock, &|_| true)
+        let mut out = self.indexes_of(repos, mode, lock, &|_| true)?;
+        if let Some(local) = crate::local::Local::of(self.root.path()).source()? {
+            out.push(local);
+        }
+        Ok(out)
     }
 
     /// As [`Self::indexes`], for the repositories `wanted` selects.

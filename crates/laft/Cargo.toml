@@ -24,6 +24,7 @@ laft-resolve.workspace = true
 laft-sandbox.workspace = true
 laft-store.workspace = true
 laft-svc.workspace = true
+minisign.workspace = true
 mimalloc.workspace = true
 rustix = { workspace = true, features = ["fs", "mount", "net", "process", "termios"] }
 serde = { workspace = true, features = ["derive"] }

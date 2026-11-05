@@ -457,6 +457,18 @@ pub(crate) enum RepoCommand {
     },
     /// List the configured repositories.
     List,
+    /// Serve the local repository read-only over HTTP.
+    Serve {
+        /// The address to listen on, like `127.0.0.1:7979`. Defaults to
+        /// `127.0.0.1:7979`.
+        #[arg(long, value_name = "ADDR")]
+        listen: Option<String>,
+    },
+    /// Print the public key of the local repository.
+    Key {
+        /// The repository. Only `local` has a key on this machine.
+        repository: String,
+    },
     /// Forget the accepted index and keys of a repository.
     Reset {
         /// The repository.

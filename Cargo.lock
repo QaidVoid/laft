@@ -547,6 +547,7 @@ dependencies = [
  "laft-svc",
  "laft-test",
  "mimalloc",
+ "minisign",
  "rustix",
  "serde",
  "serde_json",
