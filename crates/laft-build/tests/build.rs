@@ -1162,3 +1162,82 @@ fn the_check_phase_installs_nothing_into_the_packages() {
         panic!("the build fails: {e}");
     }
 }
+
+/// A build of an options recipe with its defaults and with each option
+/// changed: every option set is its own package with its own store id,
+/// and every package records the values it was built with.
+#[test]
+fn an_options_recipe_builds_every_option_set_into_its_own_package() {
+    for tool in ["bash", "mkdir", "printf"] {
+        if !Path::new("/usr/bin").join(tool).exists() && !Path::new("/bin").join(tool).exists() {
+            println!("skipping: {tool} is missing");
+            return;
+        }
+    }
+    let dir = laft_test::tempdir();
+    let repo = support::write_repo(
+        &dir.path().join("core"),
+        "core",
+        "",
+        &[
+            (
+                "recipes/optapp/options.stav",
+                "## How the daemon ships.\ntype Mode = safe | fast\n\nstruct Options {\n  ## The mode the daemon starts in.\n  mode: Mode = safe\n  ## Ship the extra command line tool.\n  tool: Bool = true\n}\n",
+            ),
+            (
+                "recipes/optapp/package.stav",
+                "import \"laft/options\" as opt\n\npackage optapp {\n  version = \"1.0\"\n  summary = \"The options package in #{opt.mode} mode\"\n  license = [MIT]\n  empty = true\n  build custom {}\n  phases {\n    install = \"mkdir -p \\\"$DESTDIR/usr/share/optapp\\\" && printf '%s\\n' \\\"#{opt.mode}\\\" > \\\"$DESTDIR/usr/share/optapp/mode\\\"\"\n  }\n}\n",
+            ),
+        ],
+    );
+    let repos = Repos::open(&[repo]).expect("the repository opens");
+    let name = support::name("optapp");
+    let config = Config {
+        offline: true,
+        ..Config::new(dir.path().join("cache"))
+    };
+
+    let mut builds = Vec::new();
+    for values in [
+        Vec::new(),
+        vec![("mode", laft_core::OptionValue::Tag("fast".to_owned()))],
+        vec![("tool", laft_core::OptionValue::Bool(false))],
+    ] {
+        let set: BTreeMap<String, laft_core::OptionValue> =
+            values.into_iter().map(|(n, v)| (n.to_owned(), v)).collect();
+        let recipe: Recipe = repos
+            .evaluate_with(&name, &set)
+            .expect("the option set evaluates")
+            .recipes
+            .remove(0);
+        let root = BuildRoot::new(dir.path().join(format!("root-{}", builds.len())));
+        let cache = SourceCache::new(root.sources(), Fetcher::new(config.clone()));
+        let builder = Builder::new(&repos, &cache, &root, Mode::Bootstrap("/".into()));
+        let inputs = builder.key_inputs(&recipe).unwrap();
+        let outcome = match builder.build(&recipe, &inputs, None) {
+            Ok(outcome) => outcome,
+            Err(e) => panic!("the build fails: {e}"),
+        };
+        builds.push((outcome, recipe));
+    }
+
+    let ids: Vec<_> = builds
+        .iter()
+        .map(|(outcome, _)| outcome.stored.record.outputs[&name])
+        .collect();
+    assert_eq!(ids.len(), 3);
+    assert_ne!(ids[0], ids[1], "mode=fast is another package");
+    assert_ne!(ids[0], ids[2], "tool=false is another package");
+    assert_ne!(ids[1], ids[2]);
+
+    for (index, (option, value)) in [("mode", "safe"), ("mode", "fast"), ("tool", "false")]
+        .into_iter()
+        .enumerate()
+    {
+        let (outcome, _) = &builds[index];
+        let (meta, _) = entries(&outcome.packages[0]);
+        let text = format!("{:?}", meta.options);
+        assert!(text.contains(option), "{text}");
+        assert!(text.contains(value), "{text}");
+    }
+}
