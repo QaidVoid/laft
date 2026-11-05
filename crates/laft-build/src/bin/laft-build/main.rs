@@ -36,7 +36,7 @@
 
 mod cli;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
@@ -51,7 +51,7 @@ use laft_build::{
     Recipe, Repos, RootLock, SourceCache, Stage, StageEvent, StageOptions, check_repro,
     record_repro, run_stage,
 };
-use laft_core::PkgRef;
+use laft_core::{Name, OptionValue, PkgRef};
 use laft_fetch::{Config, Fetcher};
 use serde_json::{Value, json};
 
@@ -130,6 +130,8 @@ struct Context {
     repos: Repos,
     cache: SourceCache,
     json: bool,
+    /// The option values `--set` gave, by package name.
+    set: BTreeMap<Name, BTreeMap<String, OptionValue>>,
 }
 
 fn run(cli: Cli) -> Result<(), Failure> {
@@ -191,6 +193,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
         repos,
         cache,
         json: cli.json,
+        set: sets(&cli.set)?,
     };
     match cli.command {
         Command::Eval { package } => eval(&cx, &package),
@@ -285,6 +288,30 @@ fn build_root(flag: Option<PathBuf>) -> Result<PathBuf, Failure> {
     absolute(&path)
 }
 
+/// The option values the `--set` arguments give, by package name.
+fn sets(texts: &[String]) -> Result<BTreeMap<Name, BTreeMap<String, OptionValue>>, Failure> {
+    let mut out: BTreeMap<Name, BTreeMap<String, OptionValue>> = BTreeMap::new();
+    for text in texts {
+        let bad = |reason: String| Failure::Usage(format!("--set {text}: {reason}"));
+        let Some((left, value)) = text.split_once('=') else {
+            return Err(bad("expected PKG.OPTION=VALUE".into()));
+        };
+        let Some((package, option)) = left.split_once('.') else {
+            return Err(bad("expected PKG.OPTION=VALUE".into()));
+        };
+        let package: Name = package
+            .parse()
+            .map_err(|e| bad(format!("the package is not a name: {e}")))?;
+        let value: OptionValue = value
+            .parse()
+            .map_err(|e| bad(format!("the value is not a bool or a tag: {e}")))?;
+        out.entry(package)
+            .or_default()
+            .insert(option.to_owned(), value);
+    }
+    Ok(out)
+}
+
 /// The recipes `texts` name, each `<name>` for every variant it builds or
 /// `<name>:<variant>` for one. Without any, every package's recipes.
 fn recipes(cx: &Context, texts: &[String]) -> Result<Vec<Recipe>, Failure> {
@@ -307,9 +334,10 @@ fn recipes(cx: &Context, texts: &[String]) -> Result<Vec<Recipe>, Failure> {
         let parsed = name
             .parse()
             .map_err(|e| Failure::Usage(format!("{name}: {e}")))?;
+        let values = cx.set.get(&parsed).cloned().unwrap_or_default();
         let evaluation = cx
             .repos
-            .evaluate(&parsed)
+            .evaluate_with(&parsed, &values)
             .map_err(|e| Failure::Usage(e.to_string()))?;
         let mut found: Vec<Recipe> = evaluation
             .recipes

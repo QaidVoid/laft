@@ -545,3 +545,89 @@ fn check_repro_checks_every_built_package_and_names_the_unchecked() {
         "{stderr}"
     );
 }
+
+/// A repository whose one package branches on a Bool option.
+fn options_repo(dir: &Path) -> String {
+    support::write_repo(
+        &dir.join("core"),
+        "core",
+        "",
+        &[
+            (
+                "recipes/optpkg/options.stav",
+                "## How the drivers are chosen.\ntype Drivers = all | amd\n\nstruct Options {\n  ## Build for every driver the hardware supports.\n  drivers: Drivers = all\n  ## Ship the extra command line tool.\n  tool: Bool = true\n}\n",
+            ),
+            (
+                "recipes/optpkg/package.stav",
+                "import \"laft/options\" as opt\n\npackage optpkg {\n  version = \"1.0\"\n  summary = if opt.tool { \"tools in\" } else { \"tools out\" }\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+            ),
+        ],
+    )
+    .to_str()
+    .expect("a UTF-8 path")
+    .to_owned()
+}
+
+#[test]
+fn a_set_option_changes_what_a_command_evaluates() {
+    let dir = laft_test::tempdir();
+    let recipes = options_repo(dir.path());
+    let run = |extra: &[&str]| {
+        let mut all = vec!["--recipes", &recipes];
+        all.extend_from_slice(extra);
+        without_recipes(dir.path(), &all)
+    };
+
+    let output = run(&["--json", "eval", "optpkg"]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value[0]["meta"]["summary"], "tools in");
+
+    let output = run(&["--set", "optpkg.tool=false", "--json", "eval", "optpkg"]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value[0]["meta"]["summary"], "tools out");
+    assert_eq!(value[0]["option_values"]["tool"], serde_json::json!(false));
+
+    let output = run(&["--set", "optpkg.tool=amd", "--json", "eval", "optpkg"]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("R073"), "{stderr}");
+}
+
+#[test]
+fn a_set_option_that_names_an_unknown_option_is_refused() {
+    let dir = laft_test::tempdir();
+    let recipes = options_repo(dir.path());
+    let output = without_recipes(
+        dir.path(),
+        &[
+            "--recipes",
+            &recipes,
+            "--set",
+            "optpkg.speed=false",
+            "--json",
+            "eval",
+            "optpkg",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("R073"), "{stderr}");
+
+    let output = without_recipes(
+        dir.path(),
+        &[
+            "--recipes",
+            &recipes,
+            "--set",
+            "optpkgtool=false",
+            "--json",
+            "eval",
+            "optpkg",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("PKG.OPTION=VALUE"), "{stderr}");
+}

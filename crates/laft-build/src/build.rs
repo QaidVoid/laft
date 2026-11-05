@@ -427,6 +427,40 @@ impl<'a> Builder<'a> {
         forced: &BTreeSet<Item>,
         use_published: &BTreeSet<Item>,
     ) -> Result<(BuildGraph, Schedule), BuildError> {
+        self.plan_inner(recipes, db, forced, use_published, false)
+            .map(|(graph, schedule, _)| (graph, schedule))
+    }
+
+    /// Plans like [`Self::plan`], but instead of failing when no recipe of
+    /// the run builds a dependency and no package in the store satisfies
+    /// it, returns those references together with the plan. The caller
+    /// decides how a reference is satisfied, for example by publishing a
+    /// package of that name or by building it from another snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the problems of [`BuildGraph::scan`] other than an
+    /// unsatisfied reference, and when the store or the database cannot be
+    /// read.
+    pub fn plan_open(
+        &self,
+        recipes: Vec<Recipe>,
+        db: &Db,
+        forced: &BTreeSet<Item>,
+        use_published: &BTreeSet<Item>,
+    ) -> Result<(BuildGraph, Schedule, Vec<PkgRef>), BuildError> {
+        self.plan_inner(recipes, db, forced, use_published, true)
+    }
+
+    /// The shared body of [`Self::plan`] and [`Self::plan_open`].
+    fn plan_inner(
+        &self,
+        recipes: Vec<Recipe>,
+        db: &Db,
+        forced: &BTreeSet<Item>,
+        use_published: &BTreeSet<Item>,
+        open: bool,
+    ) -> Result<(BuildGraph, Schedule, Vec<PkgRef>), BuildError> {
         let entries = match self.mode {
             Mode::Store => view::usable(view::store_entries(&self.store)?, &self.seeds()?),
             _ => Vec::new(),
@@ -437,7 +471,14 @@ impl<'a> Builder<'a> {
             .collect();
         let unresolved = !matches!(self.mode, Mode::Store);
         let published = |r: &PkgRef| unresolved || names.contains(&(r.name().clone(), r.variant()));
-        let graph = BuildGraph::new(recipes, &published).map_err(problems)?;
+        let (graph, unsatisfied) = if open {
+            let scanned = BuildGraph::scan(recipes, &published).map_err(problems)?;
+            let unsatisfied = scanned.unsatisfied.into_iter().map(|(_, _, r)| r).collect();
+            (scanned.graph, unsatisfied)
+        } else {
+            let graph = BuildGraph::new(recipes, &published).map_err(problems)?;
+            (graph, Vec::new())
+        };
         let mut dirty = BTreeMap::new();
         let mut previous = BTreeMap::new();
         for item in graph.items() {
@@ -458,7 +499,7 @@ impl<'a> Builder<'a> {
             }
         }
         let schedule = Schedule::new(&graph, dirty, previous, use_published)?;
-        Ok((graph, schedule))
+        Ok((graph, schedule, unsatisfied))
     }
 
     /// Builds every build the schedule asks for, up to [`Builder::workers`]

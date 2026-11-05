@@ -173,7 +173,7 @@ pub use env::SOURCE_DATE_EPOCH;
 pub use error::{BuildError, Warning};
 pub use exec::{DEFAULT_TIMEOUT, Executor};
 pub use extract::unpack;
-pub use graph::{BuildGraph, Deps, Item};
+pub use graph::{BuildGraph, Deps, Item, Scanned};
 pub use lock::{LOCK_ENV, RootLock};
 pub use plan::{
     BuildRecord, Built, Cutoff, Dirtied, KeyInputs, LinkInput, Schedule, StaticInput, Trigger,

@@ -20,6 +20,11 @@ pub(crate) struct Cli {
     /// Print machine readable JSON on standard output.
     #[arg(long)]
     pub(crate) json: bool,
+    /// Set an option of a recipe: `--set mesa.llvm=false`. Repeat for
+    /// more. A package that declares no such option, or an option whose
+    /// tag does not exist, is refused.
+    #[arg(long = "set", value_name = "PKG.OPTION=VALUE")]
+    pub(crate) set: Vec<String>,
     /// What to do.
     #[command(subcommand)]
     pub(crate) command: Command,

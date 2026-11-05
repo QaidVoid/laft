@@ -161,3 +161,32 @@ fn several_recipes_for_one_item_are_reported_once_with_their_repositories() {
         )]
     );
 }
+
+#[test]
+fn a_scan_reports_the_references_nothing_satisfies() {
+    let scanned = BuildGraph::scan([with("curl", &["pkgconf"], &["zlib"])], &|r: &PkgRef| {
+        r.name().as_str() == "zlib"
+    })
+    .expect("nothing but an unsatisfied reference is reported");
+    assert_eq!(scanned.graph.items().count(), 1);
+    let unsatisfied = scanned.unsatisfied;
+    assert_eq!(unsatisfied.len(), 1);
+    let (who, verb, reference) = &unsatisfied[0];
+    assert_eq!(who.to_string(), "curl");
+    assert_eq!(verb, "builds with");
+    assert_eq!(reference.to_string(), "pkgconf");
+    assert_eq!(scanned.graph.unsatisfied().len(), 1);
+    assert_eq!(scanned.graph.unsatisfied()[0].to_string(), "pkgconf");
+}
+
+#[test]
+fn a_scan_still_fails_on_a_variant_nobody_builds() {
+    let scanned = BuildGraph::scan(
+        [
+            with("ripgrep:static", &[], &["pcre2:static"]),
+            with("pcre2", &[], &[]),
+        ],
+        &everything,
+    );
+    assert!(scanned.is_err(), "the variant is still a problem");
+}

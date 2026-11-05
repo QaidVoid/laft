@@ -79,6 +79,9 @@ impl Deps {
 pub struct BuildGraph {
     recipes: BTreeMap<Item, Recipe>,
     deps: BTreeMap<Item, Deps>,
+    /// The references that no recipe of the run provides and `published`
+    /// refuses.
+    unsatisfied: Vec<PkgRef>,
 }
 
 /// What a package reference resolves to.
@@ -87,6 +90,17 @@ enum Resolved {
     /// A recipe of the run provides the name, but not in this variant.
     NoVariant(Name),
     External,
+}
+
+/// What [`BuildGraph::scan`] found: the graph and the references nothing
+/// in the run or the `published` check satisfies, with the item and the
+/// kind of dependency that asked for each.
+#[derive(Debug, Clone)]
+pub struct Scanned {
+    /// The graph.
+    pub graph: BuildGraph,
+    /// The unsatisfied references.
+    pub unsatisfied: Vec<(Item, String, PkgRef)>,
 }
 
 impl BuildGraph {
@@ -105,9 +119,38 @@ impl BuildGraph {
         recipes: impl IntoIterator<Item = Recipe>,
         published: &dyn Fn(&PkgRef) -> bool,
     ) -> Result<Self, Vec<Problem>> {
+        let scanned = Self::scan(recipes, published)?;
+        if scanned.unsatisfied.is_empty() {
+            Ok(scanned.graph)
+        } else {
+            Err(scanned
+                .unsatisfied
+                .iter()
+                .map(|(item, verb, r)| {
+                    Problem::new(
+                        "R021",
+                        format!(
+                            "{item} {verb} {r}, which no recipe builds and no repository publishes"
+                        ),
+                    )
+                })
+                .collect())
+        }
+    }
+
+    /// Builds the graph of `recipes` like [`Self::new`], but returns every
+    /// reference that no recipe of the run provides and `published`
+    /// refuses, with the item and the kind of dependency that asked for
+    /// it, instead of failing on it. The problems of [`Self::new`] other
+    /// than `R021` still fail the call.
+    pub fn scan(
+        recipes: impl IntoIterator<Item = Recipe>,
+        published: &dyn Fn(&PkgRef) -> bool,
+    ) -> Result<Scanned, Vec<Problem>> {
         let mut problems = Vec::new();
-        let mut unique = BTreeMap::new();
+        let mut unsatisfied = Vec::new();
         let mut duplicates: BTreeMap<Item, Vec<Name>> = BTreeMap::new();
+        let mut unique = BTreeMap::new();
         for recipe in recipes {
             match unique.entry(Item::of(&recipe)) {
                 Entry::Occupied(taken) => {
@@ -178,18 +221,12 @@ impl BuildGraph {
                         }
                         Resolved::NoVariant(name) => problems.push(Problem::new(
                             "R020",
-                            format!(
-                                "{item} {verb} {name}, which has no {} variant",
-                                r.variant()
-                            ),
+                            format!("{item} {verb} {name}, which has no {} variant", r.variant()),
                         )),
                         Resolved::External if published(r) => {}
-                        Resolved::External => problems.push(Problem::new(
-                            "R021",
-                            format!(
-                                "{item} {verb} {r}, which no recipe builds and no repository publishes"
-                            ),
-                        )),
+                        Resolved::External => {
+                            unsatisfied.push((item.clone(), verb.to_owned(), r.clone()))
+                        }
                     }
                 }
                 edges
@@ -204,7 +241,14 @@ impl BuildGraph {
             deps.insert(item.clone(), out);
         }
         if problems.is_empty() {
-            Ok(Self { recipes, deps })
+            Ok(Scanned {
+                graph: Self {
+                    recipes,
+                    deps,
+                    unsatisfied: unsatisfied.iter().map(|(_, _, r)| r.clone()).collect(),
+                },
+                unsatisfied,
+            })
         } else {
             Err(problems)
         }
@@ -218,6 +262,13 @@ impl BuildGraph {
     /// The recipe of `item`.
     pub fn recipe(&self, item: &Item) -> Option<&Recipe> {
         self.recipes.get(item)
+    }
+
+    /// Every reference that no recipe of the run provides and the
+    /// `published` check of [`Self::new`] or [`Self::scan`] refused, in
+    /// the order they were met.
+    pub fn unsatisfied(&self) -> &[PkgRef] {
+        &self.unsatisfied
     }
 
     /// The dependencies of `item` within the run.
