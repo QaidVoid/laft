@@ -168,6 +168,19 @@ pub(crate) struct Inputs<'r, 'a> {
     pub(crate) view_access: BTreeMap<Name, (Vec<String>, Vec<String>)>,
 }
 
+/// The bytes the recipe snapshots of a plan take to download: each
+/// distinct snapshot once, however many builds share it.
+fn source_bytes(snapshots: &crate::resolve::SnapshotMap) -> u64 {
+    let mut seen = BTreeSet::new();
+    let mut bytes = 0;
+    for source in snapshots.values() {
+        if seen.insert(source.snapshot.blake3) {
+            bytes += source.snapshot.size;
+        }
+    }
+    bytes
+}
+
 /// The packages of a resolution as plan packages.
 fn resolved_packages(resolution: &Resolution<'_>) -> BTreeMap<Name, Pkg> {
     resolution
@@ -331,7 +344,7 @@ pub(crate) fn plan<'a>(inputs: &Inputs<'_, 'a>) -> Result<Plan<'a>, Failure> {
             }
         })
         .collect();
-    let source_bytes = builds.iter().map(|b| b.bytes).sum();
+    let source_bytes = source_bytes(inputs.snapshots);
     let declared: BTreeSet<&Name> = inputs.resolved.views.keys().collect();
     let views_same = active.is_none_or(|g| g.views.keys().collect::<BTreeSet<_>>() == declared)
         && views[1..]

@@ -35,6 +35,9 @@
 
 mod activate;
 mod apply;
+#[cfg(test)]
+#[path = "apply_tests.rs"]
+mod apply_tests;
 mod boot;
 mod builds;
 mod cli;

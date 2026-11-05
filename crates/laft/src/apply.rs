@@ -301,7 +301,7 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
             done.insert((request.name.clone(), request.signature()));
         }
         let config = &planned.loaded.config;
-        crate::builds::run(
+        let built = crate::builds::run(
             env,
             &requests,
             &planned.snapshots,
@@ -309,6 +309,15 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
             &config.build,
             &planned.loaded.options,
         )?;
+        env.ui.event(json!({
+            "event": "built",
+            "packages": built
+                .names
+                .iter()
+                .map(|name| name.as_str())
+                .collect::<Vec<_>>(),
+            "bytes": built.bytes,
+        }));
         let local = crate::local::Local::of(env.root.path());
         let source = local.source()?.ok_or_else(|| {
             Failure::new(
@@ -317,7 +326,7 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
             )
         })?;
         let Planned { loaded, .. } = planned;
-        indexes.push(source);
+        replace_index(&mut indexes, source);
         planned = compute(
             env,
             loaded,
@@ -329,6 +338,16 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
         )?;
     }
     build_and_activate(env, &lock, request, &planned, &indexes)
+}
+
+/// Puts `source` into `indexes`, replacing the entry of its name, so
+/// settle rounds do not accumulate a second local repository.
+pub(crate) fn replace_index(indexes: &mut Vec<RepoIndex>, source: RepoIndex) {
+    if let Some(slot) = indexes.iter_mut().find(|index| index.name == source.name) {
+        *slot = source;
+    } else {
+        indexes.push(source);
+    }
 }
 
 fn build_and_activate(

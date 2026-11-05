@@ -70,21 +70,29 @@ fn cached_index(path: &Path, record: &IndexRecord) -> Option<Index> {
     Index::decode(&bytes).ok()
 }
 
-/// The option declarations and profile values of the synced indexes, by
-/// the priority of their repositories: when several repositories declare
-/// options for one package, those of the repository with the highest
-/// priority win, and name order breaks a tie.
+/// The option declarations and profile values of the synced indexes, as
+/// the resolver ranks repositories: the highest priority wins, and the
+/// first name breaks a tie.
 pub(crate) fn options_of(indexes: &[RepoIndex]) -> IndexOptions {
-    let mut by_priority: Vec<&RepoIndex> = indexes.iter().collect();
-    by_priority.sort_by_key(|repo| (repo.repo.priority, repo.name.clone()));
+    let mut ranked: Vec<&RepoIndex> = indexes.iter().collect();
+    ranked.sort_by(|a, b| {
+        b.repo
+            .priority
+            .cmp(&a.repo.priority)
+            .then(a.name.cmp(&b.name))
+    });
     let mut out = IndexOptions::default();
-    for repo in by_priority {
+    for repo in ranked {
         for (name, decls) in &repo.accepted.index.options {
-            out.options.insert(name.clone(), decls.clone());
+            out.options
+                .entry(name.clone())
+                .or_insert_with(|| decls.clone());
         }
         if let Some(profile) = &repo.accepted.index.profile {
             for (name, values) in &profile.values {
-                out.profile.insert(name.clone(), values.clone());
+                out.profile
+                    .entry(name.clone())
+                    .or_insert_with(|| values.clone());
             }
         }
     }
@@ -270,7 +278,15 @@ impl Env {
             Ok(first) => {
                 let indexes = self.indexes(&first.config.repos, mode, lock)?;
                 let options = options_of(&indexes);
-                let loaded = self.load_with(&options, &|pkg| known(&indexes, pkg))?;
+                let loaded = self
+                    .load_with(&options, &|pkg| known(&indexes, pkg))
+                    .map_err(|failure| {
+                        failure.hint(format!(
+                            "the cached option declarations in {} may be stale; \
+                             `laft repo sync` refreshes them",
+                            self.path("/laft/cache/index").display()
+                        ))
+                    })?;
                 (loaded, indexes)
             }
             Err(first) => {

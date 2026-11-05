@@ -53,7 +53,6 @@ fn a_request_is_written_as_an_item_with_sets_and_a_signature() {
     ]);
     let mut request = Request {
         name: "mesa".parse().expect("a name"),
-        version: "25.2".parse().expect("a version"),
         variant: Variant::default(),
         values: values.clone(),
         view: "system".to_owned(),
@@ -411,6 +410,89 @@ fn a_published_dependency_is_not_marked_before_it_is_seeded() {
 }
 
 #[test]
+fn the_seed_of_an_equal_offer_follows_the_repository_priority() {
+    let dir = laft_test::tempdir();
+    let env = env_of(dir.path());
+    let entry = entry_of(
+        meta_of("mesa", "1.0"),
+        laft_core::StoreId::from_manifest_hash(&laft_core::Blake3Hash::of(b"m")),
+    );
+    let low = index_of("file:///tmp/low", entry.clone());
+    let mut high = index_of("file:///tmp/high", entry);
+    high.repo.priority = 9;
+    let indexes = vec![low, high];
+    let run = Run {
+        env: &env,
+        snapshots: &BTreeMap::new(),
+        indexes: &indexes,
+        options: &build_options(),
+        values: &BTreeMap::new(),
+        built: Built::default(),
+        seeded: BTreeSet::new(),
+    };
+    let reference = PkgRef::new("mesa".parse().expect("a name"), None, Variant::default());
+    let (_, index) = run
+        .candidate(&reference, "system")
+        .expect("an offer exists");
+    assert_eq!(index.repo.priority, 9, "the higher priority wins");
+}
+
+#[test]
+fn a_view_that_refuses_a_candidate_does_not_shadow_another_view() {
+    let dir = laft_test::tempdir();
+    let env = env_of(dir.path());
+    let id = laft_core::StoreId::from_manifest_hash(&laft_core::Blake3Hash::of(b"m"));
+    let mut plain = entry_of(meta_of("mesa", "1.0"), id);
+    plain
+        .meta
+        .options
+        .insert("llvm".to_owned(), laft_core::OptionValue::Bool(false));
+    let mut llvm = entry_of(meta_of("mesa", "2.0"), id);
+    llvm.meta
+        .options
+        .insert("llvm".to_owned(), laft_core::OptionValue::Bool(true));
+    let indexes = vec![
+        index_of("file:///tmp/core", plain),
+        index_of("file:///tmp/core", llvm),
+    ];
+    let fixed = |value: bool| laft_config::OptionValues {
+        fixed: BTreeMap::from([(
+            "mesa".parse().expect("a name"),
+            BTreeMap::from([(
+                "llvm".to_owned(),
+                laft_config::FixedSetting {
+                    value: laft_core::OptionValue::Bool(value),
+                    origin: "/etc/laft/system.stav:1:1".to_owned(),
+                },
+            )]),
+        )]),
+        preferred: BTreeMap::new(),
+    };
+    let values: BTreeMap<Name, laft_config::OptionValues> = BTreeMap::from([
+        ("cli".parse().expect("a name"), fixed(false)),
+        ("desk".parse().expect("a name"), fixed(true)),
+    ]);
+    let run = Run {
+        env: &env,
+        snapshots: &BTreeMap::new(),
+        indexes: &indexes,
+        options: &build_options(),
+        values: &values,
+        built: Built::default(),
+        seeded: BTreeSet::new(),
+    };
+    let reference = PkgRef::new("mesa".parse().expect("a name"), None, Variant::default());
+    let (cli_entry, _) = run
+        .candidate(&reference, "cli")
+        .expect("the cli view finds its candidate");
+    assert_eq!(cli_entry.meta.version.as_str(), "1.0", "llvm=false");
+    let (desk_entry, _) = run
+        .candidate(&reference, "desk")
+        .expect("the desk view finds its candidate");
+    assert_eq!(desk_entry.meta.version.as_str(), "2.0", "llvm=true");
+}
+
+#[test]
 fn the_seed_runs_against_the_build_root() {
     let arguments = seed_arguments(
         Path::new("/laft/build"),
@@ -432,7 +514,6 @@ fn the_seed_runs_against_the_build_root() {
 fn groups_build_after_the_groups_whose_packages_they_wait_for() {
     let request = |name: &str| Request {
         name: name.parse().expect("a name"),
-        version: "1.0".parse().expect("a version"),
         variant: Variant::default(),
         values: BTreeMap::new(),
         view: "system".to_owned(),
@@ -458,7 +539,6 @@ fn groups_build_after_the_groups_whose_packages_they_wait_for() {
 fn groups_of_one_snapshot_build_in_the_order_of_their_values() {
     let request = |name: &str, llvm: bool| Request {
         name: name.parse().expect("a name"),
-        version: "1.0".parse().expect("a version"),
         variant: Variant::default(),
         values: BTreeMap::from([("llvm".to_owned(), OptionValue::Bool(llvm))]),
         view: "system".to_owned(),

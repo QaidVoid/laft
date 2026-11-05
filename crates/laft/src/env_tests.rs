@@ -258,3 +258,78 @@ fn the_options_of_the_synced_indexes_follow_the_repository_priority() {
     let mesa = "mesa".parse::<Name>().expect("a name");
     assert_eq!(options.options[&mesa][0].default, OptionValue::Bool(false));
 }
+
+#[test]
+fn an_equal_priority_tie_breaks_by_the_first_name() {
+    let index = |llvm: bool| AcceptedIndex {
+        index: index_of("repo", mesa_options(llvm), None),
+        record: IndexRecord {
+            channel: "current".parse().expect("a name"),
+            profile: None,
+            arch: ARCH,
+            generation: 1,
+            blake3: Some(Blake3Hash::of(b"x")),
+            signer: "0123456789abcdef".parse().expect("a key id"),
+        },
+        expired: false,
+    };
+    let none: Vec<String> = Vec::new();
+    let mirrors = Mirrors::new("file:///tmp/none", &none, false).expect("a mirror");
+    let repo = |name: &str, index| RepoIndex {
+        name: name.parse().expect("a name"),
+        repo: laft_config::Repo {
+            url: "file:///tmp/none".to_owned(),
+            mirrors: Vec::new(),
+            key: "RWSO9Zvh1ju0E6MO5PDnzQFYnptNxsLpLdwYSfm5Cs4Jc+14umRuka1M"
+                .parse()
+                .expect("a key"),
+            keys: Vec::new(),
+            channel: "current".parse().expect("a name"),
+            profile: None,
+            priority: 5,
+            enable: true,
+            allow_http: false,
+        },
+        accepted: index,
+        mirrors: mirrors.clone(),
+        synced: None,
+    };
+    let indexes = vec![repo("zzz", index(false)), repo("aaa", index(true))];
+    let options = options_of(&indexes);
+    let mesa = "mesa".parse::<Name>().expect("a name");
+    assert_eq!(
+        options.options[&mesa][0].default,
+        OptionValue::Bool(true),
+        "the first name wins, as the resolver's Universe breaks ties"
+    );
+}
+
+#[test]
+fn a_fresh_pass_failure_of_the_ok_branch_names_the_stale_cache() {
+    let dir = laft_test::tempdir();
+    let env = env_of(dir.path());
+    put_index(&env, "core", &index_of("core", mesa_options(true), None));
+    fs::create_dir_all(env.config_dir()).expect("writable");
+    fs::write(
+        env.config_dir().join("system.stav"),
+        "system {\n  fs \"/\" { device = \"UUID=1\", fstype = ext4 }\n  \
+         fs \"/boot\" { device = \"UUID=2\", fstype = vfat }\n  \
+         packages = [gone]\n  repo core {\n      \
+         url = \"file:///tmp/none\"\n      mirrors = []\n      \
+         key = \"RWSO9Zvh1ju0E6MO5PDnzQFYnptNxsLpLdwYSfm5Cs4Jc+14umRuka1M\"\n      \
+         keys = []\n      channel = current\n      priority = 10\n      \
+         enable = true\n      allow_http = false\n  }\n}\n",
+    )
+    .expect("writable");
+    let failure = env
+        .load_with_indexes(SyncMode::Cached, None)
+        .expect_err("gone is not in the cached index");
+    assert!(
+        failure
+            .hints
+            .iter()
+            .any(|hint| hint.contains("stale") && hint.contains("laft repo sync")),
+        "{hints:?}",
+        hints = failure.hints
+    );
+}

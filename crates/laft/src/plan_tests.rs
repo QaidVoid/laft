@@ -60,3 +60,39 @@ fn a_new_revision_is_an_upgrade() {
     let new = map(vec![pkg("vim", "9.1", 2, Variant::Dynamic, b"b")]);
     assert!(matches!(changes(&old, &new)[..], [Change::Upgraded(..)]));
 }
+
+/// A snapshot source of `name` whose archive is `size` bytes with the
+/// content hash `hash`.
+fn source(
+    name: &str,
+    variant: Variant,
+    size: u64,
+    hash: &[u8],
+) -> ((Name, Variant), crate::resolve::SnapshotSource) {
+    let parsed: Name = name.parse().expect("a name");
+    (
+        (parsed.clone(), variant),
+        crate::resolve::SnapshotSource {
+            repo: parsed.clone(),
+            snapshot: laft_index::RecipeSnapshot {
+                file: format!("recipes/{name}.tar.zst"),
+                size,
+                blake3: Blake3Hash::of(hash),
+            },
+            name: parsed,
+            version: "1.0".parse().expect("a version"),
+            variant: Variant::default(),
+            defaults: BTreeMap::new(),
+        },
+    )
+}
+
+#[test]
+fn source_bytes_count_a_snapshot_shared_by_variants_once() {
+    let snapshots = crate::resolve::SnapshotMap::from_iter([
+        source("mesa", Variant::Dynamic, 100, b"recipes"),
+        source("mesa", Variant::Static, 100, b"recipes"),
+        source("zlib", Variant::Dynamic, 50, b"other"),
+    ]);
+    assert_eq!(source_bytes(&snapshots), 150);
+}

@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use laft_build::{BuildRoot, Builder, Mode, Repos, SourceCache};
-use laft_core::{Blake3Hash, Name, OptionConstraint, OptionValue, PkgRef, Version};
+use laft_core::{Blake3Hash, Name, OptionConstraint, OptionValue, PkgRef};
 
 use crate::env::{Env, RepoIndex};
 use crate::failure::{Failure, exit};
@@ -67,8 +67,6 @@ pub(crate) struct Built {
 pub(crate) struct Request {
     /// The package.
     pub(crate) name: Name,
-    /// The version the snapshot builds.
-    pub(crate) version: Version,
     /// The variant the snapshot builds.
     pub(crate) variant: laft_core::Variant,
     /// The option values the build gets.
@@ -84,7 +82,6 @@ impl Request {
     pub(crate) fn of(build: &laft_resolve::BuildRequest, view: &str) -> Self {
         Self {
             name: build.buildable.name.clone(),
-            version: build.buildable.version.clone(),
             variant: build.buildable.variant,
             values: build.values.clone(),
             view: view.to_owned(),
@@ -329,7 +326,6 @@ impl<'a> Run<'a> {
         }
         Ok(Request {
             name: source.name.clone(),
-            version: source.version.clone(),
             variant: source.variant,
             values,
             view: view.to_owned(),
@@ -345,8 +341,11 @@ impl<'a> Run<'a> {
         reference: &PkgRef,
         view: &str,
     ) -> Option<(&laft_index::IndexEntry, &RepoIndex)> {
-        fn rank(e: &laft_index::IndexEntry) -> (&laft_core::Version, u32) {
-            (&e.meta.version, e.meta.rev)
+        fn rank<'a>(
+            e: &'a laft_index::IndexEntry,
+            index: &'a RepoIndex,
+        ) -> (&'a laft_core::Version, u32, i64) {
+            (&e.meta.version, e.meta.rev, index.repo.priority)
         }
         let mut best: Option<(&laft_index::IndexEntry, &RepoIndex)> = None;
         for index in self.indexes {
@@ -378,7 +377,9 @@ impl<'a> Run<'a> {
                 {
                     continue;
                 }
-                if best.is_none_or(|(current, _)| rank(entry) > rank(current)) {
+                if best.is_none_or(|(current, current_index)| {
+                    rank(entry, index) > rank(current, current_index)
+                }) {
                     best = Some((entry, index));
                 }
             }
