@@ -1,15 +1,16 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use laft_core::{
     Dep, Name, OptionConstraint, OptionConstraints, OptionValue, PkgRef, StoreId, Variant, Version,
     VersionPrefix, VersionReq,
 };
-use laft_index::Yank;
+use laft_index::{OptionDecl, OptionType, Yank};
 use laft_pkg::Meta;
 
 use crate::error::{Bound, BoundSource, Demand, Error, ErrorKind, ValueOrigin};
 use crate::explain::{Chain, Learned, Package, Reason, Warning, Why};
-use crate::universe::{Candidate, Key, Source, Universe, option_order, order, provides};
+use crate::universe::{Candidate, Key, Source, Universe, order, provides};
 
 /// The most passes one resolution may take. A resolution without conflicts
 /// takes one pass, and each conflict usually costs one or two more.
@@ -402,6 +403,89 @@ fn canonical(c: &OptionConstraint) -> OptionValue {
         OptionConstraint::False { .. } => OptionValue::Bool(false),
         OptionConstraint::Tag { tag, .. } => OptionValue::Tag(tag.clone()),
     }
+}
+
+/// The rank of an option value in the tie break of the preference order:
+/// an option the package does not record first, then `false`, then `true`,
+/// then the tags in declaration order.
+fn value_rank(value: Option<&OptionValue>, tags: &[String]) -> usize {
+    match value {
+        None => 0,
+        Some(OptionValue::Bool(false)) => 1,
+        Some(OptionValue::Bool(true)) => 2,
+        Some(OptionValue::Tag(tag)) => tags
+            .iter()
+            .position(|t| t == tag)
+            .map_or(usize::MAX, |at| 3 + at),
+    }
+}
+
+/// Compares two candidates of one name by their option values: the fewest
+/// free options that differ from their preferred values first, then the
+/// values option by option in declaration order, with `false` before
+/// `true` and tags in declaration order.
+fn option_order(
+    a: &Candidate<'_>,
+    b: &Candidate<'_>,
+    decls: &[OptionDecl],
+    request: Option<&OptionRequest>,
+) -> Ordering {
+    let fixed = request.map(|r| &r.fixed);
+    let preferred = request.map(|r| &r.preferred);
+    let is_free = |opt: &str| !fixed.is_some_and(|f| f.contains_key(opt));
+    let expected = |opt: &str| {
+        preferred
+            .and_then(|p| p.get(opt))
+            .or_else(|| decls.iter().find(|d| d.name == opt).map(|d| &d.default))
+    };
+    let deviations = |c: &Candidate<'_>| {
+        let mut count = 0;
+        for (opt, value) in &c.meta.options {
+            if is_free(opt) && expected(opt) != Some(value) {
+                count += 1;
+            }
+        }
+        if let Some(preferred) = preferred {
+            for opt in preferred.keys() {
+                if is_free(opt) && !c.meta.options.contains_key(opt) {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+    let by_deviations = deviations(a).cmp(&deviations(b));
+    if by_deviations.is_ne() {
+        return by_deviations;
+    }
+    let mut names: Vec<&str> = decls.iter().map(|d| d.name.as_str()).collect();
+    let mut extra: Vec<&str> = a
+        .meta
+        .options
+        .keys()
+        .chain(b.meta.options.keys())
+        .map(String::as_str)
+        .filter(|n| !names.contains(n))
+        .collect();
+    extra.sort_unstable();
+    extra.dedup();
+    names.extend(extra);
+    for opt in names {
+        let tags = decls
+            .iter()
+            .find(|d| d.name == opt)
+            .map(|d| match &d.kind {
+                OptionType::Tags(tags) => tags.as_slice(),
+                OptionType::Bool(_) => &[],
+            })
+            .unwrap_or(&[]);
+        let rank = |c: &Candidate<'_>| value_rank(c.meta.options.get(opt), tags);
+        let by_value = rank(a).cmp(&rank(b));
+        if by_value.is_ne() {
+            return by_value;
+        }
+    }
+    Ordering::Equal
 }
 
 /// The value a constraint demands, as `option=value`.
