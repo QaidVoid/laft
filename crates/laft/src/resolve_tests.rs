@@ -264,6 +264,54 @@ fn a_repository_without_a_snapshot_contributes_no_buildables() {
 }
 
 #[test]
+fn preferred_values_of_a_package_nothing_fixes_still_reach_the_resolver() {
+    let values = laft_config::OptionValues {
+        fixed: BTreeMap::new(),
+        preferred: BTreeMap::from([(
+            "mesa".parse().expect("a name"),
+            BTreeMap::from([(
+                "vulkan".to_owned(),
+                laft_core::OptionValue::Tag("amd".to_owned()),
+            )]),
+        )]),
+    };
+    let input = option_request(&values);
+    assert_eq!(input.len(), 1, "{input:?}");
+    let mesa = &input[&"mesa".parse::<Name>().expect("a name")];
+    assert_eq!(
+        mesa.preferred["vulkan"],
+        laft_core::OptionValue::Tag("amd".to_owned())
+    );
+    assert!(mesa.fixed.is_empty());
+}
+
+#[test]
+fn every_variant_of_a_buildable_name_is_offered() {
+    let mut static_meta = meta_of("mesa", "25.2.0", &[]);
+    static_meta.variant = Variant::Static;
+    let index = repo_index(
+        "core",
+        1,
+        vec![
+            entry(meta_of("mesa", "25.2.0", &[]), "d"),
+            entry(static_meta, "s"),
+        ],
+        BTreeMap::new(),
+        true,
+    );
+    let (found, snapshots) = buildables(&[index]);
+    assert_eq!(found.len(), 2, "{found:?}");
+    let mesa = "mesa".parse::<Name>().expect("a name");
+    assert!(snapshots.contains_key(&(mesa.clone(), Variant::default())));
+    assert!(snapshots.contains_key(&(mesa.clone(), Variant::Static)));
+    assert!(
+        found
+            .iter()
+            .any(|buildable| buildable.variant == Variant::Static)
+    );
+}
+
+#[test]
 fn the_options_of_a_view_become_the_fixed_and_preferred_values_of_the_resolver() {
     let values = laft_config::OptionValues {
         fixed: BTreeMap::from([(

@@ -316,7 +316,9 @@ pub(crate) fn plan<'a>(inputs: &Inputs<'_, 'a>) -> Result<Plan<'a>, Failure> {
         .chain(inputs.resolved.views.values())
         .flat_map(|r| r.builds.iter())
         .map(|b| {
-            let source = inputs.snapshots.get(&b.buildable.name);
+            let source = inputs
+                .snapshots
+                .get(&(b.buildable.name.clone(), b.buildable.variant));
             BuildPlan {
                 item: item_of(b),
                 version: b.buildable.version.clone(),

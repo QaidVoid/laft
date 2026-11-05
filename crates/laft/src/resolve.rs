@@ -110,30 +110,34 @@ pub(crate) struct SnapshotSource {
     pub(crate) defaults: BTreeMap<String, OptionValue>,
 }
 
-/// The recipe snapshot of every buildable package, by name.
-pub(crate) type SnapshotMap = BTreeMap<Name, SnapshotSource>;
+/// The recipe snapshot of every buildable package, one per name and
+/// variant.
+pub(crate) type SnapshotMap = BTreeMap<(Name, Variant), SnapshotSource>;
 
 /// Only a repository that publishes a snapshot contributes. The newest
-/// entry wins for a name; a tie goes to the repository with the higher
-/// priority, then to the greater name, as the option declarations do. The
-/// declared defaults of the winning repository are the values a build
-/// starts from.
+/// entry wins for a name and variant; a tie goes to the repository with
+/// the higher priority, then to the greater name, as the option
+/// declarations do. The declared defaults of the winning repository are
+/// the values a build starts from.
 ///
-/// The second value maps every buildable name to the recipe snapshot that
-/// would build it, which [`crate::builds`] fetches and unpacks.
+/// The second value maps every buildable name and variant to the recipe
+/// snapshot that would build it, which [`crate::builds`] fetches and
+/// unpacks.
 pub(crate) fn buildables(indexes: &[RepoIndex]) -> (Vec<Buildable>, SnapshotMap) {
     let mut by_priority: Vec<&RepoIndex> = indexes
         .iter()
         .filter(|repo| repo.accepted.index.recipes.is_some())
         .collect();
     by_priority.sort_by_key(|repo| (repo.repo.priority, repo.name.clone()));
-    let mut newest: BTreeMap<Name, (&laft_index::IndexEntry, &RepoIndex)> = BTreeMap::new();
+    let mut newest: BTreeMap<(Name, Variant), (&laft_index::IndexEntry, &RepoIndex)> =
+        BTreeMap::new();
     for repo in by_priority {
         for entry in &repo.accepted.index.packages {
-            fn rank(e: &laft_index::IndexEntry) -> (&laft_core::Version, u32, Variant) {
-                (&e.meta.version, e.meta.rev, e.meta.variant)
+            fn rank(e: &laft_index::IndexEntry) -> (&laft_core::Version, u32) {
+                (&e.meta.version, e.meta.rev)
             }
-            match newest.entry(entry.meta.name.clone()) {
+            let key = (entry.meta.name.clone(), entry.meta.variant);
+            match newest.entry(key) {
                 std::collections::btree_map::Entry::Vacant(slot) => {
                     slot.insert((entry, repo));
                 }
@@ -147,7 +151,7 @@ pub(crate) fn buildables(indexes: &[RepoIndex]) -> (Vec<Buildable>, SnapshotMap)
     }
     let mut out = Vec::new();
     let mut snapshots = BTreeMap::new();
-    for (name, (entry, repo)) in newest {
+    for ((name, variant), (entry, repo)) in newest {
         let snapshot = repo
             .accepted
             .index
@@ -167,13 +171,13 @@ pub(crate) fn buildables(indexes: &[RepoIndex]) -> (Vec<Buildable>, SnapshotMap)
             })
             .unwrap_or_default();
         snapshots.insert(
-            name.clone(),
+            (name.clone(), variant),
             SnapshotSource {
                 repo: repo.name.clone(),
                 snapshot,
                 name: name.clone(),
                 version: entry.meta.version.clone(),
-                variant: entry.meta.variant,
+                variant,
                 defaults: defaults.clone(),
             },
         );
@@ -181,7 +185,7 @@ pub(crate) fn buildables(indexes: &[RepoIndex]) -> (Vec<Buildable>, SnapshotMap)
             name,
             version: entry.meta.version.clone(),
             rev: entry.meta.rev,
-            variant: entry.meta.variant,
+            variant,
             defaults,
         });
     }
@@ -189,32 +193,31 @@ pub(crate) fn buildables(indexes: &[RepoIndex]) -> (Vec<Buildable>, SnapshotMap)
 }
 
 /// The fixed and preferred values of one view, as the resolver asks for
-/// them: by package name.
+/// them: by package name, for every package whose values the view sets,
+/// fixed or preferred.
 pub(crate) fn option_request(values: &laft_config::OptionValues) -> BTreeMap<Name, OptionRequest> {
-    values
-        .fixed
-        .iter()
-        .map(|(pkg, opts)| {
-            (
-                pkg.clone(),
-                OptionRequest {
-                    fixed: opts
-                        .iter()
-                        .map(|(opt, setting)| {
-                            (
-                                opt.clone(),
-                                laft_resolve::FixedValue {
-                                    value: setting.value.clone(),
-                                    origin: setting.origin.clone(),
-                                },
-                            )
-                        })
-                        .collect(),
-                    preferred: values.preferred.get(pkg).cloned().unwrap_or_default(),
-                },
-            )
-        })
-        .collect()
+    let mut out = BTreeMap::new();
+    for pkg in values.fixed.keys().chain(values.preferred.keys()) {
+        let entry = out.entry(pkg.clone()).or_insert_with(|| OptionRequest {
+            fixed: BTreeMap::new(),
+            preferred: Default::default(),
+        });
+        if let Some(opts) = values.fixed.get(pkg) {
+            for (opt, setting) in opts {
+                entry.fixed.insert(
+                    opt.clone(),
+                    laft_resolve::FixedValue {
+                        value: setting.value.clone(),
+                        origin: setting.origin.clone(),
+                    },
+                );
+            }
+        }
+        if let Some(preferred) = values.preferred.get(pkg) {
+            entry.preferred = preferred.clone();
+        }
+    }
+    out
 }
 
 /// The services of `config`, validated.

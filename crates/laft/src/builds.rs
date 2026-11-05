@@ -39,7 +39,7 @@ use laft_core::{Blake3Hash, Name, OptionConstraint, OptionValue, PkgRef, Version
 use crate::env::{Env, RepoIndex};
 use crate::failure::{Failure, exit};
 use crate::local::{Local, write_new};
-use crate::resolve::SnapshotSource;
+use crate::resolve::{SnapshotMap, SnapshotSource};
 
 /// The account local builds run as, `laft-build` of the system accounts.
 const BUILD_UID: u32 = 43;
@@ -160,7 +160,7 @@ pub(crate) fn requests_of(resolved: &crate::resolve::Resolved<'_>) -> Vec<Reques
 pub(crate) fn run(
     env: &Env,
     requests: &[Request],
-    snapshots: &BTreeMap<Name, SnapshotSource>,
+    snapshots: &SnapshotMap,
     indexes: &[RepoIndex],
     options: &laft_config::Build,
     values: &BTreeMap<Name, laft_config::OptionValues>,
@@ -193,7 +193,7 @@ pub(crate) fn run(
         if !queued.insert(key) {
             continue;
         }
-        let Some(source) = snapshots.get(&request.name) else {
+        let Some(source) = snapshots.get(&(request.name.clone(), request.variant)) else {
             return Err(Failure::new(
                 exit::FAILURE,
                 format!(
@@ -259,7 +259,7 @@ enum Where {
 /// The state of one run.
 struct Run<'a> {
     env: &'a Env,
-    snapshots: &'a BTreeMap<Name, SnapshotSource>,
+    snapshots: &'a SnapshotMap,
     indexes: &'a [RepoIndex],
     options: &'a laft_config::Build,
     values: &'a BTreeMap<Name, laft_config::OptionValues>,
@@ -276,12 +276,9 @@ impl<'a> Run<'a> {
             self.seeded.insert(name);
             return Ok(Where::Published);
         }
-        match self.snapshots.get(&name) {
+        match self.snapshots.get(&(name, reference.variant())) {
             None => Ok(Where::Nothing),
             Some(source) => {
-                if source.variant != reference.variant() {
-                    return Ok(Where::Nothing);
-                }
                 let dependency = self.dependency(reference, source, view)?;
                 Ok(Where::Group {
                     dependency,
