@@ -34,6 +34,8 @@ stav.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
+laft-elf.workspace = true
 laft-test.workspace = true
+sha2.workspace = true
 tar.workspace = true
 zstd.workspace = true

@@ -605,3 +605,413 @@ fn the_values_of_a_view_are_found_by_name() {
     assert!(view_values(&values, "system").is_some());
     assert!(view_values(&values, "desk").is_none());
 }
+
+/// The `laft-build` binary next to this test binary, copied from the
+/// target directory, which the workspace tests build first.
+fn laft_build_exe() -> PathBuf {
+    static ONCE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    ONCE.get_or_init(|| {
+        let exe = std::env::current_exe().expect("the test binary has a path");
+        let sibling = exe
+            .parent()
+            .expect("the test binary has a directory")
+            .join("laft-build");
+        let built = match std::env::var("CARGO_TARGET_DIR") {
+            Ok(custom) => Path::new(&custom).join("debug/laft-build"),
+            Err(_) => Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .and_then(Path::parent)
+                .expect("the workspace")
+                .join("target/debug/laft-build"),
+        };
+        fs::copy(&built, &sibling).expect("laft-build copies next to the test binary");
+        sibling
+    })
+    .clone()
+}
+
+/// A gzip-free recipe source: a zstd tarball of one file, with its
+/// SHA-256 hash.
+fn source_tarball(dir: &Path) -> (Vec<u8>, String) {
+    let mut builder = tar::Builder::new(Vec::new());
+    let text = b"hello\n";
+    let mut header = tar::Header::new_gnu();
+    header.set_size(text.len() as u64);
+    header.set_mode(0o644);
+    header.set_mtime(0);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, "hello-1.0/hello.txt", &text[..])
+        .expect("writable");
+    let tar = builder.into_inner().expect("writable");
+    let mut bytes = Vec::new();
+    let mut writer = zstd::stream::write::Encoder::new(&mut bytes, 3).expect("an encoder");
+    std::io::Write::write_all(&mut writer, &tar).expect("compressed");
+    writer.finish().expect("finished");
+    use sha2::{Digest, Sha256};
+    let hex: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let mirror = dir.join("mirror/sha256");
+    fs::create_dir_all(&mirror).expect("writable");
+    fs::write(mirror.join(&hex), &bytes).expect("writable");
+    (bytes, hex)
+}
+
+/// The recipe repository of `hello`, as a snapshot archive published at
+/// `repo`, with `hex` as the hash of its source and `mirror` as its
+/// mirror. Returns the archive bytes.
+fn publish_recipes(dir: &Path, repo: &Path, mirror: &Path, hex: &str) -> Vec<u8> {
+    let recipe = format!(
+        r#"package hello {{
+  version = "1.0"
+  summary = "Hello"
+  license = [MIT]
+  deps = [greet]
+  source main {{
+    url = ["https://example.org/hello-1.0.tar.zst"]
+    sha256 = "sha256:{hex}"
+  }}
+  build custom {{}}
+  env = {{ LD_LIBRARY_PATH = "/usr/lib" }}
+  phases {{
+    install = "mkdir -p \"$DESTDIR/usr/share/hello\" && printf hello > \"$DESTDIR/usr/share/hello/hello.txt\""
+  }}
+}}
+"#
+    );
+    let descriptor = format!(
+        "recipe_repo core {{\n  source_mirrors = [\"file://{}\"]\n}}\n",
+        mirror.display()
+    );
+    let bytes = archive_of(
+        dir,
+        &[
+            ("recipes.stav", descriptor.as_bytes()),
+            ("recipes/hello/package.stav", recipe.as_bytes()),
+        ],
+    );
+    let file = repo.join(format!("recipes/{}.tar.zst", Blake3Hash::of(&bytes)));
+    fs::create_dir_all(file.parent().expect("the file has a parent")).expect("writable");
+    fs::write(&file, &bytes).expect("writable");
+    bytes
+}
+
+/// The published package of `name` at 1.0, written into `pool` below
+/// `repo`. Returns the index entry for it.
+fn publish_empty(repo: &Path, name: &str, summary: &str) -> laft_index::IndexEntry {
+    publish_pkg(repo, name, summary, &[])
+}
+
+/// As [`publish_empty`], with `files` in the payload. Each file carries the
+/// mode to keep, so executable files such as the ELF interpreter stay
+/// executable inside the build view.
+fn publish_pkg(
+    repo: &Path,
+    name: &str,
+    summary: &str,
+    files: &[(&str, &[u8], u32)],
+) -> laft_index::IndexEntry {
+    let payload = laft_test::tempdir();
+    let mut meta = meta_of(name, "1.0");
+    meta.summary = summary.to_owned();
+    for (path, content, mode) in files {
+        let full = payload.path().join(path);
+        fs::create_dir_all(full.parent().expect("a file has a parent")).expect("writable");
+        fs::write(&full, content).expect("writable");
+        fs::set_permissions(&full, fs::Permissions::from_mode(*mode)).expect("chmod");
+    }
+    let entries = laft_pkg::scan(payload.path()).expect("the payload scans");
+    meta.installed_size = files.iter().map(|(_, c, _)| c.len() as u64).sum();
+    let meta_json = meta.to_json().expect("valid metadata");
+    let manifest = laft_pkg::Manifest::new(meta.identity(), Blake3Hash::of(&meta_json), entries)
+        .expect("valid manifest");
+    let mut bytes = Vec::new();
+    laft_pkg::write_package(
+        &mut bytes,
+        payload.path(),
+        &meta,
+        &manifest,
+        laft_pkg::Compression::DEVELOPMENT,
+    )
+    .expect("the package writes");
+    let id = manifest.store_id();
+    let file = format!("pool/{id}.lpkg");
+    fs::create_dir_all(repo.join("pool")).expect("writable");
+    fs::write(repo.join(&file), &bytes).expect("writable");
+    laft_index::IndexEntry {
+        meta,
+        id,
+        file,
+        size: bytes.len() as u64,
+        blake3: Blake3Hash::of(&bytes),
+    }
+}
+
+/// The files of the host's `/bin/sh` with the libraries it needs, as the
+/// payload of the build view's `dash` package. Every file lands below
+/// `usr/lib` or `usr/bin` and keeps the executable bit of its host file.
+/// The recipe that runs in the view sets `LD_LIBRARY_PATH` to `/usr/lib`,
+/// so the loader finds the libraries without `ld.so.cache`.
+fn host_shell_files() -> Vec<(String, Vec<u8>, u32)> {
+    const LIBRARY_DIRS: [&str; 6] = [
+        "/lib64",
+        "/usr/lib64",
+        "/lib",
+        "/usr/lib",
+        "/lib/x86_64-linux-gnu",
+        "/usr/lib/x86_64-linux-gnu",
+    ];
+    let mut files: BTreeMap<String, (Vec<u8>, u32)> = BTreeMap::new();
+    let mut queue = Vec::new();
+    let host = fs::canonicalize("/bin/sh").expect("the host has a shell");
+    files.insert(
+        "usr/bin/sh".to_owned(),
+        (fs::read(&host).expect("the shell reads"), host_mode(&host)),
+    );
+    queue.push(host);
+    let mut seen = BTreeSet::new();
+    while let Some(file) = queue.pop() {
+        let Some(elf) =
+            laft_elf::inspect(&fs::read(&file).expect("the file reads")).expect("the ELF inspects")
+        else {
+            continue;
+        };
+        let found = elf.needed.iter().filter_map(|lib| {
+            LIBRARY_DIRS
+                .iter()
+                .map(|dir| Path::new(dir).join(lib.as_str()))
+                .find(|path| path.exists())
+        });
+        for dep in elf.interpreter.iter().map(PathBuf::from).chain(found) {
+            if !seen.insert(dep.clone()) {
+                continue;
+            }
+            let host = dep.to_str().expect("a UTF-8 library path");
+            let host = host.strip_prefix('/').expect("an absolute library path");
+            let under = host.strip_prefix("usr/").unwrap_or(host);
+            let rel = match under.split_once('/') {
+                Some(("lib" | "lib64", tail)) => format!("usr/lib/{tail}"),
+                _ => format!("usr/{under}"),
+            };
+            files.insert(
+                rel,
+                (fs::read(&dep).expect("the library reads"), host_mode(&dep)),
+            );
+            queue.push(dep);
+        }
+    }
+    files
+        .into_iter()
+        .map(|(path, (bytes, mode))| (path, bytes, mode))
+        .collect()
+}
+
+/// The mode to keep for a copy of `file`: executable when the host file
+/// has an execute bit, read-only otherwise.
+fn host_mode(file: &Path) -> u32 {
+    let mode = fs::metadata(file)
+        .expect("the host file stats")
+        .permissions()
+        .mode();
+    if mode & 0o111 != 0 { 0o555 } else { 0o444 }
+}
+
+/// The host's tools as the payload of the build view's `coreutils`
+/// package, keeping the executable bits of the host files.
+fn host_tool_files(tools: &[&str]) -> Vec<(String, Vec<u8>, u32)> {
+    tools
+        .iter()
+        .map(|tool| {
+            let host = Path::new("/usr/bin").join(tool);
+            (
+                format!("usr/bin/{tool}"),
+                fs::read(&host).expect("the tool reads"),
+                host_mode(&host),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_round_seeds_builds_publishes_and_a_second_round_rests() {
+    if !Path::new("/bin/sh").exists() {
+        println!("skipping: the host has no /bin/sh");
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let probe = dir.path().join("probe");
+    fs::create_dir_all(probe.join("build")).expect("writable");
+    fs::create_dir_all(probe.join("out")).expect("writable");
+    match laft_sandbox::Sandbox::new("/usr", probe.join("build"), probe.join("out"))
+        .command("/usr/bin/true")
+        .status()
+    {
+        Ok(status) if status.success() => {}
+        other => {
+            println!("skipping: the sandbox is unavailable: {other:?}");
+            return;
+        }
+    }
+    laft_build_exe();
+    let env = env_of(dir.path());
+    let (_, hex) = source_tarball(dir.path());
+    let www = dir.path().join("www");
+    let url = format!("file://{}", www.display());
+    let snapshot = publish_recipes(dir.path(), &www, &dir.path().join("mirror"), &hex);
+    let greet = publish_empty(&www, "greet", "The greeting library");
+    if !Path::new("/bin/sh").exists() {
+        println!("skipping: the host has no /bin/sh");
+        return;
+    }
+    let dash_files = host_shell_files();
+    let dash_refs: Vec<(&str, &[u8], u32)> = dash_files
+        .iter()
+        .map(|(path, bytes, mode)| (path.as_str(), bytes.as_slice(), *mode))
+        .collect();
+    let mut entries = vec![greet.clone()];
+    entries.push(publish_pkg(
+        &www,
+        "dash",
+        "The POSIX shell of the build view",
+        &dash_refs,
+    ));
+    let tool_files = host_tool_files(&["mkdir", "printf"]);
+    let tool_refs: Vec<(&str, &[u8], u32)> = tool_files
+        .iter()
+        .map(|(path, bytes, mode)| (path.as_str(), bytes.as_slice(), *mode))
+        .collect();
+    entries.push(publish_pkg(
+        &www,
+        "coreutils",
+        "The tools of the build view",
+        &tool_refs,
+    ));
+    for name in laft_build::view::BUILD_BASE {
+        if *name != "dash" && *name != "coreutils" {
+            entries.push(publish_empty(&www, name, "The build view of the tests"));
+        }
+    }
+    let mut index = index_of(&url, greet.clone());
+    index.accepted.index.packages = entries;
+    index.accepted.index.recipes = Some(laft_index::RecipeSnapshot {
+        file: format!("recipes/{}.tar.zst", Blake3Hash::of(&snapshot)),
+        size: snapshot.len() as u64,
+        blake3: Blake3Hash::of(&snapshot),
+    });
+    let indexes = vec![index];
+    let root = laft_build::BuildRoot::new(env.path("/laft/build"));
+    for entry in &indexes[0].accepted.index.packages {
+        if entry.meta.name != greet.meta.name {
+            laft_build::seed(&root, &www.join(&entry.file)).expect("the build view is seeded");
+        }
+    }
+    let hello: Name = "hello".parse().expect("a name");
+    let source = SnapshotSource {
+        repo: "core".parse().expect("a name"),
+        snapshot: laft_index::RecipeSnapshot {
+            file: format!("recipes/{}.tar.zst", Blake3Hash::of(&snapshot)),
+            size: snapshot.len() as u64,
+            blake3: Blake3Hash::of(&snapshot),
+        },
+        name: hello.clone(),
+        version: "1.0".parse().expect("a version"),
+        variant: Variant::default(),
+        defaults: BTreeMap::new(),
+    };
+    let snapshots = SnapshotMap::from_iter([((hello.clone(), Variant::default()), source)]);
+    let request = Request {
+        name: hello.clone(),
+        variant: Variant::default(),
+        values: BTreeMap::new(),
+        view: "system".to_owned(),
+        reasons: Vec::new(),
+    };
+    let built = match run(
+        &env,
+        std::slice::from_ref(&request),
+        &snapshots,
+        &indexes,
+        &build_options(),
+        &BTreeMap::new(),
+    ) {
+        Ok(built) => built,
+        Err(failure) => {
+            fn dump(dir: &Path, depth: usize) {
+                if depth == 0 {
+                    return;
+                }
+                if let Ok(entries) = fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            dump(&path, depth - 1);
+                        } else {
+                            println!(
+                                "--- {}: {}",
+                                path.display(),
+                                fs::read_to_string(&path).unwrap_or_default()
+                            );
+                        }
+                    }
+                }
+            }
+            dump(&env.path("/laft/build/logs"), 4);
+            panic!("the first round failed to build: {failure:?}");
+        }
+    };
+    assert_eq!(built.names, vec![hello.clone()], "the build is reported");
+    assert!(built.bytes > 0, "the recipe snapshot was downloaded");
+
+    let local = Local::of(env.root.path());
+    let published = local
+        .source()
+        .expect("the local key works")
+        .expect("a local index exists");
+    let entries: Vec<&laft_index::IndexEntry> = published
+        .accepted
+        .index
+        .packages
+        .iter()
+        .filter(|entry| entry.meta.name == hello)
+        .collect();
+    assert_eq!(entries.len(), 1, "hello is published once: {entries:?}");
+    assert_eq!(entries[0].meta.version.as_str(), "1.0");
+    assert!(
+        env.root
+            .path()
+            .join("laft/local")
+            .join(&entries[0].file)
+            .is_file(),
+        "the package file is in the local repository pool"
+    );
+
+    let again = run(
+        &env,
+        &[request],
+        &snapshots,
+        &indexes,
+        &build_options(),
+        &BTreeMap::new(),
+    )
+    .expect("the second round succeeds");
+    assert_eq!(again.bytes, 0, "nothing downloads twice");
+    assert_eq!(again.names, vec![hello.clone()], "the build repeats");
+    let once_more = local
+        .source()
+        .expect("the key works")
+        .expect("a local index exists");
+    assert_eq!(
+        once_more.accepted.index.generation, published.accepted.index.generation,
+        "the same build publishes nothing new"
+    );
+    let locals: Vec<&laft_index::IndexEntry> = once_more
+        .accepted
+        .index
+        .packages
+        .iter()
+        .filter(|entry| entry.meta.name == hello)
+        .collect();
+    assert_eq!(locals.len(), 1, "no duplicate is published");
+}
