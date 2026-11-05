@@ -176,7 +176,8 @@ pub(crate) fn run(
         seeded: BTreeSet::new(),
     };
     let mut groups: BTreeMap<(Blake3Hash, String), Vec<Request>> = BTreeMap::new();
-    let mut waiting: BTreeMap<(Blake3Hash, String), BTreeSet<Name>> = BTreeMap::new();
+    let mut waiting: BTreeMap<(Blake3Hash, String), BTreeSet<(Blake3Hash, String)>> =
+        BTreeMap::new();
     let mut queued: BTreeSet<(Name, String)> = BTreeSet::new();
     let mut queue: Vec<Request> = requests.to_vec();
     let mut rounds = 0;
@@ -189,10 +190,6 @@ pub(crate) fn run(
                  which is an internal error",
             ));
         }
-        let key = (request.name.clone(), request.signature());
-        if !queued.insert(key) {
-            continue;
-        }
         let Some(source) = snapshots.get(&(request.name.clone(), request.variant)) else {
             return Err(Failure::new(
                 exit::FAILURE,
@@ -203,9 +200,19 @@ pub(crate) fn run(
             )
             .hint("add a repository that publishes it, or a recipe snapshot for it"));
         };
-        run.unpack(source)?;
         let blake3 = source.snapshot.blake3;
         let here = (blake3, request.signature());
+        let key = (request.name.clone(), request.signature());
+        if !queued.insert(key) {
+            // The same package with the same values, asked for by another
+            // view: the group records it, so that the choice of published
+            // dependencies counts every view of the group.
+            if let Some(members) = groups.get_mut(&here) {
+                members.push(request);
+            }
+            continue;
+        }
+        run.unpack(source)?;
         groups
             .entry(here.clone())
             .or_default()
@@ -215,11 +222,12 @@ pub(crate) fn run(
             match run.depends_on(&reference, &view)? {
                 Where::Published => {}
                 Where::Group { dependency, there } => {
-                    if there != blake3 {
-                        waiting
-                            .entry(here.clone())
-                            .or_default()
-                            .insert(dependency.name.clone());
+                    // The edge carries the group key of the dependency,
+                    // so that groups of one snapshot with different
+                    // values still build in dependency order.
+                    let before = (there, dependency.signature());
+                    if before != here {
+                        waiting.entry(here.clone()).or_default().insert(before);
                     }
                     queue.push(dependency);
                 }
@@ -234,8 +242,7 @@ pub(crate) fn run(
             }
         }
     }
-    for (blake3, signature) in order(&groups, &waiting)? {
-        let key = (blake3, signature);
+    for key in order(&groups, &waiting)? {
         let requests = &groups[&key];
         run.group(&key.0, requests, &root)?;
     }
@@ -491,26 +498,32 @@ impl<'a> Run<'a> {
         requests: &[Request],
         root: &BuildRoot,
     ) -> Result<(), Failure> {
+        // Several views may need the same build. The published
+        // dependencies are chosen with the context of the first view of
+        // the group that accepts a candidate.
+        let mut views: Vec<&str> = Vec::new();
+        for request in requests {
+            if !views.contains(&request.view.as_str()) {
+                views.push(request.view.as_str());
+            }
+        }
         for _ in 0..LIMIT {
             let references = self.scan(blake3, requests, root)?;
-            let pending: Vec<(&PkgRef, String)> = references
+            let pending: Vec<&PkgRef> = references
                 .iter()
                 .filter(|reference| !self.seeded.contains(reference.name()))
-                .map(|reference| {
-                    let view = requests
-                        .first()
-                        .map(|request| request.view.clone())
-                        .unwrap_or_else(|| crate::resolve::SYSTEM.to_owned());
-                    (reference, view)
-                })
                 .collect();
             if pending.is_empty() {
                 return self.build(blake3, requests, root);
             }
-            for (reference, view) in pending {
-                let found = self
-                    .candidate(reference, &view)
-                    .map(|(entry, index)| (entry.clone(), index.mirrors.clone()));
+            for reference in pending {
+                let mut found = None;
+                for view in &views {
+                    if let Some((entry, index)) = self.candidate(reference, view) {
+                        found = Some((entry.clone(), index.mirrors.clone()));
+                        break;
+                    }
+                }
                 match found {
                     Some((entry, mirrors)) => {
                         self.seeded.insert(reference.name().clone());
@@ -575,13 +588,10 @@ impl<'a> Run<'a> {
                 arguments.push(set);
             }
         }
+        let items: BTreeSet<String> = requests.iter().map(Request::item).collect();
         arguments.push("build".to_owned());
-        arguments.extend(requests.iter().map(Request::item));
-        let names = requests
-            .iter()
-            .map(Request::item)
-            .collect::<Vec<_>>()
-            .join(", ");
+        arguments.extend(items.iter().cloned());
+        let names = items.iter().cloned().collect::<Vec<_>>().join(", ");
         self.env
             .ui
             .phase("building", format!("{names} from a recipe snapshot"));
@@ -610,9 +620,13 @@ impl<'a> Run<'a> {
         files.sort();
         let local = Local::of(self.env.root.path());
         local.add(&files)?;
-        self.built
-            .names
-            .extend(requests.iter().map(|request| request.name.clone()));
+        let mut names: Vec<Name> = Vec::new();
+        for request in requests {
+            if !names.contains(&request.name) {
+                names.push(request.name.clone());
+            }
+        }
+        self.built.names.extend(names);
         let refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
         self.exec_seed(root, &refs)
     }
@@ -674,33 +688,19 @@ fn seed_arguments(root: &Path, files: &[&Path]) -> Vec<String> {
 }
 
 /// The groups in an order in which every group comes after the groups
-/// whose packages it waits for.
+/// whose packages it waits for. The edges are the group keys `waiting`
+/// carries.
 fn order(
     groups: &BTreeMap<(Blake3Hash, String), Vec<Request>>,
-    waiting: &BTreeMap<(Blake3Hash, String), BTreeSet<Name>>,
+    waiting: &BTreeMap<(Blake3Hash, String), BTreeSet<(Blake3Hash, String)>>,
 ) -> Result<Vec<(Blake3Hash, String)>, Failure> {
-    let builds = |name: &Name| {
-        groups
-            .iter()
-            .find(|(_, requests)| requests.iter().any(|request| &request.name == name))
-            .map(|(key, _)| key.clone())
-    };
-    let mut edges: BTreeMap<(Blake3Hash, String), BTreeSet<(Blake3Hash, String)>> = BTreeMap::new();
-    for (key, names) in waiting {
-        let entry = edges.entry(key.clone()).or_default();
-        for name in names {
-            if let Some(before) = builds(name) {
-                entry.insert(before);
-            }
-        }
-    }
     let mut out = Vec::new();
     let mut left: BTreeSet<(Blake3Hash, String)> = groups.keys().cloned().collect();
     while !left.is_empty() {
         let next = left
             .iter()
             .find(|candidate| {
-                edges
+                waiting
                     .get(*candidate)
                     .is_none_or(|before| before.iter().all(|b| !left.contains(b)))
             })

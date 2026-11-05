@@ -314,22 +314,36 @@ fn groups_build_after_the_groups_whose_packages_they_wait_for() {
         (second.clone(), vec![request("mesa")]),
     ]);
     let mut waiting = BTreeMap::new();
-    waiting.insert(
-        second.clone(),
-        BTreeSet::from(["zlib".parse().expect("a name")]),
-    );
+    waiting.insert(second.clone(), BTreeSet::from([first.clone()]));
     let ordered = order(&groups, &waiting).expect("an order exists");
     assert_eq!(ordered, vec![first.clone(), second.clone()]);
     let mut both = BTreeMap::new();
-    both.insert(
-        first.clone(),
-        BTreeSet::from(["mesa".parse().expect("a name")]),
-    );
-    both.insert(
-        second.clone(),
-        BTreeSet::from(["zlib".parse().expect("a name")]),
-    );
+    both.insert(first.clone(), BTreeSet::from([second.clone()]));
+    both.insert(second.clone(), BTreeSet::from([first.clone()]));
     assert!(order(&groups, &both).is_err());
+}
+
+#[test]
+fn groups_of_one_snapshot_build_in_the_order_of_their_values() {
+    let request = |name: &str, llvm: bool| Request {
+        name: name.parse().expect("a name"),
+        version: "1.0".parse().expect("a version"),
+        variant: Variant::default(),
+        values: BTreeMap::from([("llvm".to_owned(), OptionValue::Bool(llvm))]),
+        view: "system".to_owned(),
+        reasons: Vec::new(),
+    };
+    let snapshot = Blake3Hash::of(b"recipes");
+    let parent = (snapshot.clone(), "llvm=false".to_owned());
+    let child = (snapshot.clone(), "llvm=true".to_owned());
+    let groups = BTreeMap::from([
+        (parent.clone(), vec![request("zlib", false)]),
+        (child.clone(), vec![request("mesa", true)]),
+    ]);
+    let mut waiting = BTreeMap::new();
+    waiting.insert(child.clone(), BTreeSet::from([parent.clone()]));
+    let ordered = order(&groups, &waiting).expect("an order exists");
+    assert_eq!(ordered, vec![parent, child]);
 }
 
 #[test]
