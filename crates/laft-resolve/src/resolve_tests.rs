@@ -306,6 +306,58 @@ fn an_installed_build_without_a_library_names_its_options() {
     );
 }
 
+/// A provider excluded by a version prefix rather than the option
+/// values: the error carries no note blaming the options.
+#[test]
+fn a_provider_lost_to_a_prefix_is_not_blamed_on_the_options() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 1.0")
+                .options(&[("x11", "true")])
+                .provides(&["so:libEGL_mesa.so.0"]),
+            pkg("mesa 2.0")
+                .options(&[("x11", "false")])
+                .provides(&["so:libEGL_mesa.so.0"]),
+            pkg("kwin 6.3.0").depends(&["so:libEGL_mesa.so.0"]),
+        ],
+    );
+    let i = input_with("system", vec![req("mesa@1{!x11}"), req("kwin")], &[], &[]);
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(e.code(), Some("S005"));
+    assert!(!e.to_string().contains("does not provide"), "{}", e);
+}
+
+/// A provider that lost two option values: the hint names both, sorted
+/// and joined.
+#[test]
+fn a_hint_for_two_differing_options_names_both() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0")
+                .options(&[("llvm", "true"), ("x11", "true")])
+                .provides(&["so:libEGL_mesa.so.0"]),
+            pkg("mesa 25.2.0").options(&[("llvm", "false"), ("x11", "false")]),
+            pkg("kwin 6.3.0").depends(&["so:libEGL_mesa.so.0"]),
+        ],
+    );
+    let i = input_with(
+        "system",
+        vec![req("mesa{!llvm,!x11}"), req("kwin")],
+        &[],
+        &[],
+    );
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(e.code(), Some("S007"));
+    assert!(
+        e.to_string()
+            .contains("which mesa with llvm=false, x11=false does not provide"),
+        "{}",
+        e
+    );
+}
+
 #[test]
 fn requests_for_two_variants_conflict() {
     let core = index("core", vec![pkg("rg 14 static")]);

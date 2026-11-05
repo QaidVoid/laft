@@ -1629,10 +1629,13 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
 
     /// The hint for a name whose option bounds are why no candidate
     /// provides what a dependency needs: which dependency needs it, and
-    /// the option values that exclude the builds providing it.
+    /// the option values that exclude the builds providing it. The note
+    /// names the values only when every build that provides the library
+    /// fails them, so a provider excluded by a learned avoidance or a
+    /// version prefix is never blamed on the options.
     fn dropped_provide(&self, name: &Name, constraints: &[Bound]) -> Option<String> {
         let mut needs = None;
-        let mut demanded: Vec<String> = Vec::new();
+        let mut demanded: Vec<&OptionConstraint> = Vec::new();
         for bound in constraints {
             match &bound.dep {
                 Dep::So(_) if needs.is_none() => {
@@ -1641,11 +1644,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                     }
                 }
                 Dep::Pkg(n, _, opts) if n == name && !opts.as_slice().is_empty() => {
-                    demanded.extend(opts.as_slice().iter().map(|c| match c {
-                        OptionConstraint::True { name } => format!("{name}=true"),
-                        OptionConstraint::False { name } => format!("{name}=false"),
-                        OptionConstraint::Tag { name, tag } => format!("{name}={tag}"),
-                    }));
+                    demanded.extend(opts.as_slice().iter());
                 }
                 _ => {}
             }
@@ -1654,16 +1653,38 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         if demanded.is_empty() {
             return None;
         }
-        let provided = self
+        let excluded_by_values = !self
             .ctx
             .ordered(name.as_str())
             .ok()?
-            .any(|c| provides(c.meta, &dep));
-        provided.then(|| {
+            .any(|c| provides(c.meta, &dep) && Self::demanded_hold(&c.meta.options, &demanded));
+        excluded_by_values.then(|| {
+            let values: BTreeSet<String> = demanded
+                .iter()
+                .map(|c| match c {
+                    OptionConstraint::True { name } => format!("{name}=true"),
+                    OptionConstraint::False { name } => format!("{name}=false"),
+                    OptionConstraint::Tag { name, tag } => format!("{name}={tag}"),
+                })
+                .collect();
             format!(
                 "{by} needs {dep}, which {name} with {} does not provide",
-                demanded.join(", ")
+                values.into_iter().collect::<Vec<_>>().join(", ")
             )
+        })
+    }
+
+    /// Whether a candidate's recorded options satisfy every demanded
+    /// constraint. An option the candidate does not record fails, like a
+    /// fixed value.
+    fn demanded_hold(
+        options: &BTreeMap<String, OptionValue>,
+        demanded: &[&OptionConstraint],
+    ) -> bool {
+        demanded.iter().all(|c| match c {
+            OptionConstraint::True { name }
+            | OptionConstraint::False { name }
+            | OptionConstraint::Tag { name, .. } => options.get(name).is_some_and(|v| c.matches(v)),
         })
     }
 
