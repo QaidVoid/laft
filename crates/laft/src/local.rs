@@ -7,13 +7,20 @@
 //! `channels/<channel>/<arch>/` with immutable snapshots. The key is
 //! generated on the first local build and stays unencrypted, so that
 //! builds never pause for a password.
+//!
+//! Packages are added only after they verify: the metadata and the
+//! manifest are read with the streaming checks every package file gets,
+//! and the store id is recomputed from the manifest. The step that adds
+//! results runs as root; the builds themselves never do.
 
 use std::fs;
+use std::io::BufReader;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use laft_core::Name;
-use laft_index::{Index, PublicKey};
+use laft_core::{Name, Timestamp};
+use laft_index::{Index, PublicKey, Signature};
+use laft_pkg::Reader;
 use minisign::{KeyPair, SecretKey, SecretKeyBox};
 
 use crate::env::{ARCH, RepoIndex};
@@ -21,6 +28,12 @@ use crate::failure::{Failure, exit};
 
 /// The name of the repository and of the channel of its indexes.
 const CHANNEL: &str = "local";
+
+/// How many index generations of the local repository are kept.
+const KEEP_SNAPSHOTS: usize = 5;
+
+/// The suffix of a signature file.
+const SIG: &str = ".minisig";
 
 /// The local repository of a system root.
 #[derive(Debug, Clone)]
@@ -76,6 +89,22 @@ impl Local {
         self.write_secret(&boxed)?;
         self.write_public(&public)?;
         Ok(listed)
+    }
+
+    /// The signed index of the local repository, or `None` when nothing
+    /// was built yet.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the index exists but cannot be decoded.
+    pub(crate) fn index(&self) -> Result<Option<Index>, Failure> {
+        let bytes = match self.read_entry()? {
+            Some(bytes) => bytes,
+            None => return Ok(None),
+        };
+        Index::decode(&bytes)
+            .map(Some)
+            .map_err(|e| self.failed(format!("{}: {e}", self.entry().display())))
     }
 
     /// The local repository as a source of packages with the highest
@@ -135,10 +164,181 @@ impl Local {
         read_optional(&self.entry())
     }
 
+    /// Verifies every package file of `packages` and adds the new ones to
+    /// the pool and to a new signed index generation. A package the index
+    /// already lists is left as it is, and so is its file in the pool.
+    ///
+    /// Returns how many packages were added.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a file is not a valid package, when the same package is
+    /// listed with another store id, or when the index or the key cannot
+    /// be used.
+    pub(crate) fn add(&self, packages: &[PathBuf]) -> Result<usize, Failure> {
+        let mut index = self.index()?.unwrap_or_else(empty_index);
+        let mut staged = Vec::new();
+        for path in packages {
+            let bytes =
+                fs::read(path).map_err(|e| self.failed(format!("{}: {e}", path.display())))?;
+            let reader = Reader::new(BufReader::new(bytes.as_slice()))
+                .map_err(|e| self.failed(format!("{}: {e}", path.display())))?;
+            let meta = reader.meta().clone();
+            let id = reader.manifest().store_id();
+            let same = |e: &laft_index::IndexEntry| {
+                let m = &e.meta;
+                (&m.name, &m.version, m.rev, m.variant, &m.options)
+                    == (
+                        &meta.name,
+                        &meta.version,
+                        meta.rev,
+                        meta.variant,
+                        &meta.options,
+                    )
+            };
+            match index.packages.iter().find(|e| same(e)) {
+                Some(e) if e.id == id => continue,
+                Some(e) => {
+                    return Err(self.failed(format!(
+                        "{} {} is already listed as {}, but the new build has the id {id}; \
+                         publish a new revision instead",
+                        meta.name, meta.version, e.id
+                    )));
+                }
+                None => {}
+            }
+            staged.push((
+                path.clone(),
+                id,
+                bytes.len(),
+                laft_core::Blake3Hash::of(&bytes),
+                meta,
+            ));
+        }
+        let added = staged.len();
+        for (path, id, size, blake3, meta) in &staged {
+            let pool = self.pool(*id);
+            fs::create_dir_all(pool.parent().expect("the pool has a parent"))
+                .map_err(|e| self.failed(format!("{}: {e}", pool.display())))?;
+            fs::copy(path, &pool).map_err(|e| self.failed(format!("{}: {e}", path.display())))?;
+            if let Some(source) = buildinfo_of(path) {
+                let target = self.repo.join(format!("buildinfo/{id}.json"));
+                fs::create_dir_all(target.parent().expect("buildinfo has a parent"))
+                    .map_err(|e| self.failed(format!("{}: {e}", target.display())))?;
+                fs::copy(&source, &target)
+                    .map_err(|e| self.failed(format!("{}: {e}", source.display())))?;
+            }
+            index.packages.push(laft_index::IndexEntry {
+                meta: meta.clone(),
+                id: *id,
+                file: format!("pool/{id}.lpkg"),
+                size: *size as u64,
+                blake3: *blake3,
+            });
+        }
+        if added == 0 {
+            return Ok(0);
+        }
+        index.packages.sort_by(|a, b| {
+            (&a.meta.name, &a.meta.version, a.meta.rev, a.meta.variant).cmp(&(
+                &b.meta.name,
+                &b.meta.version,
+                b.meta.rev,
+                b.meta.variant,
+            ))
+        });
+        index.generation += 1;
+        index.timestamp = Timestamp::now();
+        index.expires =
+            Timestamp::from_secs(index.timestamp.as_secs() + laft_index::MAX_VALIDITY_SECS);
+        self.write(index)?;
+        Ok(added)
+    }
+
     /// The path of the entry point of the local index.
     fn entry(&self) -> PathBuf {
         self.repo
             .join(format!("channels/{CHANNEL}/{}/index.json.zst", ARCH))
+    }
+
+    /// The path of the package file of `id`.
+    fn pool(&self, id: laft_core::StoreId) -> PathBuf {
+        self.repo.join(format!("pool/{id}.lpkg"))
+    }
+
+    /// The path of the snapshot of `generation`.
+    fn snapshot(&self, generation: u64) -> PathBuf {
+        self.repo.join(format!(
+            "channels/{CHANNEL}/{}/snapshots/{generation}.json.zst",
+            ARCH
+        ))
+    }
+
+    /// Writes `index` as a new generation, signs it and prunes old
+    /// snapshots. The key is generated when this is the first build.
+    fn write(&self, index: Index) -> Result<(), Failure> {
+        self.public_key()?;
+        let bytes = index
+            .encode()
+            .map_err(|e| self.failed(format!("the local index cannot be encoded: {e}")))?;
+        let secret = self
+            .read_secret()?
+            .ok_or_else(|| self.failed("the local key does not exist yet"))?;
+        let public = public_of(&secret)?;
+        let listed: PublicKey = public
+            .to_base64()
+            .parse()
+            .map_err(|e| self.failed(format!("{e}")))?;
+        let comment = index.comment().to_string();
+        let signature = minisign::sign(
+            Some(&public),
+            &secret,
+            bytes.as_slice(),
+            Some(&comment),
+            Some(&format!(
+                "signature from laft local repository key {}",
+                listed.id()
+            )),
+        )
+        .map_err(|e| self.failed(format!("{}: {e}", self.key.display())))?
+        .into_string()
+        .into_bytes();
+        let decoded = Signature::decode(&signature)
+            .map_err(|e| self.failed(format!("the signature cannot be read: {e}")))?;
+        if !listed.verifies(&bytes, &decoded) {
+            return Err(self.failed("the signature of the local index does not verify"));
+        }
+        let entry = self.entry();
+        let snapshot = self.snapshot(index.generation);
+        write_new(&snapshot, &bytes)?;
+        write_new(&signed(&snapshot), &signature)?;
+        write_new(&entry, &bytes)?;
+        write_new(&signed(&entry), &signature)?;
+        self.prune()
+    }
+
+    /// Removes snapshots until [`KEEP_SNAPSHOTS`] remain.
+    fn prune(&self) -> Result<(), Failure> {
+        let dir = self
+            .snapshot(0)
+            .parent()
+            .expect("the snapshot has a parent")
+            .to_owned();
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return Ok(());
+        };
+        let mut generations: Vec<u64> = entries
+            .filter_map(Result::ok)
+            .filter_map(|e| e.file_name().to_string_lossy().into_owned().parse().ok())
+            .collect();
+        generations.sort_unstable();
+        let excess = generations.len().saturating_sub(KEEP_SNAPSHOTS);
+        for old in &generations[..excess] {
+            let snapshot = self.snapshot(*old);
+            let _ = fs::remove_file(signed(&snapshot));
+            let _ = fs::remove_file(&snapshot);
+        }
+        Ok(())
     }
 
     /// The unencrypted secret key of the repository, when it exists.
@@ -196,6 +396,38 @@ impl Local {
 fn public_of(secret: &SecretKey) -> Result<minisign::PublicKey, Failure> {
     minisign::PublicKey::from_secret_key(secret)
         .map_err(|e| Failure::new(exit::FAILURE, format!("the local key: {e}")))
+}
+
+/// The buildinfo file written next to the package `path`, when it exists.
+fn buildinfo_of(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    let buildinfo = path.with_file_name(format!("{name}.buildinfo.json"));
+    buildinfo.is_file().then_some(buildinfo)
+}
+
+/// The path of the signature file of `path`.
+fn signed(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}{SIG}", path.display()))
+}
+
+/// The index of a repository that has nothing in it yet.
+fn empty_index() -> Index {
+    let name = CHANNEL.parse::<Name>().expect("a valid name");
+    Index {
+        format: Index::FORMAT,
+        repo: name.clone(),
+        channel: name,
+        arch: ARCH,
+        generation: 0,
+        timestamp: Timestamp::now(),
+        expires: Timestamp::now(),
+        defaults: Default::default(),
+        packages: Vec::new(),
+        yanked: Vec::new(),
+        options: Default::default(),
+        recipes: None,
+        profile: None,
+    }
 }
 
 /// Writes `bytes` to `path`, which appears complete or not at all, with

@@ -15,6 +15,7 @@ clap.workspace = true
 clap_complete.workspace = true
 codespan-reporting.workspace = true
 laft-activate.workspace = true
+laft-build.workspace = true
 laft-config.workspace = true
 laft-core.workspace = true
 laft-fetch.workspace = true

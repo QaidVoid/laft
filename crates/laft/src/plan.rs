@@ -125,10 +125,27 @@ pub(crate) struct Plan<'a> {
     pub(crate) download_bytes: u64,
     /// The bytes the store grows by.
     pub(crate) store_bytes: u64,
+    /// The packages a run builds from recipe snapshots, in request order.
+    pub(crate) builds: Vec<BuildPlan>,
+    /// The bytes the recipe snapshots of the builds take to download.
+    pub(crate) source_bytes: u64,
     /// Whether the configuration differs from the active generation's.
     pub(crate) config_changed: bool,
     /// Whether nothing at all would change.
     pub(crate) nothing_to_do: bool,
+}
+
+/// What a run would build, as the plan shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BuildPlan {
+    /// The package, as `name` or `name:variant`.
+    pub(crate) item: String,
+    /// The version the snapshot builds.
+    pub(crate) version: Version,
+    /// Why the view needs it, one line.
+    pub(crate) reason: String,
+    /// The bytes the recipe snapshot takes to download.
+    pub(crate) bytes: u64,
 }
 
 /// What a plan is computed from.
@@ -141,6 +158,8 @@ pub(crate) struct Inputs<'r, 'a> {
     pub(crate) resolved: &'r Resolved<'a>,
     /// The accepted indexes the resolutions come from.
     pub(crate) indexes: &'a [RepoIndex],
+    /// The recipe snapshot of every buildable package, by name.
+    pub(crate) snapshots: &'r crate::resolve::SnapshotMap,
     /// The evaluated configuration value.
     pub(crate) config: &'r [u8],
     /// The validated services.
@@ -292,12 +311,32 @@ pub(crate) fn plan<'a>(inputs: &Inputs<'_, 'a>) -> Result<Plan<'a>, Failure> {
     let generation = Some(number);
     let services = service_plan(inputs, number)?;
     let config_changed = active.is_none_or(|g| g.config.hash != Blake3Hash::of(inputs.config));
+    let builds: Vec<BuildPlan> = [&inputs.resolved.system, &inputs.resolved.initrd]
+        .into_iter()
+        .chain(inputs.resolved.views.values())
+        .flat_map(|r| r.builds.iter())
+        .map(|b| {
+            let source = inputs.snapshots.get(&b.buildable.name);
+            BuildPlan {
+                item: item_of(b),
+                version: b.buildable.version.clone(),
+                reason: b
+                    .reasons
+                    .first()
+                    .map(crate::builds::reason_text)
+                    .unwrap_or_default(),
+                bytes: source.map(|s| s.snapshot.size).unwrap_or(0),
+            }
+        })
+        .collect();
+    let source_bytes = builds.iter().map(|b| b.bytes).sum();
     let declared: BTreeSet<&Name> = inputs.resolved.views.keys().collect();
     let views_same = active.is_none_or(|g| g.views.keys().collect::<BTreeSet<_>>() == declared)
         && views[1..]
             .iter()
             .all(|v| v.keep.is_some() || v.name == INITRD);
-    let nothing_to_do = active.is_some_and(|g| g.laft_version == env!("CARGO_PKG_VERSION"))
+    let nothing_to_do = builds.is_empty()
+        && active.is_some_and(|g| g.laft_version == env!("CARGO_PKG_VERSION"))
         && !config_changed
         && views[0].changes.is_empty()
         && initrd_changes.is_empty()
@@ -318,9 +357,20 @@ pub(crate) fn plan<'a>(inputs: &Inputs<'_, 'a>) -> Result<Plan<'a>, Failure> {
         fetch,
         download_bytes,
         store_bytes,
+        builds,
+        source_bytes,
         config_changed,
         nothing_to_do,
     })
+}
+
+/// The build request as `name` or `name:variant`.
+fn item_of(build: &laft_resolve::BuildRequest) -> String {
+    if build.buildable.variant == Variant::default() {
+        build.buildable.name.to_string()
+    } else {
+        format!("{}:{}", build.buildable.name, build.buildable.variant)
+    }
 }
 
 fn service_plan(inputs: &Inputs<'_, '_>, generation: u64) -> Result<ServicePlan, Failure> {
@@ -424,6 +474,20 @@ impl Plan<'_> {
                 let _ = writeln!(out, "{}", line.trim_end());
             }
         }
+        if !self.builds.is_empty() {
+            let _ = writeln!(out, "  build from recipe snapshots");
+            for build in &self.builds {
+                let line = format!(
+                    "    {} {} {}  {}",
+                    ui.sym(Sym::Added),
+                    build.item,
+                    build.version,
+                    build.reason
+                );
+                let _ = writeln!(out, "{}", line.trim_end());
+            }
+            let _ = writeln!(out, "    sources {}", ui::size(self.source_bytes));
+        }
         let _ = writeln!(
             out,
             "\n  download {} {} store {} {} {} package{}",
@@ -459,6 +523,17 @@ impl Plan<'_> {
             "download_bytes": self.download_bytes,
             "store_bytes": self.store_bytes,
             "packages": self.fetch.len(),
+            "builds": self
+                .builds
+                .iter()
+                .map(|b| json!({
+                    "item": b.item,
+                    "version": b.version.to_string(),
+                    "reason": b.reason,
+                    "bytes": b.bytes,
+                }))
+                .collect::<Vec<_>>(),
+            "source_bytes": self.source_bytes,
             "nothing_to_do": self.nothing_to_do,
         })
     }

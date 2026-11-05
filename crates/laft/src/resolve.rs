@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use laft_config::SystemConfig;
-use laft_core::{Name, PkgRef, StoreId, Variant};
+use laft_core::{Name, OptionValue, PkgRef, StoreId, Variant, Version};
 use laft_pkg::Meta;
 use laft_resolve::{
     Buildable, Installed, OptionRequest, Repository, Request, Resolution, ResolveInput, Universe,
@@ -92,12 +92,36 @@ pub(crate) fn universe(indexes: &[RepoIndex]) -> Universe<'_> {
 /// The packages the accepted indexes can build from their recipe
 /// snapshots, one per name.
 ///
+/// Where a package is built from: the repository that offered it and the
+/// recipe snapshot of its index generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SnapshotSource {
+    /// The repository name.
+    pub(crate) repo: Name,
+    /// The recipe snapshot of the index generation.
+    pub(crate) snapshot: laft_index::RecipeSnapshot,
+    /// The package the snapshot builds.
+    pub(crate) name: Name,
+    /// The version the recipes build.
+    pub(crate) version: Version,
+    /// The variant the recipes build.
+    pub(crate) variant: Variant,
+    /// The default value of every recipe option of the snapshot.
+    pub(crate) defaults: BTreeMap<String, OptionValue>,
+}
+
+/// The recipe snapshot of every buildable package, by name.
+pub(crate) type SnapshotMap = BTreeMap<Name, SnapshotSource>;
+
 /// Only a repository that publishes a snapshot contributes. The newest
 /// entry wins for a name; a tie goes to the repository with the higher
 /// priority, then to the greater name, as the option declarations do. The
 /// declared defaults of the winning repository are the values a build
 /// starts from.
-pub(crate) fn buildables(indexes: &[RepoIndex]) -> Vec<Buildable> {
+///
+/// The second value maps every buildable name to the recipe snapshot that
+/// would build it, which [`crate::builds`] fetches and unpacks.
+pub(crate) fn buildables(indexes: &[RepoIndex]) -> (Vec<Buildable>, SnapshotMap) {
     let mut by_priority: Vec<&RepoIndex> = indexes
         .iter()
         .filter(|repo| repo.accepted.index.recipes.is_some())
@@ -106,8 +130,9 @@ pub(crate) fn buildables(indexes: &[RepoIndex]) -> Vec<Buildable> {
     let mut newest: BTreeMap<Name, (&laft_index::IndexEntry, &RepoIndex)> = BTreeMap::new();
     for repo in by_priority {
         for entry in &repo.accepted.index.packages {
-            let rank =
-                |e: &laft_index::IndexEntry| (e.meta.version.clone(), e.meta.rev, e.meta.variant);
+            fn rank(e: &laft_index::IndexEntry) -> (&laft_core::Version, u32, Variant) {
+                (&e.meta.version, e.meta.rev, e.meta.variant)
+            }
             match newest.entry(entry.meta.name.clone()) {
                 std::collections::btree_map::Entry::Vacant(slot) => {
                     slot.insert((entry, repo));
@@ -120,30 +145,47 @@ pub(crate) fn buildables(indexes: &[RepoIndex]) -> Vec<Buildable> {
             }
         }
     }
-    newest
-        .into_iter()
-        .map(|(name, (entry, repo))| {
-            let defaults = repo
-                .accepted
-                .index
-                .options
-                .get(&name)
-                .map(|decls| {
-                    decls
-                        .iter()
-                        .map(|decl| (decl.name.clone(), decl.default.clone()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            Buildable {
-                name,
+    let mut out = Vec::new();
+    let mut snapshots = BTreeMap::new();
+    for (name, (entry, repo)) in newest {
+        let snapshot = repo
+            .accepted
+            .index
+            .recipes
+            .clone()
+            .expect("the repository publishes a snapshot");
+        let defaults: BTreeMap<String, OptionValue> = repo
+            .accepted
+            .index
+            .options
+            .get(&name)
+            .map(|decls| {
+                decls
+                    .iter()
+                    .map(|decl| (decl.name.clone(), decl.default.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        snapshots.insert(
+            name.clone(),
+            SnapshotSource {
+                repo: repo.name.clone(),
+                snapshot,
+                name: name.clone(),
                 version: entry.meta.version.clone(),
-                rev: entry.meta.rev,
                 variant: entry.meta.variant,
-                defaults,
-            }
-        })
-        .collect()
+                defaults: defaults.clone(),
+            },
+        );
+        out.push(Buildable {
+            name,
+            version: entry.meta.version.clone(),
+            rev: entry.meta.rev,
+            variant: entry.meta.variant,
+            defaults,
+        });
+    }
+    (out, snapshots)
 }
 
 /// The fixed and preferred values of one view, as the resolver asks for

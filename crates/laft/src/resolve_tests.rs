@@ -238,7 +238,7 @@ fn buildables_take_the_newest_entry_and_the_higher_priority_breaks_a_tie() {
         )]),
         true,
     );
-    let found = buildables(&[low, no_snapshot, high, twin]);
+    let found = buildables(&[low, no_snapshot, high, twin]).0;
     assert_eq!(found.len(), 1);
     let mesa = &found[0];
     assert_eq!(mesa.name.as_str(), "mesa");
@@ -260,7 +260,7 @@ fn a_repository_without_a_snapshot_contributes_no_buildables() {
         BTreeMap::new(),
         false,
     );
-    assert!(buildables(&[plain]).is_empty());
+    assert!(buildables(&[plain]).0.is_empty());
 }
 
 #[test]

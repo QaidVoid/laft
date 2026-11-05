@@ -36,6 +36,7 @@
 mod activate;
 mod apply;
 mod boot;
+mod builds;
 mod cli;
 mod diff;
 mod env;

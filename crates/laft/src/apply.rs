@@ -46,6 +46,7 @@ struct Planned<'i> {
     services: laft_svc::ServiceSet,
     plan: Plan<'i>,
     resolved: Resolved<'i>,
+    snapshots: resolve::SnapshotMap,
 }
 
 fn view_access(loaded: &Loaded) -> BTreeMap<Name, (Vec<String>, Vec<String>)> {
@@ -91,9 +92,10 @@ fn compute<'i>(
     let services = resolve::services(&loaded.config)?;
     let universe = resolve::universe(indexes);
     let host = host(env, &loaded.config);
+    let (buildable, snapshots) = resolve::buildables(indexes);
     let context = resolve::ViewContext {
         options: &loaded.options,
-        buildable: &resolve::buildables(indexes),
+        buildable: &buildable,
         allow_builds: allow_builds(&loaded.config, builds_allowed),
     };
     let resolved = resolve::resolve(
@@ -125,6 +127,7 @@ fn compute<'i>(
         active: active.as_ref(),
         resolved: &resolved,
         indexes,
+        snapshots: &snapshots,
         config: &loaded.value,
         services: &services,
         view_access: view_access(&loaded),
@@ -140,6 +143,7 @@ fn compute<'i>(
         services,
         plan,
         resolved,
+        snapshots,
     })
 }
 
@@ -231,10 +235,10 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
     } else {
         SyncMode::IfStale
     };
-    let (loaded, indexes) = env.load_with_indexes(mode, Some(&lock))?;
+    let (loaded, mut indexes) = env.load_with_indexes(mode, Some(&lock))?;
     let active = env.active()?.map(|n| env.generation(n)).transpose()?;
     let installed = InstalledMetas::of(&env.root, active.as_ref());
-    let planned = compute(
+    let mut planned = compute(
         env,
         loaded,
         &indexes,
@@ -264,6 +268,66 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
         env.ui.out("");
     }
     env.ui.confirm("proceed?")?;
+    let mut rounds = 0;
+    let mut done: BTreeSet<(Name, String)> = BTreeSet::new();
+    while !crate::builds::requests_of(&planned.resolved).is_empty() {
+        rounds += 1;
+        if rounds > crate::builds::ROUNDS {
+            let items = crate::builds::requests_of(&planned.resolved)
+                .iter()
+                .map(crate::builds::Request::item)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(Failure::new(
+                exit::FAILURE,
+                format!("the builds do not settle, still missing {items}"),
+            ));
+        }
+        let requests = crate::builds::requests_of(&planned.resolved);
+        if let Some(again) = requests
+            .iter()
+            .find(|request| done.contains(&(request.name.clone(), request.signature())))
+        {
+            return Err(Failure::new(
+                exit::FAILURE,
+                format!(
+                    "{} was built, but the resolution asks for it again, \
+                     which is an internal error",
+                    again.item()
+                ),
+            ));
+        }
+        for request in &requests {
+            done.insert((request.name.clone(), request.signature()));
+        }
+        let config = &planned.loaded.config;
+        crate::builds::run(
+            env,
+            &requests,
+            &planned.snapshots,
+            &indexes,
+            &config.build,
+            &planned.loaded.options,
+        )?;
+        let local = crate::local::Local::of(env.root.path());
+        let source = local.source()?.ok_or_else(|| {
+            Failure::new(
+                exit::FAILURE,
+                "the local repository has no index after the builds",
+            )
+        })?;
+        let Planned { loaded, .. } = planned;
+        indexes.push(source);
+        planned = compute(
+            env,
+            loaded,
+            &indexes,
+            &installed,
+            &request.upgrade,
+            &request.rebuild,
+            args.build_missing,
+        )?;
+    }
     build_and_activate(env, &lock, request, &planned, &indexes)
 }
 
