@@ -1479,6 +1479,22 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             })
             .collect();
         constraints.extend(extra);
+        if let Some(req) = self.ctx.input.options.get(name) {
+            for (opt, fixed) in &req.fixed {
+                let constraint = match &fixed.value {
+                    OptionValue::Bool(true) => OptionConstraint::True { name: opt.clone() },
+                    OptionValue::Bool(false) => OptionConstraint::False { name: opt.clone() },
+                    OptionValue::Tag(tag) => OptionConstraint::Tag {
+                        name: opt.clone(),
+                        tag: tag.clone(),
+                    },
+                };
+                constraints.push(Bound {
+                    dep: Dep::Pkg(name.clone(), VersionReq::Any, vec![constraint].into()),
+                    from: BoundSource::Config(fixed.origin.clone()),
+                });
+            }
+        }
         if let Some(request) = self.requests.iter().find(|r| r.name == *name)
             && (request.prefix.is_some() || !request.options.is_empty())
         {

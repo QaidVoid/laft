@@ -1447,6 +1447,43 @@ fn a_dependency_contradicting_a_fixed_value_cannot_select() {
 }
 
 #[test]
+fn s011_names_a_name_nobody_publishes_at_all() {
+    let core = index("core", vec![pkg("blender 4.5.0").depends(&["mesa"])]);
+    let mut i = input("system", vec![req("blender")], &[]);
+    i.buildable = vec![buildable("mesa", "25.3.0", &[])];
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(e.code(), Some("S011"));
+    assert_eq!(
+        e.to_string(),
+        "error[S011]: view \"system\": no repository publishes mesa with its default option values\n  \
+         hint: set `build.missing = build` to build it on this machine,\n        \
+         or run `laft apply --build-missing` once"
+    );
+}
+
+#[test]
+fn unsatisfiable_names_the_fixed_values_when_nothing_else_remains() {
+    let core = index("core", vec![pkg("mesa 25.2.0").options(&[("x11", "true")])]);
+    let i = input_with(
+        "system",
+        vec![req("mesa")],
+        &[],
+        &[fixed(
+            "mesa",
+            &[("x11", "false", "/etc/laft/system.stav:3:5")],
+        )],
+    );
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(e.code(), Some("S005"));
+    assert_eq!(
+        e.to_string(),
+        "error[S005]: view \"system\": no version of mesa satisfies every constraint\n  \
+         mesa{!x11}    set at /etc/laft/system.stav:3:5\n  \
+         available: mesa 25.2.0-r1"
+    );
+}
+
+#[test]
 fn two_requests_contradicting_each_other_report_s012() {
     let core = index(
         "core",

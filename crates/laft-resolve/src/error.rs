@@ -232,6 +232,8 @@ pub enum BoundSource {
     Package(Package),
     /// A request made at this location.
     Request(String),
+    /// The configuration fixed an option value at this location.
+    Config(String),
 }
 
 /// Where a demanded option value comes from.
@@ -386,6 +388,9 @@ impl fmt::Display for Error {
                         BoundSource::Package(p) => writeln!(f, "  {}from {p}", pad(text, width))?,
                         BoundSource::Request(origin) => {
                             writeln!(f, "  {}requested at {origin}", pad(text, width))?;
+                        }
+                        BoundSource::Config(origin) => {
+                            writeln!(f, "  {}set at {origin}", pad(text, width))?;
                         }
                     }
                 }
