@@ -1473,6 +1473,31 @@ fn a_dependency_contradicting_a_fixed_value_cannot_select() {
 }
 
 #[test]
+fn s013_for_a_request_prints_its_origin_once() {
+    let core = index(
+        "core",
+        vec![pkg("mesa 25.2.0").options(&[("vulkan", "all")])],
+    );
+    let i = input_with(
+        "system",
+        vec![req("mesa{vulkan=amd}")],
+        &[],
+        &[fixed(
+            "mesa",
+            &[("vulkan", "all", "/etc/laft/system.stav:5:1")],
+        )],
+    );
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(e.code(), Some("S013"));
+    assert_eq!(
+        e.to_string(),
+        "error[S013]: view \"system\": mesa{vulkan=amd} requested at test:mesa{vulkan=amd}\n  \
+         demands vulkan=amd, but vulkan=all is set at /etc/laft/system.stav:5:1\n  \
+         hint: remove the setting, or set vulkan with default(...) to let dependencies choose"
+    );
+}
+
+#[test]
 fn the_installed_extra_ranks_by_its_option_values() {
     let listed = index(
         "core",

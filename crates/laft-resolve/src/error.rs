@@ -609,7 +609,9 @@ impl fmt::Display for Error {
                     "  demands {value}, but {} is set at {}",
                     fixed.0, fixed.1
                 )?;
-                if let Some(chain) = &chain {
+                if by.is_some()
+                    && let Some(chain) = &chain
+                {
                     chain.write_nested(f, 2)?;
                 }
                 let option = fixed.0.split('=').next().unwrap_or_default();
