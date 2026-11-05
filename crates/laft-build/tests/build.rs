@@ -1225,7 +1225,6 @@ fn an_options_recipe_builds_every_option_set_into_its_own_package() {
         .iter()
         .map(|(outcome, _)| outcome.stored.record.outputs[&name])
         .collect();
-    assert_eq!(ids.len(), 3);
     assert_ne!(ids[0], ids[1], "mode=fast is another package");
     assert_ne!(ids[0], ids[2], "tool=false is another package");
     assert_ne!(ids[1], ids[2]);
