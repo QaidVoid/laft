@@ -1473,6 +1473,25 @@ fn a_dependency_contradicting_a_fixed_value_cannot_select() {
 }
 
 #[test]
+fn the_installed_extra_ranks_by_its_option_values() {
+    let listed = index(
+        "core",
+        vec![pkg("mesa 25.2.0").options(&[("x11", "false")])],
+    );
+    let installed = pkg("mesa 25.2.0").options(&[("x11", "true")]);
+    let i = input_with(
+        "system",
+        vec![req("mesa")],
+        &[&installed],
+        &[preferred("mesa", &[("x11", "false")])],
+    );
+    let mut i = i;
+    i.upgrade = Upgrade::All;
+    let r = universe(&[(&listed, 0)]).resolve(&i).unwrap();
+    assert_eq!(options_of(&r, "mesa"), "x11=false");
+}
+
+#[test]
 fn a_buildable_takes_the_preferred_values_of_the_view() {
     let core = index("core", vec![]);
     let mut i = input("system", vec![req("mesa")], &[]);

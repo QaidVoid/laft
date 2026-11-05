@@ -617,20 +617,38 @@ impl<'u, 'a> Ctx<'u, 'a> {
         Ok((listed, extra))
     }
 
-    /// Every candidate of `name`, best first.
+    /// Every candidate of `name`, best first. The extra installed
+    /// candidate keeps its place by the same order as the listed ones.
     fn ordered<'s>(
         &'s self,
         name: &str,
     ) -> Result<impl Iterator<Item = Candidate<'a>> + 's, Box<ErrorKind>> {
         let (listed, extra) = self.candidates(name)?;
-        let split = extra.map_or(listed.len(), |e| {
-            listed.partition_point(|c| order(c, &e).is_lt())
-        });
-        Ok(listed[..split]
+        let Some(extra) = extra else {
+            return Ok(
+                Box::new(listed.iter().copied()) as Box<dyn Iterator<Item = Candidate<'a>> + 's>
+            );
+        };
+        let decls = self.universe.decls(name).unwrap_or(&[]);
+        let request = self
+            .input
+            .options
             .iter()
-            .copied()
-            .chain(extra)
-            .chain(listed[split..].iter().copied()))
+            .find(|(n, _)| n.as_str() == name)
+            .map(|(_, r)| r);
+        let before = |c: &Candidate<'a>| {
+            let by_version = order(c, &extra);
+            by_version.is_lt()
+                || (by_version.is_eq() && option_order(c, &extra, decls, request).is_lt())
+        };
+        let split = listed.partition_point(before);
+        Ok(Box::new(
+            listed[..split]
+                .iter()
+                .copied()
+                .chain(Some(extra))
+                .chain(listed[split..].iter().copied()),
+        ) as Box<dyn Iterator<Item = Candidate<'a>> + 's>)
     }
 
     fn available(&self, name: &str) -> Vec<Package> {
