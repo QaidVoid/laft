@@ -110,3 +110,14 @@ fn repository_paths_cannot_leave_the_repository() {
         assert!(check_path(path).is_ok(), "{path:?}");
     }
 }
+
+#[test]
+fn the_colon_of_a_hash_in_a_snapshot_path_is_accepted() {
+    let hash = laft_core::Blake3Hash::of(b"snapshot");
+    let path = format!("recipes/{hash}.tar.zst");
+    assert!(check_path(&path).is_ok(), "{path:?}");
+    assert!(
+        check_path("recipes/b3:../../x").is_err(),
+        "traversal stays refused"
+    );
+}

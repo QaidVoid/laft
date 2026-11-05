@@ -35,3 +35,5 @@ tempfile.workspace = true
 
 [dev-dependencies]
 laft-test.workspace = true
+tar.workspace = true
+zstd.workspace = true

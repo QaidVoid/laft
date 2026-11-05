@@ -553,7 +553,9 @@ dependencies = [
  "serde",
  "serde_json",
  "stav",
+ "tar",
  "tempfile",
+ "zstd",
 ]
 
 [[package]]

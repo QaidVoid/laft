@@ -187,8 +187,10 @@ impl Mirrors {
 
 /// Checks a path relative to a repository base. Paths come from signed
 /// documents and from the layout itself, and they never need more than
-/// these characters, so anything else is refused rather than escaped. This
-/// also keeps a `file://` repository from reaching outside its directory.
+/// these characters, `:` included, because the name of a recipe snapshot
+/// carries the `b3:` prefix of its hash, so anything else is refused
+/// rather than escaped. This also keeps a `file://` repository from
+/// reaching outside its directory.
 pub(crate) fn check_path(path: &str) -> Result<(), ErrorKind> {
     let valid = !path.is_empty()
         && path.split('/').all(|c| {
@@ -196,7 +198,7 @@ pub(crate) fn check_path(path: &str) -> Result<(), ErrorKind> {
                 && c != "."
                 && c != ".."
                 && c.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b':'))
         });
     if valid {
         Ok(())

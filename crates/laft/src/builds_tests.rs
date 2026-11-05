@@ -5,6 +5,7 @@ use super::*;
 use laft_core::{Blake3Hash, OptionValue, Variant};
 use laft_resolve::{BuildRequest, Buildable, Reason};
 use std::fs;
+use std::fs::File;
 
 /// A buildable package, as a resolution reports it.
 fn buildable(name: &str, version: &str, variant: Variant) -> Buildable {
@@ -199,8 +200,8 @@ fn entry_of(meta: laft_pkg::Meta, id: laft_core::StoreId) -> laft_index::IndexEn
     }
 }
 
-/// The accepted index of one repository that lists `entry`.
-fn index_of(entry: laft_index::IndexEntry) -> RepoIndex {
+/// The accepted index of one repository at `url` that lists `entry`.
+fn index_of(url: &str, entry: laft_index::IndexEntry) -> RepoIndex {
     let none: Vec<String> = Vec::new();
     let index = laft_index::Index {
         format: laft_index::Index::FORMAT,
@@ -222,7 +223,7 @@ fn index_of(entry: laft_index::IndexEntry) -> RepoIndex {
     RepoIndex {
         name: "core".parse().expect("a name"),
         repo: laft_config::Repo {
-            url: "file:///tmp/none".to_owned(),
+            url: url.to_owned(),
             mirrors: Vec::new(),
             key: "RWSO9Zvh1ju0E6MO5PDnzQFYnptNxsLpLdwYSfm5Cs4Jc+14umRuka1M"
                 .parse()
@@ -246,19 +247,153 @@ fn index_of(entry: laft_index::IndexEntry) -> RepoIndex {
             },
             expired: false,
         },
-        mirrors: laft_fetch::Mirrors::new("file:///tmp/none", &none, false).expect("a mirror"),
+        mirrors: laft_fetch::Mirrors::new(url, &none, true).expect("a mirror"),
         synced: None,
     }
+}
+
+/// The source of the snapshot whose archive is `bytes`, published by
+/// `core`.
+fn source_of(bytes: &[u8]) -> SnapshotSource {
+    SnapshotSource {
+        repo: "core".parse().expect("a name"),
+        snapshot: laft_index::RecipeSnapshot {
+            file: format!("recipes/{}.tar.zst", Blake3Hash::of(bytes)),
+            size: bytes.len() as u64,
+            blake3: Blake3Hash::of(bytes),
+        },
+        name: "mesa".parse().expect("a name"),
+        version: "1.0".parse().expect("a version"),
+        variant: Variant::default(),
+        defaults: BTreeMap::new(),
+    }
+}
+
+/// The repository tree that publishes the archive `bytes` under
+/// `dir/repo`, with its `file://` URL.
+fn publish_snapshot(dir: &Path, bytes: &[u8]) -> String {
+    let repo = dir.join("repo");
+    let file = repo.join(format!("recipes/{}.tar.zst", Blake3Hash::of(bytes)));
+    fs::create_dir_all(file.parent().expect("the file has a parent")).expect("writable");
+    fs::write(file, bytes).expect("writable");
+    format!("file://{}", repo.display())
+}
+
+/// The bytes of a tar.zst holding `files`.
+fn archive_of(dir: &Path, files: &[(&str, &[u8])]) -> Vec<u8> {
+    let raw = dir.join("snapshot.tar");
+    {
+        let file = File::create(&raw).expect("writable");
+        let mut builder = tar::Builder::new(file);
+        for (name, content) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, name, *content)
+                .expect("writable");
+        }
+        builder
+            .into_inner()
+            .expect("writable")
+            .sync_all()
+            .expect("writable");
+    }
+    let mut bytes = Vec::new();
+    let mut writer = zstd::stream::write::Encoder::new(&mut bytes, 3).expect("an encoder");
+    std::io::copy(&mut File::open(&raw).expect("readable"), &mut writer).expect("compressed");
+    writer.finish().expect("finished");
+    bytes
+}
+
+#[test]
+fn a_snapshot_that_cannot_be_unpacked_leaves_no_tree_behind() {
+    let dir = laft_test::tempdir();
+    let env = env_of(dir.path());
+    let bytes = b"this is not an archive".as_slice();
+    let url = publish_snapshot(dir.path(), bytes);
+    let source = source_of(bytes);
+    let mut run = Run {
+        env: &env,
+        snapshots: &BTreeMap::new(),
+        indexes: &[index_of(
+            &url,
+            entry_of(
+                meta_of("mesa", "1.0"),
+                laft_core::StoreId::from_manifest_hash(&laft_core::Blake3Hash::of(b"m")),
+            ),
+        )],
+        options: &build_options(),
+        values: &BTreeMap::new(),
+        built: Built::default(),
+        seeded: BTreeSet::new(),
+    };
+    let error = run
+        .unpack(&source)
+        .expect_err("the bytes are not a tarball");
+    eprintln!("unpack error = {error:?}");
+    let target = snapshot_dir(&env, &source.snapshot.blake3);
+    assert!(!target.exists(), "no tree is left behind: {target:?}");
+    let staging = target.with_file_name(format!(
+        "{}.part",
+        target
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+    ));
+    assert!(!staging.exists(), "the staging tree is removed");
+}
+
+#[test]
+fn a_snapshot_unpacks_into_the_cache_of_its_hash() {
+    let dir = laft_test::tempdir();
+    let env = env_of(dir.path());
+    let bytes = archive_of(
+        dir.path(),
+        &[("recipes/mesa/package.stav", b"package mesa {}")],
+    );
+    let url = publish_snapshot(dir.path(), &bytes);
+    let source = source_of(&bytes);
+    let mut run = Run {
+        env: &env,
+        snapshots: &BTreeMap::new(),
+        indexes: &[index_of(
+            &url,
+            entry_of(
+                meta_of("mesa", "1.0"),
+                laft_core::StoreId::from_manifest_hash(&laft_core::Blake3Hash::of(b"m")),
+            ),
+        )],
+        options: &build_options(),
+        values: &BTreeMap::new(),
+        built: Built::default(),
+        seeded: BTreeSet::new(),
+    };
+    run.unpack(&source).expect("the snapshot unpacks");
+    let target = snapshot_dir(&env, &source.snapshot.blake3);
+    assert!(
+        target
+            .join("recipes/mesa/package.stav")
+            .is_file(),
+        "{target:?}"
+    );
+    let downloaded = run.built.bytes;
+    run.unpack(&source).expect("the snapshot is cached");
+    assert_eq!(run.built.bytes, downloaded, "nothing downloads twice");
 }
 
 #[test]
 fn a_published_dependency_is_not_marked_before_it_is_seeded() {
     let dir = laft_test::tempdir();
     let env = env_of(dir.path());
-    let indexes = vec![index_of(entry_of(
-        meta_of("mesa", "1.0"),
-        laft_core::StoreId::from_manifest_hash(&laft_core::Blake3Hash::of(b"m")),
-    ))];
+    let indexes = vec![index_of(
+        "file:///tmp/none",
+        entry_of(
+            meta_of("mesa", "1.0"),
+            laft_core::StoreId::from_manifest_hash(&laft_core::Blake3Hash::of(b"m")),
+        ),
+    )];
     let mut run = Run {
         env: &env,
         snapshots: &BTreeMap::new(),
