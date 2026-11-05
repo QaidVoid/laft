@@ -142,3 +142,34 @@ fn disabled_repository_json_sync_reports_error_instead_of_success() {
     assert!(!events.iter().any(|e| e["event"] == "result"));
     assert!(!root.join("laft").exists());
 }
+
+#[test]
+fn the_key_command_prints_the_public_key_of_the_local_repository() {
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("root");
+    fs::create_dir_all(root.join("etc/laft")).expect("configuration directory");
+    fs::write(root.join("etc/laft/system.stav"), "system {\n}\n").expect("configuration");
+
+    let first = run(&["--root", s(&root), "--offline", "repo", "key", "local"]).expect(0);
+    let second = run(&["--root", s(&root), "--offline", "repo", "key", "local"]).expect(0);
+    assert_eq!(
+        first.stdout.trim(),
+        second.stdout.trim(),
+        "the key is stable"
+    );
+    assert!(first.stdout.trim().starts_with("RW"), "{}", first.stdout);
+
+    let json = run(&[
+        "--root",
+        s(&root),
+        "--offline",
+        "--json",
+        "repo",
+        "key",
+        "local",
+    ])
+    .expect(0);
+    assert!(json.stdout.contains("\"key\""), "{}", json.stdout);
+
+    run(&["--root", s(&root), "--offline", "repo", "key", "core"]).expect(2);
+}
