@@ -449,8 +449,12 @@ struct Normalized {
     name: Name,
     variant: Variant,
     prefix: Option<VersionPrefix>,
-    /// The option constraints of the requests, which agree.
+    /// The option constraints of the requests, merged and deduped.
     options: OptionConstraints,
+    /// The origin and text of the request that carried each constraint,
+    /// index-aligned with `options`. Two requests may demand different
+    /// values of one option.
+    asked: Vec<(String, String)>,
     /// The request whose prefix was kept, as written.
     text: String,
     origin: String,
@@ -776,10 +780,12 @@ impl<'u, 'a> Ctx<'u, 'a> {
             }
             let (head, prefix) = kept.copied().unwrap_or(group[0]);
             let mut options: Vec<OptionConstraint> = Vec::new();
+            let mut asked: Vec<(String, String)> = Vec::new();
             for (r, _) in &group {
                 for c in r.pkg.options().as_slice() {
                     if !options.contains(c) {
                         options.push(c.clone());
+                        asked.push((r.origin.clone(), r.pkg.to_string()));
                     }
                 }
             }
@@ -788,6 +794,7 @@ impl<'u, 'a> Ctx<'u, 'a> {
                 variant,
                 prefix: prefix.cloned(),
                 options: options.into(),
+                asked,
                 text: head.pkg.to_string(),
                 origin: head.origin.clone(),
                 reasons: group
@@ -860,6 +867,10 @@ struct Want<'a> {
     dynamic_first: bool,
     /// The option constraints of the request or the dependency.
     options: &'a OptionConstraints,
+    /// The origin and text of the request that carried each constraint,
+    /// index-aligned with `options`. Empty for a dependency, whose
+    /// constraints share one source.
+    asked: &'a [(String, String)],
     /// Whether a candidate that does not record the constrained option
     /// fails. A request comes from the configuration, which can demand
     /// values no published package has; a dependency on a package that
@@ -1233,8 +1244,20 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             .get(name)
             .map(|req| &req.fixed)
             .unwrap_or(&empty);
-        let mut demands: Vec<(&OptionConstraint, Asked<'_>)> =
-            want.options.as_slice().iter().map(|c| (c, asked)).collect();
+        let mut demands: Vec<(&OptionConstraint, Asked<'_>)> = want
+            .options
+            .as_slice()
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                (
+                    c,
+                    want.asked
+                        .get(i)
+                        .map_or(asked, |(o, t)| Asked::Request { origin: o, text: t }),
+                )
+            })
+            .collect();
         for fact in self.facts.iter() {
             if let Fact::Require {
                 name: constrained,
@@ -1248,12 +1271,20 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 }
             }
         }
-        for (c, from) in demands {
+        for (i, (c, from)) in demands.iter().enumerate() {
             if let Some(f) = fixed.get(c.name()) {
                 if !c.matches(&f.value) {
-                    return Some(self.fixed_conflict(c, from, f));
+                    return Some(self.fixed_conflict(c, *from, f));
                 }
                 continue;
+            }
+            for (fc, other) in demands.iter().skip(i + 1) {
+                if fc.name() == c.name() && canonical(fc) != canonical(c) {
+                    return Some(ErrorKind::OptionConflict {
+                        name: name.clone(),
+                        demands: vec![self.demand(c, *from), self.demand(fc, *other)],
+                    });
+                }
             }
             for (dep, opts, by) in self.facts.iter().filter_map(|fact| match *fact {
                 Fact::Require {
@@ -1268,7 +1299,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                         return Some(ErrorKind::OptionConflict {
                             name: name.clone(),
                             demands: vec![
-                                self.demand(c, from),
+                                self.demand(c, *from),
                                 self.demand(fc, Asked::Dependency(by, dep)),
                             ],
                         });
@@ -1354,6 +1385,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 variant: Some(request.variant),
                 dynamic_first: false,
                 options: &request.options,
+                asked: &request.asked,
                 strict: true,
             };
             match self.choose(&request.name, &want)? {
@@ -1535,6 +1567,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             variant: None,
             dynamic_first: true,
             options: opts,
+            asked: &[],
             strict: false,
         };
         match self.choose(name, &want)? {
