@@ -1034,15 +1034,15 @@ fn the_build_view_options_follow_the_dep_options_setting() {
     let mut free = entry_of(meta_of("gtk4", "1.0"), id);
     free.meta
         .options
-        .insert("x11".to_owned(), laft_core::OptionValue::Bool(true));
-    let mut without_x11 = entry_of(meta_of("gtk4", "2.0"), id);
-    without_x11
+        .insert("x11".to_owned(), laft_core::OptionValue::Bool(false));
+    let mut with_x11 = entry_of(meta_of("gtk4", "2.0"), id);
+    with_x11
         .meta
         .options
-        .insert("x11".to_owned(), laft_core::OptionValue::Bool(false));
+        .insert("x11".to_owned(), laft_core::OptionValue::Bool(true));
     let indexes = vec![
         index_of("file:///tmp/core", free),
-        index_of("file:///tmp/core", without_x11),
+        index_of("file:///tmp/core", with_x11),
     ];
     let source = SnapshotSource {
         repo: "core".parse().expect("a name"),
@@ -1099,7 +1099,11 @@ fn the_build_view_options_follow_the_dep_options_setting() {
     let (entry, _) = run
         .candidate(&reference, "system")
         .expect("the context finds a candidate");
-    assert_eq!(entry.meta.version.as_str(), "2.0", "the X11-free build");
+    assert_eq!(
+        entry.meta.version.as_str(),
+        "1.0",
+        "the only build matching the view's fixed X11 off"
+    );
 
     let mut defaults = build_options();
     defaults.dep_options = laft_config::DepOptions::Defaults;
