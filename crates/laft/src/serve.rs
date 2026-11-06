@@ -7,19 +7,26 @@
 //! it. A client cannot make it buffer without bound: lines are read with
 //! a fixed cap, the headers are counted, connections pause at most half
 //! a minute between bytes in each direction, and at most sixty-four are
-//! served at the same time. Partial downloads resume, because every range
-//! request of the form `bytes=<n>-` or `bytes=-<n>` is answered. Each
-//! connection serves one request, and every response is sent with
-//! `Connection: close`, which every client of a repository understands.
+//! served at the same time, at most eight of them from one peer address.
+//! One connection may take at most ten minutes in total, so a client that
+//! trickles bytes cannot hold a slot for good. Files are streamed from an
+//! open file, never read into memory whole. Partial downloads resume,
+//! because every range request of the form `bytes=<n>-` or `bytes=-<n>`
+//! is answered. Each connection serves one request, and every response is
+//! sent with `Connection: close`, which every client of a repository
+//! understands.
 
+use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::failure::{Failure, exit};
 
@@ -37,6 +44,15 @@ const MAX_CONNECTIONS: usize = 64;
 
 /// How long one connection may pause between bytes, in each direction.
 const TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long one connection may take in total, including the body.
+const DEADLINE: Duration = Duration::from_secs(600);
+
+/// The most connections one peer address may hold at the same time.
+const MAX_PER_PEER: usize = 8;
+
+/// The most bytes one copy between the file and the socket takes at once.
+const COPY_CHUNK: usize = 64 * 1024;
 
 /// The read-only file server of a local repository.
 pub(crate) struct Serve {
@@ -76,45 +92,115 @@ impl Serve {
 
     /// Answers requests until the process is stopped. Unless `quiet`, every
     /// request is reported on standard error. At most [`MAX_CONNECTIONS`]
-    /// connections are served at the same time; the rest are closed
+    /// connections are served at the same time, at most
+    /// [`MAX_PER_PEER`] from one peer address; the rest are closed
     /// without an answer.
     pub(crate) fn run(self, quiet: bool) {
         let Self { root, listener } = self;
         let root = Arc::from(root);
         let live = Arc::new(AtomicUsize::new(0));
+        let peers: Arc<Mutex<HashMap<std::net::IpAddr, usize>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         for stream in listener.incoming().flatten() {
-            if live.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
+            let peer = stream.peer_addr().ok().map(|addr| addr.ip());
+            let mut counts = peers.lock().expect("the peer counts cannot be poisoned");
+            let busy = live.load(Ordering::Relaxed) >= MAX_CONNECTIONS
+                || peer.is_some_and(|peer| {
+                    counts.get(&peer).is_some_and(|held| *held >= MAX_PER_PEER)
+                });
+            if busy {
                 continue;
             }
             live.fetch_add(1, Ordering::Relaxed);
+            if let Some(peer) = peer {
+                *counts.entry(peer).or_default() += 1;
+            }
+            drop(counts);
             let live = Arc::clone(&live);
+            let peers = Arc::clone(&peers);
             let _ = stream.set_read_timeout(Some(TIMEOUT));
             let _ = stream.set_write_timeout(Some(TIMEOUT));
             let _ = stream.set_nodelay(true);
             let root = Arc::clone(&root);
             thread::spawn(move || {
-                let line = handle(stream, &root);
+                let line = handle(stream, &root, &Deadline::start());
                 if !quiet {
                     eprintln!("{line}");
                 }
                 live.fetch_sub(1, Ordering::Relaxed);
+                if let Some(peer) = peer {
+                    let mut counts = peers.lock().expect("the peer counts cannot be poisoned");
+                    if let Some(held) = counts.get_mut(&peer) {
+                        *held = held.saturating_sub(1);
+                        if *held == 0 {
+                            counts.remove(&peer);
+                        }
+                    }
+                }
             });
         }
     }
 }
 
+/// The total time one connection may take.
+struct Deadline {
+    at: Instant,
+}
+
+impl Deadline {
+    /// The deadline of a connection that starts now.
+    fn start() -> Self {
+        Self {
+            at: Instant::now() + DEADLINE,
+        }
+    }
+
+    /// A deadline that is already over.
+    #[cfg(test)]
+    fn over() -> Self {
+        Self { at: Instant::now() }
+    }
+
+    /// The longest wait that fits the deadline and the between-bytes cap.
+    fn timeout(&self) -> Duration {
+        self.at
+            .saturating_duration_since(Instant::now())
+            .min(TIMEOUT)
+    }
+
+    /// Whether the connection took too long and must be dropped.
+    fn expired(&self) -> bool {
+        Instant::now() >= self.at
+    }
+}
+
+/// Applies the shorter of the between-bytes timeout and what is left of
+/// the deadline to `stream`, in both directions.
+fn arm(stream: &TcpStream, deadline: &Deadline) {
+    let _ = stream.set_read_timeout(Some(deadline.timeout()));
+    let _ = stream.set_write_timeout(Some(deadline.timeout()));
+}
+
 /// Answers one request on `stream` and returns the log line for it.
-fn handle(stream: TcpStream, root: &Path) -> String {
+fn handle(stream: TcpStream, root: &Path, deadline: &Deadline) -> String {
     let peer = stream
         .peer_addr()
         .map(|a| a.to_string())
         .unwrap_or_else(|_| "unknown".to_owned());
+    if deadline.expired() {
+        return format!("{peer} 400 Bad Request");
+    }
     let mut reader = BufReader::new(stream);
-    let line = match request(&mut reader, root) {
+    let line = match request(&mut reader, root, deadline) {
         Ok(line) => line,
         Err(status) => {
-            let mut stream = reader.into_inner();
-            let _ = respond(&mut stream, status, &[], false);
+            // A connection that took too long is only closed; a truncated
+            // body is what a dropped connection looks like anyway.
+            if !deadline.expired() {
+                let mut stream = reader.into_inner();
+                arm(&stream, deadline);
+                let _ = respond(&mut stream, status, &[], false);
+            }
             format!("{} {}", status.code(), status.reason())
         }
     };
@@ -123,7 +209,8 @@ fn handle(stream: TcpStream, root: &Path) -> String {
 
 /// Reads one line of at most [`MAX_HEADER`] bytes, so that a client
 /// cannot make the server buffer without bound.
-fn read_line(reader: &mut BufReader<TcpStream>) -> Result<String, Status> {
+fn read_line(reader: &mut BufReader<TcpStream>, deadline: &Deadline) -> Result<String, Status> {
+    arm(reader.get_ref(), deadline);
     let mut buf = Vec::new();
     (&mut *reader)
         .take(MAX_HEADER as u64 + 1)
@@ -150,8 +237,12 @@ fn clean(text: &str) -> String {
 }
 
 /// Reads one request, serves it and returns its log line.
-fn request(reader: &mut BufReader<TcpStream>, root: &Path) -> Result<String, Status> {
-    let line = read_line(reader)?;
+fn request(
+    reader: &mut BufReader<TcpStream>,
+    root: &Path,
+    deadline: &Deadline,
+) -> Result<String, Status> {
+    let line = read_line(reader, deadline)?;
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or_default().to_owned();
     let target = parts.next().unwrap_or_default().to_owned();
@@ -161,7 +252,7 @@ fn request(reader: &mut BufReader<TcpStream>, root: &Path) -> Result<String, Sta
     let mut range = None;
     let mut ended = false;
     for _ in 0..MAX_HEADERS {
-        let header = read_line(reader)?;
+        let header = read_line(reader, deadline)?;
         let trimmed = header.trim();
         if trimmed.is_empty() {
             ended = true;
@@ -181,26 +272,41 @@ fn request(reader: &mut BufReader<TcpStream>, root: &Path) -> Result<String, Sta
         return Err(Status::MethodNotAllowed);
     }
     let path = resolve(root, &target)?;
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
+    let mut file = match File::open(&path) {
+        Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(Status::NotFound),
         Err(_) => return Err(Status::Forbidden),
     };
+    let len = file.metadata().map_err(|_| Status::Forbidden)?.len();
     let stream = reader.get_mut();
     match range {
         None => {
-            respond(stream, Status::Ok, &bytes, head)?;
-            Ok(format!("{} 200 {}", clean(&target), bytes.len()))
+            send_header(stream, Status::Ok, "", len, head, deadline)?;
+            if !head {
+                copy_bounded(&mut file, stream, len, deadline)?;
+            }
+            Ok(format!("{} 200 {}", clean(&target), len))
         }
-        Some(range) => match slice(&bytes, &range) {
+        Some(range) => match slice(len, &range) {
             Some((first, last)) => {
-                let body = &bytes[first..=last];
-                let extra = format!("Content-Range: bytes {first}-{last}/{}\r\n", bytes.len());
-                respond_with(stream, Status::PartialContent, &extra, body, head)?;
+                let extra = format!("Content-Range: bytes {first}-{last}/{len}\r\n");
+                send_header(
+                    stream,
+                    Status::PartialContent,
+                    &extra,
+                    last - first + 1,
+                    head,
+                    deadline,
+                )?;
+                if !head {
+                    file.seek(SeekFrom::Start(first))
+                        .map_err(|_| Status::BadRequest)?;
+                    copy_bounded(&mut file, stream, last - first + 1, deadline)?;
+                }
                 Ok(format!("{} 206 {first}-{last}", clean(&target)))
             }
             None => {
-                let extra = format!("Content-Range: bytes */{}\r\n", bytes.len());
+                let extra = format!("Content-Range: bytes */{len}\r\n");
                 respond_with(stream, Status::RangeNotSatisfiable, &extra, &[], head)?;
                 Ok(format!("{} 416 {}", clean(&target), clean(&range)))
             }
@@ -240,47 +346,61 @@ fn resolve(root: &Path, target: &str) -> Result<PathBuf, Status> {
     }
 }
 
-/// Decodes every `%XX` escape of `text`.
+/// Decodes every `%XX` escape of `text`, on bytes, so that an escape that
+/// runs into a multi-byte character is literal text instead of a slice
+/// that does not exist.
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let Some(value) = u8::from_str_radix(&text[i + 1..i + 3], 16).ok()
-        {
-            out.push(value);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
+        let (high, low) = match (bytes.get(i + 1), bytes.get(i + 2)) {
+            (Some(&high), Some(&low)) if bytes[i] == b'%' => (hex(high), hex(low)),
+            _ => (None, None),
+        };
+        match (high, low) {
+            (Some(high), Some(low)) => {
+                out.push(high * 16 + low);
+                i += 3;
+            }
+            _ => {
+                out.push(bytes[i]);
+                i += 1;
+            }
         }
     }
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// The first and last byte of the slice that `range` names, such as
-/// `bytes=2-`, `bytes=2-7` or `bytes=-5` for the last five bytes.
-fn slice(bytes: &[u8], range: &str) -> Option<(usize, usize)> {
+/// The value of one hex digit.
+fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// The first and last byte of the slice that `range` names within `len`
+/// bytes, such as `bytes=2-`, `bytes=2-7` or `bytes=-5` for the last five
+/// bytes.
+fn slice(len: u64, range: &str) -> Option<(u64, u64)> {
     let spec = range.trim().strip_prefix("bytes=")?.trim();
     let (first, last) = spec.split_once('-')?;
     if first.trim().is_empty() {
-        let count: usize = last.trim().parse().ok()?;
-        if count == 0 || bytes.is_empty() {
+        let count: u64 = last.trim().parse().ok()?;
+        if count == 0 || len == 0 {
             return None;
         }
-        let count = count.min(bytes.len());
-        return Some((bytes.len() - count, bytes.len() - 1));
+        let count = count.min(len);
+        return Some((len - count, len - 1));
     }
-    let first: usize = first.trim().parse().ok()?;
+    let first: u64 = first.trim().parse().ok()?;
     let last = if last.trim().is_empty() {
-        bytes.len().checked_sub(1)?
+        len.checked_sub(1)?
     } else {
-        last.trim()
-            .parse::<usize>()
-            .ok()?
-            .min(bytes.len().checked_sub(1)?)
+        last.trim().parse::<u64>().ok()?.min(len.checked_sub(1)?)
     };
     if first > last {
         return None;
@@ -288,11 +408,65 @@ fn slice(bytes: &[u8], range: &str) -> Option<(usize, usize)> {
     Some((first, last))
 }
 
+/// Sends the header of `status` with a body of `length` bytes. The body
+/// itself is sent by the caller, from the file it has open.
+fn send_header(
+    stream: &mut TcpStream,
+    status: Status,
+    extra: &str,
+    length: u64,
+    head: bool,
+    deadline: &Deadline,
+) -> Result<(), Status> {
+    arm(stream, deadline);
+    let header = format!(
+        "HTTP/1.1 {} {}\r\n{}Content-Type: application/octet-stream\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n",
+        status.code(),
+        status.reason(),
+        extra,
+        length,
+    );
+    stream
+        .write_all(header.as_bytes())
+        .map_err(|_| Status::BadRequest)?;
+    if head {
+        stream.flush().map_err(|_| Status::BadRequest)?;
+    }
+    Ok(())
+}
+
+/// Copies exactly `count` bytes of `file` to `stream`, in bounded chunks
+/// and only while the deadline holds, so a client that stops reading
+/// cannot hold the connection for good.
+fn copy_bounded(
+    file: &mut File,
+    stream: &mut TcpStream,
+    count: u64,
+    deadline: &Deadline,
+) -> Result<(), Status> {
+    let mut left = file.take(count);
+    let mut buf = vec![0u8; COPY_CHUNK];
+    loop {
+        if deadline.expired() {
+            return Err(Status::BadRequest);
+        }
+        arm(stream, deadline);
+        let read = left.read(&mut buf).map_err(|_| Status::BadRequest)?;
+        if read == 0 {
+            break;
+        }
+        stream
+            .write_all(&buf[..read])
+            .map_err(|_| Status::BadRequest)?;
+    }
+    stream.flush().map_err(|_| Status::BadRequest)
+}
+
 /// Sends `bytes` as the body of `status`.
 fn respond(stream: &mut TcpStream, status: Status, bytes: &[u8], head: bool) -> Result<(), Status> {
     respond_with(stream, status, "", bytes, head)
 }
-
 /// Sends `bytes` as the body of `status`, with `extra` between the status
 /// line and the fixed headers.
 fn respond_with(

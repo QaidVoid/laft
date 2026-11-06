@@ -29,28 +29,35 @@ impl Fixture {
 
     /// Sends a raw request and reads the whole answer.
     fn ask(&self, request: &str) -> Vec<u8> {
+        self.try_ask(request).expect("the connection closes")
+    }
+
+    /// Sends a raw request and reads the answer, or `None` when the
+    /// connection is reset before an answer.
+    fn try_ask(&self, request: &str) -> Option<Vec<u8>> {
         let mut stream = TcpStream::connect(self.addr).expect("the server is listening");
         stream.write_all(request.as_bytes()).expect("sent");
         let mut answer = Vec::new();
-        stream
-            .read_to_end(&mut answer)
-            .expect("the connection closes");
-        answer
+        stream.read_to_end(&mut answer).ok().map(|_| answer)
     }
 
-    /// The status line of an answer.
+    /// The status line of an answer, from its header alone.
     fn status(answer: &[u8]) -> String {
-        let line = std::str::from_utf8(answer)
-            .expect("the answer is text")
-            .lines()
-            .next()
-            .expect("a status line");
-        line.to_owned()
+        let end = answer
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap_or(answer.len());
+        let text = std::str::from_utf8(&answer[..end]).expect("the header is text");
+        text.lines().next().expect("a status line").to_owned()
     }
 
     /// The value of a header of an answer.
     fn header<'a>(answer: &'a [u8], name: &str) -> Option<&'a str> {
-        let text = std::str::from_utf8(answer).expect("the answer is text");
+        let end = answer
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap_or(answer.len());
+        let text = std::str::from_utf8(&answer[..end]).expect("the header is text");
         text.lines()
             .take_while(|line| !line.is_empty())
             .find_map(|line| {
@@ -235,6 +242,93 @@ fn the_root_and_directories_are_not_served() {
             "{target} was served"
         );
     }
+}
+
+#[test]
+fn a_broken_percent_escape_does_not_crash_the_server() {
+    let fx = Fixture::start();
+    let answer = fx.ask("GET /%aé HTTP/1.1\r\n\r\n");
+    assert_eq!(Fixture::status(&answer), "HTTP/1.1 404 Not Found");
+}
+
+#[test]
+fn percent_escapes_decode_on_bytes() {
+    assert_eq!(percent_decode("/pool%2etxt"), "/pool.txt");
+    assert_eq!(percent_decode("/%C3%A9"), "/\u{e9}");
+    assert_eq!(percent_decode("/%a"), "/%a");
+    assert_eq!(percent_decode("/%aé"), "/%a\u{e9}");
+    assert_eq!(percent_decode("/%zz"), "/%zz");
+    assert_eq!(percent_decode("/%2"), "/%2");
+}
+
+#[test]
+fn one_peer_cannot_hold_the_server() {
+    let fx = Fixture::start();
+    let mut idle = Vec::new();
+    for _ in 0..MAX_PER_PEER {
+        idle.push(TcpStream::connect(fx.addr).expect("connected"));
+    }
+    // The idle connections sent nothing, so they hold their slots. The
+    // next connection of the same peer is not served.
+    let answer = fx.try_ask("GET /pool.txt HTTP/1.1\r\n\r\n");
+    assert!(
+        answer.as_ref().is_none_or(|answer| answer.is_empty()),
+        "the connection over the per-peer limit is not served: {}",
+        answer
+            .map(|answer| String::from_utf8_lossy(&answer).into_owned())
+            .unwrap_or_default()
+    );
+}
+
+#[test]
+fn a_connection_past_its_deadline_is_dropped() {
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("laft/local");
+    std::fs::create_dir_all(&root).expect("writable");
+    std::fs::write(root.join("pool.txt"), b"hello world").expect("writable");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bound");
+    let addr = listener.local_addr().expect("an address");
+    let mut client = TcpStream::connect(addr).expect("connected");
+    let (server, _) = listener.accept().expect("accepted");
+    let root_for_thread = root.clone();
+    thread::spawn(move || {
+        handle(server, &root_for_thread, &Deadline::over());
+    });
+    client
+        .write_all(b"GET /pool.txt HTTP/1.1\r\n\r\n")
+        .expect("sent");
+    let mut answer = Vec::new();
+    match client.read_to_end(&mut answer) {
+        // The server closes without reading, so the request it never read
+        // may also reset the connection.
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+        Err(e) => panic!("the connection closes: {e}"),
+    }
+    assert!(answer.is_empty(), "nothing is served past the deadline");
+}
+
+#[test]
+fn a_large_file_is_served_whole_and_in_ranges() {
+    let fx = Fixture::start();
+    let mut bytes = Vec::new();
+    for i in 0..(192 * 1024) {
+        bytes.push((i % 251) as u8);
+    }
+    std::fs::write(fx.root.join("big.bin"), &bytes).expect("writable");
+    let answer = fx.ask("GET /big.bin HTTP/1.1\r\n\r\n");
+    assert_eq!(Fixture::status(&answer), "HTTP/1.1 200 OK");
+    assert_eq!(
+        Fixture::header(&answer, "content-length"),
+        Some(bytes.len().to_string().as_str())
+    );
+    assert_eq!(Fixture::body(&answer), bytes.as_slice());
+    let first = 64 * 1024 + 17;
+    let last = 128 * 1024 - 5;
+    let answer =
+        fx.ask(format!("GET /big.bin HTTP/1.1\r\nRange: bytes={first}-{last}\r\n\r\n").as_str());
+    assert_eq!(Fixture::status(&answer), "HTTP/1.1 206 Partial Content");
+    assert_eq!(Fixture::body(&answer), &bytes[first..=last]);
 }
 
 #[test]
