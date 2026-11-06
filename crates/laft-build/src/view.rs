@@ -486,6 +486,11 @@ pub fn key_inputs_from(recipe: &Recipe, entries: &[StoreEntry]) -> KeyInputs {
                 e.meta.name == *link.name()
                     && e.meta.variant == link.variant()
                     && link.prefix().is_none_or(|p| p.matches(&e.meta.version))
+                    && link
+                        .options()
+                        .as_slice()
+                        .iter()
+                        .all(|c| e.meta.options.get(c.name()).is_some_and(|v| c.matches(v)))
             })
             .max_by(|a, b| (&a.meta.version, a.meta.rev).cmp(&(&b.meta.version, b.meta.rev)));
         let Some(entry) = newest else {

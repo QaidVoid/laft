@@ -216,6 +216,39 @@ fn key_inputs_take_link_dependencies_from_the_store() {
     assert!(inputs.statics.is_empty());
 }
 
+/// A link dependency with option constraints takes its key input from a
+/// package whose option values hold them, not from the newest entry.
+#[test]
+fn key_inputs_follow_the_option_constraints_of_the_link() {
+    let dir = laft_test::tempdir();
+    let store = Store::at(dir.path().join("store"));
+    let first = dir.path().join("first");
+    let second = dir.path().join("second");
+    TestPkg {
+        version: "1.1",
+        options: [("llvm".to_owned(), OptionValue::TRUE)]
+            .into_iter()
+            .collect(),
+        ..TestPkg::new("mesa")
+    }
+    .add(&store, &first);
+    TestPkg {
+        options: [("llvm".to_owned(), OptionValue::FALSE)]
+            .into_iter()
+            .collect(),
+        ..TestPkg::new("mesa")
+    }
+    .add(&store, &second);
+    let mut recipe = recipe("app");
+    recipe.link_deps = refs(&["mesa{!llvm}"]);
+    let inputs = key_inputs(&recipe, &store, &none()).unwrap();
+    assert_eq!(inputs.links.len(), 1);
+    assert_eq!(
+        inputs.links[0].options.get("llvm"),
+        Some(&OptionValue::FALSE)
+    );
+}
+
 #[test]
 fn the_view_takes_an_alternative_from_its_highest_priority_member() {
     let dir = laft_test::tempdir();
