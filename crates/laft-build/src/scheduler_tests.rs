@@ -160,7 +160,11 @@ fn no_more_builds_run_than_workers() {
 }
 
 #[test]
-fn the_build_with_the_longest_chain_ahead_starts_first() {
+fn at_one_worker_the_plan_order_decides_the_next_build() {
+    // The longest chain ahead only orders the builds of a parallel run:
+    // at one worker the plan order decides, so a run matches the serial
+    // order and a build that failed before cannot start ahead of the
+    // packages the plan puts before it.
     let seen = Arc::new(Mutex::new(Vec::new()));
     let mut scheduler = scheduler(
         &["a", "b", "c", "d"],
@@ -187,7 +191,7 @@ fn the_build_with_the_longest_chain_ahead_starts_first() {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["a", "b", "d", "c"],
+        ["a", "b", "c", "d"],
     );
 }
 

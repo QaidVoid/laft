@@ -67,7 +67,8 @@ pub(crate) type Settled<'a, T> = &'a mut dyn FnMut(&Item, &T) -> Result<Vec<Item
 /// of the ready ones starts next.
 ///
 /// A build is ready when every build of the run it depends on has
-/// finished. Among the ready ones, the one with the longest chain of
+/// finished. At one worker the plan order decides, so the run follows the
+/// serial order. Among the ready ones, the one with the longest chain of
 /// builds after it starts first, ties by the plan order. No more than
 /// `workers` builds run at once, and after the first failure or an
 /// interrupt nothing new starts, while the running builds finish.
@@ -410,10 +411,13 @@ impl<'a> Scheduler<'a> {
 
     /// The ready build with the longest chain of builds after it, ties by
     /// the plan order, leaving out the builds in `deferred`, which wait
-    /// for memory.
+    /// for memory. At one worker the plan order decides instead, so the
+    /// run matches the serial order and a build that failed before, whose
+    /// duration is unknown, cannot start before the packages that the
+    /// plan puts ahead of it.
     fn next_ready(&self, deferred: &BTreeSet<Item>) -> Option<Item> {
-        let weights = self.weights();
-        self.pending
+        let ready = self
+            .pending
             .iter()
             .filter(|item| !deferred.contains(*item))
             .filter(|item| {
@@ -422,7 +426,12 @@ impl<'a> Scheduler<'a> {
                     .into_iter()
                     .flatten()
                     .all(|dep| self.settled.contains(dep))
-            })
+            });
+        if self.workers == 1 {
+            return ready.min_by_key(|item| self.place(item)).cloned();
+        }
+        let weights = self.weights();
+        ready
             .min_by_key(|item| {
                 (
                     Reverse(weights.get(*item).copied().unwrap_or(0)),
@@ -522,5 +531,61 @@ fn panic_reason(payload: Box<dyn Any + Send>) -> String {
             Some(code) => format!(": panic code {code}"),
             None => String::from(" without a message"),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use laft_core::Variant;
+
+    use super::*;
+
+    fn item(name: &str) -> Item {
+        Item::new(name.parse().unwrap(), Variant::Dynamic)
+    }
+
+    fn plenty() -> Result<u64, BuildError> {
+        Ok(u64::MAX)
+    }
+
+    fn silent(_: u64, _: u64) {}
+
+    /// At more than one worker the build with the longest chain ahead
+    /// starts, even when the plan puts another build first.
+    #[test]
+    fn the_longest_chain_ahead_starts_at_more_than_one_worker() {
+        let order: Vec<Item> = ["a", "b", "c", "d"].iter().map(|name| item(name)).collect();
+        let deps: BTreeMap<Item, BTreeSet<Item>> = [
+            (item("b"), BTreeSet::from([item("a")])),
+            (item("c"), BTreeSet::from([item("b")])),
+        ]
+        .into_iter()
+        .collect();
+        let durations: BTreeMap<Item, u64> = [("a", 1u64), ("b", 1), ("c", 1), ("d", 2)]
+            .into_iter()
+            .map(|(name, seconds)| (item(name), seconds))
+            .collect();
+        let mut scheduler = Scheduler::new(
+            order,
+            deps,
+            durations,
+            2,
+            Memory {
+                estimates: BTreeMap::new(),
+                big: BTreeSet::new(),
+                available: &(plenty as fn() -> Result<u64, BuildError>),
+                waiting: &(silent as fn(u64, u64)),
+            },
+        );
+        scheduler.pending = ["a", "b", "c", "d"].iter().map(|name| item(name)).collect();
+        let mut next = Vec::new();
+        while let Some(build) = scheduler.next_ready(&BTreeSet::new()) {
+            scheduler.pending.remove(&build);
+            scheduler.settled.insert(build.clone());
+            next.push(build.to_string());
+        }
+        assert_eq!(next, ["a", "b", "d", "c"]);
     }
 }

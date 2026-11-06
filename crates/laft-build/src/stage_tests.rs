@@ -1448,6 +1448,85 @@ fn a_store_step_skips_the_packages_that_are_still_done_after_another_changes() {
     );
 }
 
+/// A package whose previous build took longer than the scheduler's
+/// default duration cannot let a package that failed before start ahead
+/// of it at one worker: the serial order must hold.
+#[test]
+fn a_slow_previous_build_keeps_the_serial_order_at_one_worker() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = linked_stage(
+        dir.path(),
+        r#"    { name = "build", packages = [base, greet, top] },"#,
+    );
+    fs::create_dir_all(stage.recipes.join("recipes/top")).unwrap();
+    fs::write(
+        stage.recipes.join("recipes/top/package.stav"),
+        r#"package top {
+  version = "1"
+  summary = "Tops"
+  license = [MIT]
+  empty   = true
+  build custom {}
+  env     = { LD_LIBRARY_PATH = "/usr/lib" }
+  phases {
+    install = "exit 1"
+  }
+}
+"#,
+    )
+    .unwrap();
+    store_with_host_tools(dir.path());
+    let result = run_with(dir.path(), &stage, &store_options(dir.path()));
+    if refused(&result) {
+        return;
+    }
+    result.unwrap_err();
+
+    // A summary edit of base gives base a new build key, but the key of
+    // greet, which links against it, stays the same.
+    let base = stage.recipes.join("recipes/base/package.stav");
+    let text = fs::read_to_string(&base)
+        .unwrap()
+        .replace("Lies beneath", "Lies above");
+    fs::write(&base, text).unwrap();
+
+    // Greet's previous build took a few seconds, so its weight is below
+    // the scheduler's default duration for a build that never ran, as a
+    // build can under load. The failing top must not start before it.
+    let latest = dir.path().join("build/db/latest");
+    let entry = fs::read_dir(&latest)
+        .unwrap()
+        .find_map(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("greet+")
+                .then(|| entry.path())
+        })
+        .expect("greet has a record");
+    let target = latest.join(fs::read_link(&entry).unwrap());
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&target).unwrap()).unwrap();
+    record["record"]["seconds"] = serde_json::json!(5);
+    fs::write(&target, serde_json::to_vec(&record).unwrap()).unwrap();
+
+    let (second, result) = states_and_result(dir.path(), &stage, &store_options(dir.path()), true);
+    let error = result.unwrap_err();
+    assert_eq!(error.code(), Some("B040"), "{error}");
+    assert_eq!(
+        second,
+        [
+            ("build".to_owned(), StageState::Done),
+            ("build".to_owned(), StageState::UpToDate),
+        ],
+        "greet is reported even though its build took longer than the default",
+    );
+}
+
 /// The build keys and store ids a run of a store step leaves behind, with
 /// the key of its step.
 fn results(dir: &Path, workers: usize) -> (Vec<String>, Vec<String>, String) {
