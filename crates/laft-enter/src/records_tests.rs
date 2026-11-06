@@ -120,12 +120,12 @@ fn privileged_paths_apply_only_to_the_recorded_view_version() {
     assert_eq!(privileged_paths(&record, "other", 7), None);
 }
 
-/// A privileged record of format 2 parses, and a later format is
-/// refused.
+/// A privileged record of any format but 1 is refused: the setuid
+/// helper accepts only the versions that exist.
 #[test]
-fn a_privileged_record_of_format_2_parses_and_a_later_one_is_refused() {
+fn a_privileged_record_of_any_format_but_1_is_refused() {
     let format_2 = PRIVILEGED.replace(r#""version": 1,"#, r#""version": 2,"#);
-    assert!(parse_privileged(format_2.as_bytes()).is_ok());
+    assert!(parse_privileged(format_2.as_bytes()).is_err());
     let newer = PRIVILEGED.replace(r#""version": 1,"#, r#""version": 3,"#);
     assert!(parse_privileged(newer.as_bytes()).is_err());
     assert!(parse_privileged(br#"{"version": 1}"#).is_err());

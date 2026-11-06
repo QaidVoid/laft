@@ -17,10 +17,14 @@ use serde::Deserialize;
 /// what is read as root.
 pub(crate) const MAX_RECORD: u64 = 64 << 20;
 
-/// The format versions of the records that are read. Version 2 records
+/// The format versions of `view.json` that are read. Version 2 records
 /// the option values of every package; version 1 records none. Both bind
 /// the same fields this program reads.
 const SUPPORTED: [u32; 2] = [1, 2];
+
+/// The format version of `privileged.json` that is read. It is the only
+/// version anything writes.
+const PRIVILEGED_VERSION: u32 = 1;
 
 /// The facts about an opened record file that decide whether it is trusted.
 #[derive(Debug, Clone, Copy)]
@@ -112,7 +116,7 @@ struct ViewPrivileges {
 /// format.
 pub(crate) fn parse_privileged(bytes: &[u8]) -> Result<PrivilegedRecord, String> {
     let record: PrivilegedRecord = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-    if !SUPPORTED.contains(&record.version) {
+    if record.version != PRIVILEGED_VERSION {
         return Err(format!("unsupported format version {}", record.version));
     }
     Ok(record)
