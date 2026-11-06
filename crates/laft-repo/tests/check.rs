@@ -159,6 +159,61 @@ fn kr002_resolves_against_a_base_index() {
     assert!(codes.is_empty(), "{report}");
 }
 
+/// An overlay can constrain the options of a base package: KR015 looks
+/// the declarations up in the base indexes too.
+#[test]
+fn kr015_resolves_option_declarations_against_a_base_index() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let base = dir.path().join("base");
+    let core = pkg("mesa", "25.1")
+        .option("llvm", laft_core::OptionValue::TRUE)
+        .write(&out);
+    fixture(
+        &base,
+        "current",
+        0,
+        &[core],
+        |index: &mut laft_index::Index| {
+            index.options.insert(
+                "mesa".parse().unwrap(),
+                vec![bool_decl("llvm", true, "Build the LLVM backend.")],
+            );
+        },
+    );
+    let repo = dir.path().join("repo");
+    fixture(
+        &repo,
+        "current",
+        0,
+        &[pkg("app", "1.0").depends("mesa{llvm}").write(&out)],
+        |index: &mut laft_index::Index| {
+            index.repo = "overlay".parse().unwrap();
+        },
+    );
+    let base_index = base.join("channels/current/x86_64-v3/index.json.zst");
+    let (codes, report, success) = check(&repo, &["--with-index", s(&base_index)]);
+    assert!(codes.is_empty(), "{report}");
+    assert!(success);
+
+    // A constraint of the wrong type is still refused.
+    let bad = dir.path().join("bad");
+    fixture(
+        &repo,
+        "current",
+        HOUR,
+        &[pkg("app", "1.0")
+            .rev(2)
+            .depends("mesa{vulkan=amd}")
+            .write(&bad)],
+        |index: &mut laft_index::Index| {
+            index.repo = "overlay".parse().unwrap();
+        },
+    );
+    let (codes, report, _) = check(&repo, &["--with-index", s(&base_index)]);
+    assert_eq!(codes, ["KR015"], "{report}");
+}
+
 #[test]
 fn kr003_a_package_whose_closure_conflicts() {
     let dir = laft_test::tempdir();

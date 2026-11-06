@@ -941,23 +941,33 @@ fn option_constraints(input: &Input<'_>, findings: &mut Vec<Finding>) {
                     .detail(format!("the dependency: {dep}"))
             };
             let index_decls = input.index.options.get(target).map(Vec::as_slice);
+            let base_decls = if index_decls.is_none() {
+                input
+                    .bases
+                    .iter()
+                    .find_map(|base| base.options.get(target).map(Vec::as_slice))
+            } else {
+                None
+            };
             let recipe_decls = match input.recipes {
-                Some(repos) if index_decls.is_none() => match repos.options(target) {
-                    Ok(decls) => decls.map(|decls| decls.declarations),
-                    Err(e) => {
-                        findings.push(
-                            kr015(format!(
-                                "option constraints: {} requires options of {target}, but the index records no option declarations for {target}, so they cannot be verified",
-                                label(meta)
-                            ))
-                            .detail(e.to_string()),
-                        );
-                        continue;
+                Some(repos) if index_decls.is_none() && base_decls.is_none() => {
+                    match repos.options(target) {
+                        Ok(decls) => decls.map(|decls| decls.declarations),
+                        Err(e) => {
+                            findings.push(
+                                kr015(format!(
+                                    "option constraints: {} requires options of {target}, but the index records no option declarations for {target}, so they cannot be verified",
+                                    label(meta)
+                                ))
+                                .detail(e.to_string()),
+                            );
+                            continue;
+                        }
                     }
-                },
+                }
                 _ => None,
             };
-            let Some(decls) = index_decls.or(recipe_decls.as_deref()) else {
+            let Some(decls) = index_decls.or(base_decls).or(recipe_decls.as_deref()) else {
                 let why = match input.recipes {
                     Some(repos) if repos.packages().any(|name| name == target) => {
                         format!("{target} declares no options")
