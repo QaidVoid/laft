@@ -539,12 +539,15 @@ impl<'a> Builder<'a> {
             Mode::Store => view::usable(view::store_entries(&self.store)?, &self.seeds()?),
             _ => Vec::new(),
         };
-        let names: BTreeSet<(Name, Variant)> = entries
-            .iter()
-            .map(|e| (e.meta.name.clone(), e.meta.variant))
-            .collect();
         let unresolved = !matches!(self.mode, Mode::Store);
-        let published = |r: &PkgRef| unresolved || names.contains(&(r.name().clone(), r.variant()));
+        let published = |r: &PkgRef| {
+            unresolved
+                || entries.iter().any(|e| {
+                    e.meta.name == *r.name()
+                        && e.meta.variant == r.variant()
+                        && r.options().hold(&e.meta.options)
+                })
+        };
         let (graph, unsatisfied) = if open {
             let scanned = BuildGraph::scan(recipes, &published).map_err(problems)?;
             let unsatisfied = scanned.unsatisfied.into_iter().map(|(_, _, r)| r).collect();

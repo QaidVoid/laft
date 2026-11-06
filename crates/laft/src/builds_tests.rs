@@ -695,13 +695,15 @@ fn source_tarball(dir: &Path) -> (Vec<u8>, String) {
 
 /// The recipe repository of `hello`, as a snapshot archive published at
 /// `repo`, with `hex` as the hash of its source and `mirror` as its
-/// mirror. Returns the archive bytes.
-fn publish_recipes(dir: &Path, repo: &Path, mirror: &Path, hex: &str) -> Vec<u8> {
+/// mirror. `variants` is the recipe's `variants` set. Returns the archive
+/// bytes.
+fn publish_recipes(dir: &Path, repo: &Path, mirror: &Path, hex: &str, variants: &str) -> Vec<u8> {
     let recipe = format!(
         r#"package hello {{
   version = "1.0"
   summary = "Hello"
   license = [MIT]
+  variants = [{variants}]
   deps = [greet]
   source main {{
     url = ["https://example.org/hello-1.0.tar.zst"]
@@ -882,6 +884,11 @@ struct Round {
 /// `hello`, a seeded build view, and the request for it. `None` when the
 /// host cannot run the builds.
 fn round_of(dir: &Path) -> Option<Round> {
+    round_of_variants(dir, "dynamic")
+}
+
+/// As [`round_of`], with the recipe's `variants` set given.
+fn round_of_variants(dir: &Path, variants: &str) -> Option<Round> {
     if !Path::new("/bin/sh").exists() {
         println!("skipping: the host has no /bin/sh");
         return None;
@@ -904,7 +911,7 @@ fn round_of(dir: &Path) -> Option<Round> {
     let (_, hex) = source_tarball(dir);
     let www = dir.join("www");
     let url = format!("file://{}", www.display());
-    let snapshot = publish_recipes(dir, &www, &dir.join("mirror"), &hex);
+    let snapshot = publish_recipes(dir, &www, &dir.join("mirror"), &hex, variants);
     let greet = publish_empty(&www, "greet", "The greeting library");
     if !Path::new("/bin/sh").exists() {
         println!("skipping: the host has no /bin/sh");
@@ -945,12 +952,21 @@ fn round_of(dir: &Path) -> Option<Round> {
         size: snapshot.len() as u64,
         blake3: Blake3Hash::of(&snapshot),
     });
-    let indexes = vec![index];
+    let mut indexes = vec![index];
     let root = laft_build::BuildRoot::new(env.path("/laft/build"));
     for entry in &indexes[0].accepted.index.packages {
         if entry.meta.name != greet.meta.name {
             laft_build::seed(&root, &www.join(&entry.file)).expect("the build view is seeded");
         }
+    }
+    if variants.contains("static") {
+        let tool = publish_empty(
+            &www,
+            laft_build::view::STATIC_TOOLCHAIN,
+            "The static toolchain of the tests",
+        );
+        indexes[0].accepted.index.packages.push(tool.clone());
+        laft_build::seed(&root, &www.join(tool.file)).expect("the toolchain is seeded");
     }
     let hello: Name = "hello".parse().expect("a name");
     let source = SnapshotSource {
@@ -1083,6 +1099,310 @@ fn a_round_seeds_builds_publishes_and_a_second_round_rests() {
         .filter(|entry| entry.meta.name == hello)
         .collect();
     assert_eq!(locals.len(), 1, "no duplicate is published");
+}
+
+#[test]
+fn a_second_variant_of_a_package_builds_with_the_first() {
+    let dir = laft_test::tempdir();
+    let Some(Round {
+        env,
+        snapshots,
+        indexes,
+        request,
+        hello,
+        www: _,
+    }) = round_of_variants(dir.path(), "dynamic, static")
+    else {
+        return;
+    };
+    let dynamic = snapshots
+        .get(&(hello.clone(), Variant::default()))
+        .expect("the dynamic source")
+        .clone();
+    let mut static_source = dynamic.clone();
+    static_source.variant = Variant::Static;
+    let snapshots = SnapshotMap::from_iter([
+        ((hello.clone(), Variant::default()), dynamic),
+        ((hello.clone(), Variant::Static), static_source),
+    ]);
+    let static_request = Request {
+        name: hello.clone(),
+        variant: Variant::Static,
+        values: BTreeMap::new(),
+        view: "system".to_owned(),
+        reasons: Vec::new(),
+    };
+    let built = match run(
+        &env,
+        &[request, static_request],
+        &snapshots,
+        &indexes,
+        &build_options(),
+        &BTreeMap::new(),
+    ) {
+        Ok(built) => built,
+        Err(failure) => {
+            fn dump(dir: &Path, depth: usize) {
+                if depth == 0 {
+                    return;
+                }
+                if let Ok(entries) = fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            dump(&path, depth - 1);
+                        } else {
+                            println!(
+                                "--- {}: {}",
+                                path.display(),
+                                fs::read_to_string(&path).unwrap_or_default()
+                            );
+                        }
+                    }
+                }
+            }
+            dump(&env.path("/laft/build/logs"), 4);
+            panic!("both variants build: {failure:?}");
+        }
+    };
+    assert_eq!(built.names, vec![hello.clone()]);
+    let local = Local::of(env.root.path())
+        .source()
+        .expect("the key works")
+        .expect("a local index exists");
+    let mut variants: Vec<Variant> = local
+        .accepted
+        .index
+        .packages
+        .iter()
+        .filter(|entry| entry.meta.name == hello)
+        .map(|entry| entry.meta.variant)
+        .collect();
+    variants.sort();
+    assert_eq!(
+        variants,
+        vec![Variant::default(), Variant::Static],
+        "both variants are published: {variants:?}"
+    );
+}
+
+/// A published package of `name` at 1.0 that records `options`, written
+/// into `pool` below `repo`. Returns the index entry for it.
+fn publish_set(
+    repo: &Path,
+    name: &str,
+    summary: &str,
+    options: &[(&str, laft_core::OptionValue)],
+) -> laft_index::IndexEntry {
+    let payload = laft_test::tempdir();
+    let mut meta = meta_of(name, "1.0");
+    meta.summary = summary.to_owned();
+    for (option, value) in options {
+        meta.options.insert((*option).to_owned(), value.clone());
+    }
+    let entries = laft_pkg::scan(payload.path()).expect("the payload scans");
+    let meta_json = meta.to_json().expect("valid metadata");
+    let manifest = laft_pkg::Manifest::new(meta.identity(), Blake3Hash::of(&meta_json), entries)
+        .expect("valid manifest");
+    let mut bytes = Vec::new();
+    laft_pkg::write_package(
+        &mut bytes,
+        payload.path(),
+        &meta,
+        &manifest,
+        laft_pkg::Compression::DEVELOPMENT,
+    )
+    .expect("the package writes");
+    let id = manifest.store_id();
+    let file = format!("pool/{id}.lpkg");
+    fs::create_dir_all(repo.join("pool")).expect("writable");
+    fs::write(repo.join(&file), &bytes).expect("writable");
+    laft_index::IndexEntry {
+        meta,
+        id,
+        file,
+        size: bytes.len() as u64,
+        blake3: Blake3Hash::of(&bytes),
+    }
+}
+
+/// The environment of a round whose two snapshots build `worker` and
+/// `server`, each of which needs a published `greet` with the opposite
+/// value of its `tool` option. Returns the environment, the snapshots,
+/// the indexes and the two requests. `None` when the host cannot run the
+/// builds.
+fn opposite_rounds_of(dir: &Path) -> Option<(Env, SnapshotMap, Vec<RepoIndex>, Vec<Request>)> {
+    if !Path::new("/bin/sh").exists() {
+        println!("skipping: the host has no /bin/sh");
+        return None;
+    }
+    let probe = dir.join("probe");
+    fs::create_dir_all(probe.join("build")).expect("writable");
+    fs::create_dir_all(probe.join("out")).expect("writable");
+    match laft_sandbox::Sandbox::new("/usr", probe.join("build"), probe.join("out"))
+        .command("/usr/bin/true")
+        .status()
+    {
+        Ok(status) if status.success() => {}
+        other => {
+            println!("skipping: the sandbox is unavailable: {other:?}");
+            return None;
+        }
+    }
+    laft_build_exe();
+    let env = env_of(dir);
+    let (_, hex) = source_tarball(dir);
+    let www = dir.join("www");
+    let url = format!("file://{}", www.display());
+    let mirror = dir.join("mirror");
+    let descriptor = format!(
+        "recipe_repo core {{\n  source_mirrors = [\"file://{}\"]\n}}\n",
+        mirror.display()
+    );
+    let mut snapshots = SnapshotMap::new();
+    let mut requests = Vec::new();
+    let mut packages = Vec::new();
+    for (name, constraint, summary) in [
+        ("worker", "greet{tool}", "The package that needs the tool"),
+        (
+            "server",
+            "greet{!tool}",
+            "The package that refuses the tool",
+        ),
+    ] {
+        let recipe = format!(
+            r#"package {name} {{
+  version = "1.0"
+  summary = "{summary}"
+  license = [MIT]
+  build_deps = [{constraint}]
+  source main {{
+    url = ["https://example.org/hello-1.0.tar.zst"]
+    sha256 = "sha256:{hex}"
+  }}
+  build custom {{}}
+  env = {{ LD_LIBRARY_PATH = "/usr/lib" }}
+  phases {{
+    install = "mkdir -p \"$DESTDIR/usr/share/{name}\" && printf {name} > \"$DESTDIR/usr/share/{name}/{name}.txt\""
+  }}
+}}
+"#
+        );
+        let bytes = archive_of(
+            dir,
+            &[
+                ("recipes.stav", descriptor.as_bytes()),
+                (
+                    format!("recipes/{name}/package.stav").as_str(),
+                    recipe.as_bytes(),
+                ),
+            ],
+        );
+        let file = www.join(format!("recipes/{}.tar.zst", Blake3Hash::of(&bytes)));
+        fs::create_dir_all(file.parent().expect("the file has a parent")).expect("writable");
+        fs::write(&file, &bytes).expect("writable");
+        let parsed: Name = name.parse().expect("a name");
+        snapshots.insert(
+            (parsed.clone(), Variant::default()),
+            SnapshotSource {
+                repo: "core".parse().expect("a name"),
+                snapshot: laft_index::RecipeSnapshot {
+                    file: format!("recipes/{}.tar.zst", Blake3Hash::of(&bytes)),
+                    size: bytes.len() as u64,
+                    blake3: Blake3Hash::of(&bytes),
+                },
+                name: parsed.clone(),
+                version: "1.0".parse().expect("a version"),
+                variant: Variant::default(),
+                defaults: BTreeMap::new(),
+            },
+        );
+        requests.push(Request {
+            name: parsed,
+            variant: Variant::default(),
+            values: BTreeMap::new(),
+            view: "system".to_owned(),
+            reasons: Vec::new(),
+        });
+    }
+    packages.push(publish_set(
+        &www,
+        "greet",
+        "The greeting library with the tool",
+        &[("tool", laft_core::OptionValue::TRUE)],
+    ));
+    packages.push(publish_set(
+        &www,
+        "greet",
+        "The greeting library without the tool",
+        &[("tool", laft_core::OptionValue::FALSE)],
+    ));
+    let dash_files = host_shell_files();
+    let dash_refs: Vec<(&str, &[u8], u32)> = dash_files
+        .iter()
+        .map(|(path, bytes, mode)| (path.as_str(), bytes.as_slice(), *mode))
+        .collect();
+    packages.push(publish_pkg(
+        &www,
+        "dash",
+        "The POSIX shell of the build view",
+        &dash_refs,
+    ));
+    let tool_files = host_tool_files(&["mkdir", "printf"]);
+    let tool_refs: Vec<(&str, &[u8], u32)> = tool_files
+        .iter()
+        .map(|(path, bytes, mode)| (path.as_str(), bytes.as_slice(), *mode))
+        .collect();
+    packages.push(publish_pkg(
+        &www,
+        "coreutils",
+        "The tools of the build view",
+        &tool_refs,
+    ));
+    for name in laft_build::view::BUILD_BASE {
+        if *name != "dash" && *name != "coreutils" {
+            packages.push(publish_empty(&www, name, "The build view of the tests"));
+        }
+    }
+    let mut index = index_of(&url, packages[0].clone());
+    index.accepted.index.packages = packages;
+    let indexes = vec![index];
+    let root = laft_build::BuildRoot::new(env.path("/laft/build"));
+    for entry in &indexes[0].accepted.index.packages[2..] {
+        laft_build::seed(&root, &www.join(&entry.file)).expect("the build view is seeded");
+    }
+    Some((env, snapshots, indexes, requests))
+}
+
+#[test]
+fn a_second_option_set_of_a_published_dependency_is_seeded() {
+    let dir = laft_test::tempdir();
+    let Some((env, snapshots, indexes, requests)) = opposite_rounds_of(dir.path()) else {
+        return;
+    };
+    if std::env::var("LAFT_KEEP").is_ok() {
+        println!("KEEP {}", dir.path().display());
+        std::mem::forget(dir);
+    }
+    let built = run(
+        &env,
+        &requests,
+        &snapshots,
+        &indexes,
+        &build_options(),
+        &BTreeMap::new(),
+    )
+    .expect("both builds succeed");
+    let mut names = built.names;
+    names.sort();
+    assert_eq!(
+        names,
+        vec![
+            "server".parse().expect("a name"),
+            "worker".parse().expect("a name")
+        ],
+        "both packages are built"
+    );
 }
 
 /// The buildinfo of one package, as `laft-build` writes it next to it.

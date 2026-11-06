@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use laft_activate::{Assembly, Host};
 use laft_config::Loaded;
-use laft_core::Name;
+use laft_core::{Name, Variant};
 use laft_resolve::Upgrade;
 use laft_store::{
     GenerationInput, IndexRecord, Init, Lock, PackageInput, Plan as TxPlan, Transaction, ViewInput,
@@ -269,7 +269,7 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
     }
     env.ui.confirm("proceed?")?;
     let mut rounds = 0;
-    let mut done: BTreeSet<(Name, String)> = BTreeSet::new();
+    let mut done: BTreeSet<(Name, Variant, String)> = BTreeSet::new();
     while !crate::builds::requests_of(&planned.resolved).is_empty() {
         rounds += 1;
         if rounds > crate::builds::ROUNDS {
@@ -284,10 +284,9 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
             ));
         }
         let requests = crate::builds::requests_of(&planned.resolved);
-        if let Some(again) = requests
-            .iter()
-            .find(|request| done.contains(&(request.name.clone(), request.signature())))
-        {
+        if let Some(again) = requests.iter().find(|request| {
+            done.contains(&(request.name.clone(), request.variant, request.signature()))
+        }) {
             return Err(Failure::new(
                 exit::FAILURE,
                 format!(
@@ -298,7 +297,7 @@ pub(crate) fn apply(env: &Env, request: &Request) -> Result<u8, Failure> {
             ));
         }
         for request in &requests {
-            done.insert((request.name.clone(), request.signature()));
+            done.insert((request.name.clone(), request.variant, request.signature()));
         }
         let config = &planned.loaded.config;
         let built = crate::builds::run(

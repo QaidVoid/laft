@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use laft_build::{BuildRoot, Builder, Buildinfo, Mode, Repos, SourceCache};
-use laft_core::{Blake3Hash, Name, OptionConstraint, OptionValue, PkgRef};
+use laft_core::{Blake3Hash, Name, OptionConstraint, OptionValue, PkgRef, Variant};
 use laft_store::read_regular;
 use serde_json::Value;
 
@@ -177,7 +177,7 @@ pub(crate) fn run(
     let mut groups: BTreeMap<(Blake3Hash, String), Vec<Request>> = BTreeMap::new();
     let mut waiting: BTreeMap<(Blake3Hash, String), BTreeSet<(Blake3Hash, String)>> =
         BTreeMap::new();
-    let mut queued: BTreeSet<(Name, String)> = BTreeSet::new();
+    let mut queued: BTreeSet<(Name, Variant, String)> = BTreeSet::new();
     let mut queue: Vec<Request> = requests.to_vec();
     let mut rounds = 0;
     while let Some(request) = queue.pop() {
@@ -201,7 +201,7 @@ pub(crate) fn run(
         };
         let blake3 = source.snapshot.blake3;
         let here = (blake3, request.signature());
-        let key = (request.name.clone(), request.signature());
+        let key = (request.name.clone(), request.variant, request.signature());
         if !queued.insert(key) {
             // The same package with the same values, asked for by another
             // view: the group records it, so that the choice of published
@@ -271,7 +271,8 @@ struct Run<'a> {
     options: &'a laft_config::Build,
     values: &'a BTreeMap<Name, laft_config::OptionValues>,
     built: Built,
-    seeded: BTreeSet<Name>,
+    /// The store ids of the packages seeded into the build-side store.
+    seeded: BTreeSet<laft_core::StoreId>,
 }
 
 impl<'a> Run<'a> {
@@ -400,7 +401,14 @@ impl<'a> Run<'a> {
         let repos = Repos::open(&[snapshot_dir(self.env, blake3)]).map_err(usage)?;
         let cache = SourceCache::new(root.sources(), self.env.fetcher());
         let mut recipes = Vec::new();
+        let mut evaluated: BTreeSet<(&Name, &BTreeMap<String, laft_core::OptionValue>)> =
+            BTreeSet::new();
         for request in requests {
+            // Several variants of one package share the snapshot and the
+            // values, so one evaluation holds for all of them.
+            if !evaluated.insert((&request.name, &request.values)) {
+                continue;
+            }
             let evaluation = repos
                 .evaluate_with(&request.name, &request.values)
                 .map_err(usage)?;
@@ -534,14 +542,11 @@ impl<'a> Run<'a> {
         }
         for _ in 0..LIMIT {
             let references = self.scan(blake3, requests, root)?;
-            let pending: Vec<&PkgRef> = references
-                .iter()
-                .filter(|reference| !self.seeded.contains(reference.name()))
-                .collect();
-            if pending.is_empty() {
+            if references.is_empty() {
                 return self.build(blake3, requests, root);
             }
-            for reference in pending {
+            let mut fresh = false;
+            for reference in &references {
                 let mut found = None;
                 for view in &views {
                     if let Some((entry, index)) = self.candidate(reference, view) {
@@ -551,8 +556,12 @@ impl<'a> Run<'a> {
                 }
                 match found {
                     Some((entry, mirrors)) => {
-                        self.seeded.insert(reference.name().clone());
-                        self.seed(root, &entry, &mirrors)?;
+                        // Another option set or variant of the same
+                        // package is its own seed.
+                        if self.seeded.insert(entry.id) {
+                            self.seed(root, &entry, &mirrors)?;
+                            fresh = true;
+                        }
                     }
                     None => {
                         return Err(Failure::new(
@@ -563,6 +572,9 @@ impl<'a> Run<'a> {
                         ));
                     }
                 }
+            }
+            if !fresh {
+                break;
             }
         }
         Err(Failure::new(

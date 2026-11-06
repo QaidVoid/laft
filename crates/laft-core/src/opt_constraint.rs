@@ -1,6 +1,7 @@
 //! The option constraints of a dependency: `flag`, `!flag` and `opt=tag`
 //! in braces after a package name.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -128,6 +129,16 @@ impl OptionConstraints {
     /// Whether the list constrains nothing.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Whether every constraint holds under the given option values,
+    /// where a constraint on an option the values do not name holds.
+    pub fn hold(&self, values: &BTreeMap<String, OptionValue>) -> bool {
+        self.0.iter().all(|constraint| {
+            values
+                .get(constraint.name())
+                .is_none_or(|value| constraint.matches(value))
+        })
     }
 }
 

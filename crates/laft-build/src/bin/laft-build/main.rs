@@ -51,7 +51,7 @@ use laft_build::{
     OptionContext, Outcome, Recipe, Repos, RootLock, SourceCache, Stage, StageEvent, StageOptions,
     ViewOptions, check_repro, record_repro, run_stage,
 };
-use laft_core::{Name, OptionValue, PkgRef};
+use laft_core::{Name, OptionValue, PkgRef, Variant};
 use laft_fetch::{Config, Fetcher};
 use laft_resolve::FixedValue;
 use serde_json::{Value, json};
@@ -408,7 +408,8 @@ fn recipes(cx: &Context, texts: &[String]) -> Result<Vec<Recipe>, Failure> {
             })
             .collect::<Result<_, Failure>>()?
     };
-    let mut out = Vec::new();
+    let mut out: Vec<Recipe> = Vec::new();
+    let mut seen: BTreeSet<(String, Variant)> = BTreeSet::new();
     for (name, variant) in wanted {
         let parsed = name
             .parse()
@@ -428,6 +429,7 @@ fn recipes(cx: &Context, texts: &[String]) -> Result<Vec<Recipe>, Failure> {
                 "{name} does not build the variant you asked for"
             )));
         }
+        found.retain(|r| seen.insert((r.name.to_string(), r.variant)));
         out.append(&mut found);
     }
     Ok(out)
