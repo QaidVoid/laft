@@ -394,6 +394,7 @@ fn resolve<'e>(
     let universe = Universe::new(&[Repository {
         index: &index,
         priority: 0,
+        local: false,
     }]);
     let mut input = ResolveInput::new("build");
     input.requests = refs

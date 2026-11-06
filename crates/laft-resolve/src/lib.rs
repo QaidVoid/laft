@@ -76,7 +76,7 @@
 //!     recipes: None,
 //!     profile: None,
 //! };
-//! let universe = Universe::new(&[Repository { index: &index, priority: 0 }]);
+//! let universe = Universe::new(&[Repository { index: &index, priority: 0, local: false }]);
 //! let mut input = ResolveInput::new("system");
 //! input.requests.push(Request {
 //!     pkg: "ripgrep".parse()?,

@@ -7,11 +7,60 @@ use proptest::prelude::*;
 use super::*;
 use crate::test_support::*;
 use crate::universe::provides;
+use crate::{Repository, Universe};
 
 fn code<T>(result: Result<T, Error>) -> &'static str {
     match result {
         Ok(_) => panic!("the resolution should fail"),
         Err(e) => e.code().unwrap_or("none"),
+    }
+}
+
+#[test]
+fn the_local_repository_wins_only_on_the_same_identity() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.3"),
+            pkg("mesa 25.1").options(&[("llvm", "false")]),
+        ],
+    );
+    let local = index(
+        "local",
+        vec![pkg("mesa 25.1").options(&[("llvm", "false")])],
+    );
+    let repos = [
+        Repository {
+            index: &core,
+            priority: 0,
+            local: false,
+        },
+        Repository {
+            index: &local,
+            priority: i64::MAX,
+            local: true,
+        },
+    ];
+    let u = Universe::new(&repos);
+    let r = u.resolve(&input("system", vec![req("mesa")], &[])).unwrap();
+    assert_eq!(
+        labels(&r),
+        ["mesa 25.3-r1"],
+        "the owner's newest version wins over the local build"
+    );
+    let r = u
+        .resolve(&input("system", vec![req("mesa{!llvm}")], &[]))
+        .unwrap();
+    assert_eq!(labels(&r), ["mesa 25.1-r1"]);
+    match r.packages[&name("mesa")].candidate.source {
+        Source::Index { repo, .. } => {
+            assert_eq!(
+                *repo,
+                name("local"),
+                "the local build wins on the same identity"
+            );
+        }
+        Source::Installed => panic!("an index entry is selected"),
     }
 }
 

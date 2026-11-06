@@ -539,13 +539,13 @@ fn closure(input: &Input<'_>, dangling: &HashSet<StoreId>, findings: &mut Vec<Fi
     let mut repos = vec![laft_resolve::Repository {
         index: input.index,
         priority: 1,
+        local: false,
     }];
-    repos.extend(
-        input
-            .bases
-            .iter()
-            .map(|index| laft_resolve::Repository { index, priority: 0 }),
-    );
+    repos.extend(input.bases.iter().map(|index| laft_resolve::Repository {
+        index,
+        priority: 0,
+        local: false,
+    }));
     let universe = Universe::new(&repos);
     for entry in &input.index.packages {
         if dangling.contains(&entry.id) {

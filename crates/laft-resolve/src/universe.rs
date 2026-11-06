@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use laft_core::{Dep, Name, Provide, StoreId};
@@ -15,6 +15,12 @@ pub struct Repository<'a> {
     /// The repository priority. For each package name, only the repository
     /// with the highest priority among those that list the name is used.
     pub priority: i64,
+    /// Whether this is the implicit local repository. Its packages never
+    /// own a name: they join the candidates of every name they list and
+    /// win only over a published package with the same name, version,
+    /// revision, variant and option values. A name that no other
+    /// repository lists belongs to the local repository.
+    pub local: bool,
 }
 
 /// A package the resolver can select.
@@ -54,6 +60,12 @@ pub enum Source<'a> {
 /// highest priority for a name, the name is ambiguous, which is an error
 /// only when a resolution needs it.
 ///
+/// The local repository is never an owner. Its packages join the
+/// candidates of every name it lists, and win only over a published
+/// package with the same identity: the name, version, revision, variant
+/// and option values the store keys. A name that only the local
+/// repository lists belongs to it.
+///
 /// Repository defaults for providers and alternatives are merged so that the
 /// repository with the higher priority wins. Between repositories of equal
 /// priority, the one whose name sorts first wins.
@@ -82,7 +94,7 @@ pub enum Source<'a> {
 ///     recipes: None,
 ///     profile: None,
 /// };
-/// let universe = Universe::new(&[Repository { index: &index, priority: 0 }]);
+/// let universe = Universe::new(&[Repository { index: &index, priority: 0, local: false }]);
 /// let resolution = universe.resolve(&ResolveInput::new("system"))?;
 /// assert!(resolution.packages.is_empty());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -186,8 +198,10 @@ pub(crate) fn order(a: &Candidate<'_>, b: &Candidate<'_>) -> Ordering {
 impl<'a> Universe<'a> {
     /// Prepares the packages of `repos` for resolution.
     pub fn new(repos: &[Repository<'a>]) -> Self {
+        // The repository that owns a name is the highest-priority
+        // repository other than the local ones that lists it.
         let mut names: HashMap<&'a str, Owner<'a>> = HashMap::new();
-        for repo in repos {
+        for repo in repos.iter().filter(|repo| !repo.local) {
             let listed = repo.index.packages.iter().map(|e| &e.meta.name);
             for name in listed.chain(repo.index.yanked.iter().map(|y| &y.name)) {
                 let owner = names.entry(name.as_str()).or_insert_with(|| Owner {
@@ -206,7 +220,45 @@ impl<'a> Universe<'a> {
                 }
             }
         }
+        // A name that only a local repository lists has no owner yet; the
+        // local repository owns it, and nothing hides it.
+        let mut local_repos: HashSet<&'a Name> = HashSet::new();
+        for repo in repos.iter().filter(|repo| repo.local) {
+            local_repos.insert(&repo.index.repo);
+            let listed = repo.index.packages.iter().map(|e| &e.meta.name);
+            for name in listed.chain(repo.index.yanked.iter().map(|y| &y.name)) {
+                names.entry(name.as_str()).or_insert_with(|| Owner {
+                    name,
+                    repos: vec![&repo.index.repo],
+                    priority: repo.priority,
+                    candidates: Vec::new(),
+                    yanked: Vec::new(),
+                });
+            }
+        }
         for repo in repos {
+            if repo.local {
+                // Every local package joins the candidates of its name,
+                // whichever repository owns it.
+                for entry in &repo.index.packages {
+                    if let Some(owner) = names.get_mut(entry.meta.name.as_str()) {
+                        owner.candidates.push(Candidate {
+                            id: entry.id,
+                            meta: &entry.meta,
+                            source: Source::Index {
+                                repo: &repo.index.repo,
+                                entry,
+                            },
+                        });
+                    }
+                }
+                for yank in &repo.index.yanked {
+                    if let Some(owner) = names.get_mut(yank.name.as_str()) {
+                        owner.yanked.push(yank);
+                    }
+                }
+                continue;
+            }
             let owns = |name: &str| {
                 names
                     .get(name)
@@ -247,7 +299,15 @@ impl<'a> Universe<'a> {
         let mut replaces: HashMap<&'a str, Vec<&'a Name>> = HashMap::new();
         for owner in names.values_mut() {
             owner.repos.sort();
-            owner.candidates.sort_by(order);
+            // Best first, and on the same identity the local build before
+            // the published one.
+            owner.candidates.sort_by(|a, b| {
+                order(a, b).then_with(|| {
+                    let a_local = matches!(a.source, Source::Index { repo, .. } if local_repos.contains(repo));
+                    let b_local = matches!(b.source, Source::Index { repo, .. } if local_repos.contains(repo));
+                    b_local.cmp(&a_local)
+                })
+            });
             owner.candidates.dedup_by_key(|c| c.id);
             owner.yanked.sort_by_key(|y| y.id);
             for candidate in &owner.candidates {

@@ -77,13 +77,16 @@ pub(crate) struct Resolved<'a> {
     pub(crate) views: BTreeMap<Name, Resolution<'a>>,
 }
 
-/// The universe of the accepted indexes.
+/// The universe of the accepted indexes. The implicit local repository is
+/// never an owner: its packages join the candidates of the names other
+/// repositories own and win only on the same identity.
 pub(crate) fn universe(indexes: &[RepoIndex]) -> Universe<'_> {
     let repos: Vec<Repository<'_>> = indexes
         .iter()
         .map(|r| Repository {
             index: &r.accepted.index,
             priority: r.repo.priority,
+            local: r.name.as_str() == "local",
         })
         .collect();
     Universe::new(&repos)

@@ -193,6 +193,7 @@ pub(crate) fn universe<'a>(repos: &[(&'a Index, i64)]) -> Universe<'a> {
         .map(|(index, priority)| Repository {
             index,
             priority: *priority,
+            local: false,
         })
         .collect();
     Universe::new(&repos)
