@@ -236,7 +236,7 @@ pub(crate) fn build_generation(lock: &Lock, number: u64, config: &crate::EtcConf
     tree.write(&dir).expect("writes the tree");
     declared.write(&dir).expect("writes the accounts");
     let generation = Generation {
-        format: 1,
+        format: 2,
         generation: number,
         parent: None,
         created: Timestamp::now(),

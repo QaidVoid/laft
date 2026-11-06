@@ -40,7 +40,7 @@ fn generation(env: &Env, number: u64, release: &str, initramfs: &[u8], config: &
     .unwrap();
     fs::write(dir.join("config.json"), config).unwrap();
     let generation = Generation {
-        format: 1,
+        format: 2,
         generation: number,
         parent: None,
         created: Timestamp::from_secs(1_761_660_120 + number * 86_400),
