@@ -52,10 +52,15 @@ fn builds(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<()> {
 
     let built = shell(
         &mut machine,
-        "laft apply --yes --build-missing; echo built-status=$?",
+        "laft apply --yes --build-missing; s=$?; [ $s -eq 0 ] || \
+         find /laft/build/logs -type f -exec cat {} \\;; echo built-status=$s",
     )?;
     check("the optioned apply succeeds", &built, "built-status=0")?;
-    check("greeting builds", &built, "building greeting")?;
+    check(
+        "the optioned apply builds from the snapshot",
+        &built,
+        "from a recipe snapshot",
+    )?;
     let text = shell(&mut machine, "cat /usr/share/greeting/greeting.txt")?;
     check(
         "the optioned greeting is loud, twice",
@@ -71,7 +76,7 @@ fn builds(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<()> {
 
     let again = shell(&mut machine, "laft apply --yes; echo again-status=$?")?;
     check("the second apply succeeds", &again, "again-status=0")?;
-    check_absent("the second apply builds nothing", &again, "building")?;
+    check_absent("the second apply builds nothing", &again, "recipe snapshot")?;
 
     serve_and_second_machine(&mut machine)?;
     power_off(&mut machine)
@@ -174,11 +179,15 @@ fn boots_optioned(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Resu
 
     let calm = shell(
         &mut machine,
-        "sed -i -e 's/mood = \"loud\"/mood = \"calm\"/' -e 's/twice = true/twice = false/' \
+        "sed -i -e 's/mood = loud/mood = calm/' -e 's/twice = true/twice = false/' \
          /etc/laft/system.stav && laft apply --yes --build-missing; echo calm-status=$?",
     )?;
     check("the default apply succeeds", &calm, "calm-status=0")?;
-    check("the default greeting builds", &calm, "building greeting")?;
+    check_absent(
+        "the default apply installs the published packages",
+        &calm,
+        "recipe snapshot",
+    )?;
     let text = shell(&mut machine, "cat /usr/share/greeting/greeting.txt")?;
     check(
         "the default greeting is calm",
@@ -246,7 +255,7 @@ fn fix_options(machine: &mut Machine) -> Result<()> {
     shell(
         machine,
         "sed -i -e 's/laft\\]/laft, greeting, hello]/' -e '$d' /etc/laft/system.stav && \
-         printf '%s\\n' '  package {' '    greeting {' '      mood = \"loud\"' \
+         printf '%s\\n' '  package {' '    greeting {' '      mood = loud' \
          '      twice = true' '    }' '    libgreet {' '      shout = true' '    }' \
          '  }' '}' >> /etc/laft/system.stav && echo options-ok",
     )?;

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use laft_core::Blake3Hash;
-use laft_pkg::{Arch, Compression, Manifest, Meta, Reader, scan, write_package};
+use laft_pkg::{Alternative, Arch, Compression, Manifest, Meta, Reader, scan, write_package};
 
 use crate::system::{SELF_BUILT_PACKAGES, System, USABLE_PACKAGES};
 use crate::{Paths, Result, fail, run};
@@ -66,6 +66,18 @@ pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
         .args(["--jobs", "4"])
         .args(recipes);
     run(&mut command)?;
+    // Runs before the dedicated scenario roots existed carried them left
+    // old builds of the scenario packages in the shared build root, where
+    // they would enter every index through `published`.
+    if let Ok(entries) = paths.build_out().read_dir() {
+        let stale = ["greeting-", "libgreet-", "hello-"];
+        for item in entries.flatten() {
+            let name = item.file_name().to_string_lossy().into_owned();
+            if stale.iter().any(|prefix| name.starts_with(prefix)) {
+                let _ = fs::remove_file(item.path());
+            }
+        }
+    }
     let published = match system.self_built() {
         Some(dir) => select(dir, &paths.work.join("self-built"), system)?,
         None => paths.build_out(),
@@ -77,6 +89,7 @@ pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
     let stubs = paths.work.join("stubs");
     let _ = fs::remove_dir_all(&stubs);
     build_view_stubs(&stubs)?;
+    let (defaults, loud) = scenario_builds(paths, &stubs)?;
 
     let keys = paths.work.join("keys");
     let repo = paths.work.join("repo");
@@ -114,7 +127,8 @@ pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
         .arg(&recipes)
         .arg(&published)
         .arg(&laft_out)
-        .arg(&stubs))?;
+        .arg(&stubs)
+        .arg(&defaults))?;
     run(repo_tool()
         .args(["index", "--repo"])
         .arg(&repo)
@@ -133,7 +147,8 @@ pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
         .arg("loud")
         .arg(&published)
         .arg(&laft_out)
-        .arg(&stubs))?;
+        .arg(&stubs)
+        .arg(&loud))?;
     run(repo_tool().arg("publish").arg(&repo).arg(&www))?;
     let public = key.with_extension("pub");
     let text =
@@ -239,25 +254,129 @@ pub(crate) fn package_file(dir: &Path, name: &str) -> Result<PathBuf> {
 /// The payload files are host files, and the machine runs them inside
 /// its build views: it is the same architecture, and its kernel is newer
 /// than the oldest one the host libraries support.
-fn build_view_stubs(out: &Path) -> Result<()> {
+pub(crate) fn build_view_stubs(out: &Path) -> Result<()> {
+    let files = view_files()?;
     for name in laft_build::view::BUILD_BASE {
-        let (summary, files) = match *name {
-            "dash" => (
-                "The shell of the build views of the machine",
-                shell_files()?,
-            ),
-            "coreutils" => (
-                "The tools of the build views of the machine",
-                host_tools(&["cp", "mkdir", "printf"])?,
-            ),
-            _ => (
-                "A stub of the build view of the option scenario",
-                Vec::new(),
-            ),
+        let summary = match *name {
+            "dash" => "The shell of the build views of the machine",
+            "coreutils" => "The tools of the build views of the machine",
+            "glibc" => "The libraries of the build views of the machine",
+            _ => "A stub of the build view of the option scenario",
         };
-        stub_package(out, name, summary, &files)?;
+        let own: Vec<_> = files
+            .iter()
+            .filter(|(path, _)| match *name {
+                "dash" => path.as_str() == "usr/bin/sh",
+                "coreutils" => {
+                    matches!(
+                        path.as_str(),
+                        "usr/bin/cp" | "usr/bin/mkdir" | "usr/bin/printf"
+                    )
+                }
+                "glibc" => path.starts_with("usr/lib/"),
+                _ => false,
+            })
+            .map(|(path, (bytes, mode))| (path.clone(), bytes.clone(), *mode))
+            .collect();
+        stub_package(out, name, summary, &own)?;
     }
     Ok(())
+}
+
+/// The payload of the machine's build views, as one map: the host's
+/// `/bin/sh` and the tools the recipes' phases run, each with the shared
+/// libraries they need. `build_view_stubs` splits the map between the
+/// dash, coreutils and glibc stubs, so that no path belongs to two of
+/// them. Every file keeps the executable bit of its host file, and the
+/// recipes that run in a view set `LD_LIBRARY_PATH` to `/usr/lib`, so the
+/// loader finds the libraries without `ld.so.cache`.
+fn view_files() -> Result<BTreeMap<String, (Vec<u8>, u32)>> {
+    let mut files: BTreeMap<String, (Vec<u8>, u32)> = BTreeMap::new();
+    let host =
+        fs::canonicalize("/bin/sh").map_err(|e| fail(format!("the host has no /bin/sh: {e}")))?;
+    let sh = fs::read(&host).map_err(|e| fail(format!("{}: {e}", host.display())))?;
+    files.insert("usr/bin/sh".to_owned(), (sh, host_mode(&host)?));
+    library_closure(&host, &mut files)?;
+    for tool in ["cp", "mkdir", "printf"] {
+        let host = Path::new("/usr/bin").join(tool);
+        let bytes = fs::read(&host).map_err(|e| fail(format!("{}: {e}", host.display())))?;
+        let mode = host_mode(&host)?;
+        files.insert(format!("usr/bin/{tool}"), (bytes, mode));
+        library_closure(&host, &mut files)?;
+    }
+    Ok(files)
+}
+
+/// The alternative groups a stub joins: `sh` and `coreutils` share their
+/// files with the busybox of the repository.
+fn stub_alternatives(name: &str) -> Result<Vec<Alternative>> {
+    let paths = |paths: &[&str]| paths.iter().map(|p| (*p).to_owned()).collect();
+    match name {
+        "dash" => Ok(vec![Alternative {
+            group: parse("sh")?,
+            paths: paths(&["usr/bin/sh"]),
+            priority: 10,
+        }]),
+        "coreutils" => Ok(vec![Alternative {
+            group: parse("coreutils")?,
+            paths: paths(&["usr/bin/cp", "usr/bin/mkdir", "usr/bin/printf"]),
+            priority: 10,
+        }]),
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Builds the packages of the option scenario twice into fresh build
+/// roots, whose stores the stubs seed, and returns their output
+/// directories: the declared defaults first, then the `loud` option set
+/// of the repository profile. The default set gives the machine's
+/// resolution something to differ from: an optioned configuration then
+/// refuses with S011, `--build-missing` builds the optioned set from the
+/// recipe snapshot, and the default configuration installs the published
+/// packages without a build. The loud set is what the profiled index
+/// may publish: a profile must not disagree with the builds it indexes.
+fn scenario_builds(paths: &Paths, stubs: &Path) -> Result<(PathBuf, PathBuf)> {
+    let mut files: Vec<PathBuf> = fs::read_dir(stubs)
+        .map_err(|e| fail(format!("{}: {e}", stubs.display())))?
+        .flatten()
+        .map(|item| item.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "lpkg"))
+        .collect();
+    files.sort();
+    let build = |root: &Path, set: &[&str]| {
+        // The store entries carry read-only directories, which plain
+        // removal cannot unlink.
+        let _ = Command::new("chmod").args(["-R", "u+w"]).arg(root).status();
+        let _ = fs::remove_dir_all(root);
+        let command = |arguments: &[&str]| {
+            let mut command = Command::new(paths.bin.join("laft-build"));
+            command
+                .arg("--root")
+                .arg(root)
+                .arg("--recipes")
+                .arg(paths.source.join("recipes"))
+                .args(set)
+                .args(arguments);
+            command
+        };
+        run(command(&["seed"]).args(&files))?;
+        run(command(&["build"]).args(["greeting", "libgreet", "hello"]))
+    };
+    let defaults = paths.work.join("defaults-root");
+    build(&defaults, &[])?;
+    let loud = paths.work.join("loud-root");
+    build(
+        &loud,
+        &[
+            "--set",
+            "greeting.mood=loud",
+            "--set",
+            "greeting.twice=true",
+            "--set",
+            "libgreet.shout=true",
+        ],
+    )?;
+    Ok((defaults.join("out"), loud.join("out")))
 }
 
 /// Writes the empty package `name`, with `files` in the payload, into
@@ -271,6 +390,7 @@ fn stub_package(
 ) -> Result<()> {
     let payload = out.join("payload");
     let _ = fs::remove_dir_all(&payload);
+    fs::create_dir_all(&payload).map_err(|e| fail(format!("{}: {e}", payload.display())))?;
     let mut size = 0u64;
     for (path, bytes, mode) in files {
         let full = payload.join(path);
@@ -297,7 +417,7 @@ fn stub_package(
         provides: vec![],
         conflicts: vec![],
         replaces: vec![],
-        alternatives: vec![],
+        alternatives: stub_alternatives(name)?,
         triggers: vec![],
         static_deps: vec![],
         abi: Default::default(),
@@ -323,15 +443,25 @@ fn stub_package(
     .map_err(|e| fail(format!("writing the stub {name}: {e}")))?;
     let file = out.join(identity.file_name());
     fs::write(&file, &bytes).map_err(|e| fail(format!("{}: {e}", file.display())))?;
+    let buildinfo = serde_json::json!({
+        "format": 1,
+        "package": {"name": meta.name, "version": meta.version, "rev": meta.rev,
+            "variant": meta.variant},
+        "recipe_repos": [{"name": "vmtest", "commit": "0", "dirty": true}],
+        "outputs": [{"name": meta.name, "variant": meta.variant,
+            "id": manifest.store_id(), "file": identity.file_name()}],
+    });
+    let info = out.join(format!("{identity}.buildinfo.json"));
+    fs::write(&info, buildinfo.to_string())
+        .map_err(|e| fail(format!("{}: {e}", info.display())))?;
     fs::remove_dir_all(&payload).map_err(|e| fail(format!("{}: {e}", payload.display())))
 }
 
-/// The host's `/bin/sh` with the libraries it needs, as the payload of
-/// the build view's dash package. Every file lands below `usr/bin` or
-/// `usr/lib` and keeps the executable bit of its host file. The recipes
-/// that run in a view set `LD_LIBRARY_PATH` to `/usr/lib`, so the loader
-/// finds the libraries without `ld.so.cache`.
-fn shell_files() -> Result<Vec<(String, Vec<u8>, u32)>> {
+/// Reads the ELF dependencies of `file`, transitively, into `files`, at
+/// the payload paths the build views use: the interpreter and every
+/// needed library under `usr/lib`, searched in the library directories
+/// of the host.
+fn library_closure(file: &Path, files: &mut BTreeMap<String, (Vec<u8>, u32)>) -> Result<()> {
     const LIBRARY_DIRS: [&str; 6] = [
         "/lib64",
         "/usr/lib64",
@@ -340,13 +470,7 @@ fn shell_files() -> Result<Vec<(String, Vec<u8>, u32)>> {
         "/lib/x86_64-linux-gnu",
         "/usr/lib/x86_64-linux-gnu",
     ];
-    let mut files: BTreeMap<String, (Vec<u8>, u32)> = BTreeMap::new();
-    let mut queue = Vec::new();
-    let host =
-        fs::canonicalize("/bin/sh").map_err(|e| fail(format!("the host has no /bin/sh: {e}")))?;
-    let sh = fs::read(&host).map_err(|e| fail(format!("{}: {e}", host.display())))?;
-    files.insert("usr/bin/sh".to_owned(), (sh, host_mode(&host)?));
-    queue.push(host);
+    let mut queue = vec![file.to_path_buf()];
     let mut seen = BTreeSet::new();
     while let Some(file) = queue.pop() {
         let bytes = fs::read(&file).map_err(|e| fail(format!("{}: {e}", file.display())))?;
@@ -375,24 +499,7 @@ fn shell_files() -> Result<Vec<(String, Vec<u8>, u32)>> {
             queue.push(dep);
         }
     }
-    Ok(files
-        .into_iter()
-        .map(|(path, (bytes, mode))| (path, bytes, mode))
-        .collect())
-}
-
-/// The host's tools as the payload of the build view's coreutils
-/// package, keeping the executable bits of the host files.
-fn host_tools(tools: &[&str]) -> Result<Vec<(String, Vec<u8>, u32)>> {
-    tools
-        .iter()
-        .map(|tool| {
-            let host = Path::new("/usr/bin").join(tool);
-            let bytes = fs::read(&host).map_err(|e| fail(format!("{}: {e}", host.display())))?;
-            let mode = host_mode(&host)?;
-            Ok((format!("usr/bin/{tool}"), bytes, mode))
-        })
-        .collect()
+    Ok(())
 }
 
 /// The mode to keep for a copy of `file`: executable when the host file

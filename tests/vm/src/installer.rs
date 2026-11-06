@@ -117,11 +117,12 @@ pub(crate) fn prepare(
         INIT.to_owned()
     };
     // The option scenario serves the published repository to a second
-    // machine on the same disk, so the machine keeps a copy of it.
+    // machine on the same disk, so the machine keeps a copy of it. The
+    // copy lands after `laft install`, which refuses a non-empty /mnt.
     let init = if copy_repo {
         init.replace(
-            "  mount -t vfat /dev/vda1 /mnt/boot &&\n",
-            "  mount -t vfat /dev/vda1 /mnt/boot &&\n  cp -a /repo /mnt/repo &&\n",
+            "status=$?\numount /mnt/boot",
+            "status=$?\ncp -a /repo /mnt/repo\numount /mnt/boot",
         )
     } else {
         init

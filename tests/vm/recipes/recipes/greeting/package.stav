@@ -8,6 +8,7 @@ package greeting {
 
   empty = true
   build custom {}
+  env        = { LD_LIBRARY_PATH = "/usr/lib" }
   split = []
 
   phases {

@@ -89,3 +89,45 @@ fn command_labels_exclude_arguments_and_environment() {
         .env("PRIVATE", "private-value");
     assert_eq!(command_name(&command), "program");
 }
+
+/// The stubs must be indexable: their buildinfo files satisfy CI003, and
+/// their alternative groups pass the KR004 checks without a configured
+/// default.
+#[test]
+fn the_stubs_pass_the_repository_checks() -> Result<()> {
+    let dir = std::env::temp_dir().join(format!("vmtest-stubs-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let stubs = dir.join("stubs");
+    fs::create_dir_all(&stubs).map_err(|e| fail(format!("{}: {e}", stubs.display())))?;
+    packages::build_view_stubs(&stubs)?;
+    let key = dir.join("online");
+    let repo = dir.join("repo");
+    fs::create_dir_all(&repo).map_err(|e| fail(format!("{}: {e}", repo.display())))?;
+    let tool = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the manifest directory has a parent")
+        .join("../target/debug/laft-repo");
+    let mut command = Command::new(&tool);
+    command.args(["keygen", "--unencrypted", "--out"]).arg(&key);
+    run(&mut command)?;
+    let recipes = Path::new(env!("CARGO_MANIFEST_DIR")).join("recipes");
+    let mut command = Command::new(&tool);
+    command
+        .args(["index", "--repo"])
+        .arg(&repo)
+        .args([
+            "--name",
+            "core",
+            "--channel",
+            "current",
+            "--allow-bootstrap",
+            "--key",
+        ])
+        .arg(key.with_extension("key"))
+        .arg("--recipes")
+        .arg(&recipes)
+        .arg(&stubs);
+    let result = run(&mut command);
+    let _ = fs::remove_dir_all(&dir);
+    result
+}

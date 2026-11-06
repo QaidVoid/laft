@@ -15,6 +15,17 @@ package busybox {
   strip      = false
   split      = []
 
+  # The machine's build views carry stub dash and coreutils packages that
+  # ship the same files with a higher priority, so the repository index
+  # accepts both members of each group.
+  alternative sh {
+    paths = ["usr/bin/sh"]
+  }
+
+  alternative coreutils {
+    paths = ["usr/bin/cp", "usr/bin/mkdir", "usr/bin/printf"]
+  }
+
   phases {
     # The shadow parser keeps a stale errno when every aging field of an
     # entry is empty, which shadow(5) allows, and then rejects the entry.

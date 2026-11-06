@@ -6,6 +6,7 @@ package hello {
 
   empty = true
   build custom {}
+  env        = { LD_LIBRARY_PATH = "/usr/lib" }
   split = []
 
   link_deps = [libgreet]
