@@ -94,6 +94,8 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
     }
     if let Some(source) = request.recipes_dir {
         index.recipes = Some(snapshot::write(repo, source)?);
+    } else {
+        index.recipes = None;
     }
     if let Some(repos) = request.recipes {
         let mut declared = HashSet::new();
@@ -110,6 +112,8 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
             }
         }
         index.options.retain(|name, _| declared.contains(name));
+    } else {
+        index.options.clear();
     }
     let listed: HashSet<StoreId> = index.packages.iter().map(|e| e.id).collect();
     let yanked: HashSet<_> = index

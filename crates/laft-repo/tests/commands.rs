@@ -1029,6 +1029,48 @@ fn promote_carries_the_option_declarations_of_the_source() {
     ok(&["check", "--repo", s(&repo), "--channel", "current"]);
 }
 
+/// A new generation describes itself: without `--recipes` it carries
+/// neither the declarations nor the snapshot of the generation before it.
+#[test]
+fn index_leaves_the_option_members_out_when_nothing_describes_them() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let repo = dir.path().join("repo");
+    let archive = laft_core::Blake3Hash::of(b"archive");
+
+    let packages = [pkg("hello", "0.9").write(&out)];
+    fixture(&repo, "current", 0, &packages, |index: &mut Index| {
+        index.options.insert(
+            "ghost".parse().unwrap(),
+            vec![laft_index::OptionDecl {
+                name: "tool".to_owned(),
+                kind: laft_index::OptionType::Bool("bool".to_owned()),
+                default: laft_core::OptionValue::TRUE,
+                doc: String::new(),
+            }],
+        );
+        index.recipes = Some(laft_index::RecipeSnapshot {
+            file: format!("recipes/{archive}.tar.zst"),
+            size: 7,
+            blake3: archive,
+        });
+    });
+    fs::create_dir_all(repo.join("recipes")).unwrap();
+    fs::write(repo.join(format!("recipes/{archive}.tar.zst")), b"archive").unwrap();
+
+    let extra = dir.path().join("extra");
+    pkg("zlib", "1.3.1").write(&extra);
+    let now = at(HOUR);
+    let mut args = index_args(&repo, "current", &now);
+    args.push(s(&extra));
+    ok(&args);
+
+    let current = read_index(&repo, "current");
+    assert!(current.options.is_empty(), "{:?}", current.options);
+    assert_eq!(current.recipes, None);
+    assert_eq!(current.packages.len(), 2);
+}
+
 #[test]
 fn the_soak_gate_counts_only_a_verified_source() {
     let dir = laft_test::tempdir();
