@@ -131,6 +131,11 @@ fn vcs(rel: &str) -> bool {
     rel.split('/').any(|part| part == ".git" || part == ".jj")
 }
 
+/// The most entries one recipe snapshot archive may hold.
+const UNPACK_MAX_ENTRIES: usize = 50_000;
+/// The most bytes one recipe snapshot archive may decompress to.
+const UNPACK_MAX_BYTES: u64 = 1 << 30;
+
 /// Unpacks the normalized tarball at `archive` into `dest`, which is
 /// created. The inverse of [`normalized_tarball`] for a `.tar` file, and
 /// the client side of a recipe snapshot: the recipe repository that
@@ -139,7 +144,9 @@ fn vcs(rel: &str) -> bool {
 /// Only plain relative paths inside `dest` are written: directories,
 /// regular files with their recorded mode, and relative symlinks that
 /// stay below `dest`. Entries outside it, absolute paths, device files
-/// and other kinds are refused.
+/// and other kinds are refused. An archive with more entries than the
+/// entry bound, or that decompresses to more than the size bound, is
+/// refused, so a small archive cannot expand into the disk.
 ///
 /// # Errors
 ///
@@ -152,8 +159,16 @@ pub fn unpack_normalized_tarball(archive: &Path, dest: &Path) -> Result<(), Buil
         .map_err(|e| BuildError::problem("B024", format!("{}: {e}", archive.display())))?;
     let mut tar = tar::Archive::new(reader);
     let entries = tar.entries().map_err(|e| refused_io(archive, e))?;
-    for entry in entries {
+    let mut unpacked = 0u64;
+    for (count, entry) in entries.enumerate() {
         let mut entry = entry.map_err(|e| refused_io(archive, e))?;
+        if count >= UNPACK_MAX_ENTRIES {
+            return Err(refused(
+                archive,
+                "the archive",
+                format!("holds more than {UNPACK_MAX_ENTRIES} entries"),
+            ));
+        }
         let raw = entry
             .path()
             .map_err(|e| refused_io(archive, e))?
@@ -165,6 +180,15 @@ pub fn unpack_normalized_tarball(archive: &Path, dest: &Path) -> Result<(), Buil
                 "the path is not a plain relative path",
             )
         })?;
+        let size = entry.header().size().map_err(|e| refused_io(archive, e))?;
+        unpacked += size;
+        if unpacked > UNPACK_MAX_BYTES {
+            return Err(refused(
+                archive,
+                "the archive",
+                format!("decompresses to more than {UNPACK_MAX_BYTES} bytes"),
+            ));
+        }
         let target = dest.join(&plain);
         match entry.header().entry_type() {
             tar::EntryType::Directory => {

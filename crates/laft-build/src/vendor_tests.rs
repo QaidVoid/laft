@@ -134,6 +134,62 @@ fn a_symlink_target_too_long_for_the_archive_is_refused_when_packed() {
     assert!(e.to_string().contains("bytes long"), "{}", e);
 }
 
+/// The unpacker refuses an archive with more than the entry bound.
+#[test]
+fn unpack_refuses_more_than_the_entry_bound() {
+    let dir = laft_test::tempdir();
+    let tarball = dir.path().join("many.tar.zst");
+    {
+        let encoder =
+            zstd::stream::write::Encoder::new(File::create(&tarball).unwrap(), 3).unwrap();
+        let mut builder = tar::Builder::new(encoder);
+        for i in 0..UNPACK_MAX_ENTRIES + 1 {
+            let mut header = tar::Header::new_ustar();
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_mode(0o644);
+            header.set_size(0);
+            header.set_path(format!("f{i}")).unwrap();
+            header.set_cksum();
+            builder.append(&header, std::io::empty()).unwrap();
+        }
+        builder
+            .into_inner()
+            .and_then(|encoder| encoder.finish())
+            .unwrap();
+    }
+    let e = unpack_normalized_tarball(&tarball, &dir.path().join("out")).unwrap_err();
+    assert_eq!(e.code(), Some("B024"));
+    assert!(e.to_string().contains("entries"), "{}", e);
+}
+
+/// The unpacker refuses an archive that decompresses past the size
+/// bound, so a small archive cannot expand into the disk.
+#[test]
+fn unpack_refuses_more_than_the_decompressed_bound() {
+    let dir = laft_test::tempdir();
+    let tarball = dir.path().join("big.tar.zst");
+    {
+        let encoder =
+            zstd::stream::write::Encoder::new(File::create(&tarball).unwrap(), 3).unwrap();
+        let mut builder = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_ustar();
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_size(UNPACK_MAX_BYTES + 1);
+        header.set_path("big").unwrap();
+        header.set_cksum();
+        builder
+            .append(&header, std::io::repeat(0).take(UNPACK_MAX_BYTES + 1))
+            .unwrap();
+        builder
+            .into_inner()
+            .and_then(|encoder| encoder.finish())
+            .unwrap();
+    }
+    let e = unpack_normalized_tarball(&tarball, &dir.path().join("out")).unwrap_err();
+    assert_eq!(e.code(), Some("B024"));
+    assert!(e.to_string().contains("bytes"), "{}", e);
+}
+
 #[test]
 fn a_normalized_tarball_unpacks_to_the_same_tree() {
     let dir = laft_test::tempdir();
