@@ -103,6 +103,37 @@ fn entries_are_sorted_and_normalized() {
     );
 }
 
+/// A symlink whose target leaves the tree is refused when packed, like
+/// the unpacker refuses it: the archive must never carry one.
+#[test]
+fn a_symlink_leaving_the_tree_is_refused_when_packed() {
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("vendor");
+    write_tree(&root, &[("a/lib.rs", b"lib")]);
+    std::os::unix::fs::symlink("../outside", root.join("a/escape.rs")).unwrap();
+    let file = dir.path().join("v.tar");
+    let e = normalized_tarball(&root, &file).unwrap_err();
+    assert_eq!(e.code(), Some("B024"));
+    assert!(e.to_string().contains("../outside"), "{}", e);
+}
+
+/// A symlink target too long for the archive's link name field is
+/// refused with its own problem: no pax `linkpath` record is written, so
+/// the archive could not carry it faithfully.
+#[test]
+fn a_symlink_target_too_long_for_the_archive_is_refused_when_packed() {
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("vendor");
+    write_tree(&root, &[("a/lib.rs", b"lib")]);
+    let target = format!("{}.rs", "long".repeat(40));
+    assert!(target.len() > 100);
+    std::os::unix::fs::symlink(&target, root.join("a/alias.rs")).unwrap();
+    let file = dir.path().join("v.tar");
+    let e = normalized_tarball(&root, &file).unwrap_err();
+    assert_eq!(e.code(), Some("B024"));
+    assert!(e.to_string().contains("bytes long"), "{}", e);
+}
+
 #[test]
 fn a_normalized_tarball_unpacks_to_the_same_tree() {
     let dir = laft_test::tempdir();

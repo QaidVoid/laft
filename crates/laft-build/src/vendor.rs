@@ -29,8 +29,10 @@ use crate::{SOURCE_DATE_EPOCH, SourceCache, SourceError, Vendor, VendorKind};
 ///
 /// # Errors
 ///
-/// Fails when the tree cannot be read, holds a device, FIFO or socket, or
-/// when `file` cannot be written.
+/// Fails when the tree cannot be read, holds a device, FIFO or socket,
+/// holds a symlink whose target is not a plain relative path inside the
+/// tree or is too long for the archive's link name field, or when `file`
+/// cannot be written.
 pub fn normalized_tarball(dir: &Path, file: &Path) -> Result<(), BuildError> {
     let out = File::create(file).map_err(io(file))?;
     let mut builder = tar::Builder::new(BufWriter::new(out));
@@ -78,6 +80,26 @@ pub fn normalized_tarball(dir: &Path, file: &Path) -> Result<(), BuildError> {
             }
             Kind::Symlink => {
                 let target = fs::read_link(&path).map_err(io(&path))?;
+                if plain_rel(&target).is_none() {
+                    return Err(refused(
+                        file,
+                        &rel,
+                        format!(
+                            "has the symlink target {}, which is not a plain relative path",
+                            target.display()
+                        ),
+                    ));
+                }
+                if target.as_os_str().as_bytes().len() > 100 {
+                    return Err(refused(
+                        file,
+                        &rel,
+                        format!(
+                            "has a symlink target {} bytes long, and the archive carries no pax linkpath record",
+                            target.as_os_str().as_bytes().len()
+                        ),
+                    ));
+                }
                 header.set_entry_type(tar::EntryType::Symlink);
                 header.set_mode(0o777);
                 header.set_size(0);
