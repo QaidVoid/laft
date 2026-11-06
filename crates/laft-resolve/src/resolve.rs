@@ -292,6 +292,9 @@ impl<'a> Universe<'a> {
             let mut pass = Pass::new(&ctx, &requests, &path);
             let options = match pass.run() {
                 Ok(()) => {
+                    if let Some(kind) = pass.denied {
+                        return Err(fail(kind));
+                    }
                     let alternatives = pass.alternatives().map_err(fail)?;
                     let mut warnings = renames;
                     warnings.extend(pass.warnings());
@@ -1029,6 +1032,10 @@ struct Pass<'p, 'u, 'a> {
     avoided: BTreeSet<StoreId>,
     selected: BTreeMap<Name, Sel<'a>>,
     builds: BTreeMap<Name, BuildSel<'u>>,
+    /// The S011 of the first build this pass needed while building is not
+    /// allowed. The pass resolves as if it were allowed, and the error is
+    /// raised when the pass resolves, so denial changes no choice.
+    denied: Option<Box<ErrorKind>>,
     providers: BTreeMap<Key<'a>, BTreeSet<&'a Name>>,
     queue: VecDeque<&'a Name>,
 }
@@ -1053,6 +1060,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             avoided,
             selected: BTreeMap::new(),
             builds: BTreeMap::new(),
+            denied: None,
             providers: BTreeMap::new(),
             queue: VecDeque::new(),
         }
@@ -1201,8 +1209,10 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         self.queue.push_back(name);
     }
 
-    /// Records that the view selects a package the snapshot builds, or
-    /// fails with S011 when building is not allowed.
+    /// Records that the view selects a package the snapshot builds.
+    /// Building not being allowed changes no choice: the build is recorded
+    /// like an allowed one, and the S011 of the first such build is raised
+    /// when the pass resolves.
     fn build(
         &mut self,
         name: &Name,
@@ -1212,10 +1222,8 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         reasons: Vec<Reason>,
     ) -> Result<(), Stop<'a>> {
         if !self.ctx.input.allow_builds {
-            return Err(Stop::failed(
-                self.nothing_published(name, &values, want, asked),
-                Vec::new(),
-            ));
+            self.denied
+                .get_or_insert(Box::new(self.nothing_published(name, &values, want, asked)));
         }
         let buildable = self
             .ctx

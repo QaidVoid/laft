@@ -1327,6 +1327,36 @@ impl Scenario {
     }
 }
 
+/// Builds denied still resolve like builds allowed, and the S011 names
+/// the values of the build the resolution would have run, not the values
+/// of the pass that first reached for a build.
+#[test]
+fn s011_reports_the_values_of_the_resolution_when_builds_are_denied() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0").options(&[("vulkan", "all")]),
+            pkg("blender 4.5.0").depends(&["mesa{vulkan=amd}"]),
+            pkg("blender 4.4.0").depends(&["mesa"]),
+        ],
+    );
+    let mut i = input("system", vec![req("blender"), req("mesa")], &[]);
+    i.buildable = vec![buildable("mesa", "25.3.0", &[("vulkan", "all")])];
+    let e = universe(&[(&core, 0)]).resolve(&i).unwrap_err();
+    assert_eq!(e.code(), Some("S011"));
+    assert!(e.to_string().contains("mesa with vulkan=amd"), "{}", e);
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)])
+        .resolve(&i)
+        .expect("the view resolves");
+    assert_eq!(labels(&r), ["blender 4.5.0-r1"]);
+    assert_eq!(r.builds.len(), 1);
+    assert_eq!(
+        r.builds[0].values.get("vulkan"),
+        Some(&OptionValue::Tag("amd".into()))
+    );
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
