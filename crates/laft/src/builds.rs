@@ -618,6 +618,11 @@ impl<'a> Run<'a> {
                 arguments.push(set);
             }
         }
+        arguments.extend(Self::context_arguments(
+            self.options.dep_options,
+            self.values,
+            &requests.iter().map(|r| r.view.as_str()).collect(),
+        ));
         let items: BTreeSet<String> = requests.iter().map(Request::item).collect();
         arguments.push("build".to_owned());
         arguments.extend(items.iter().cloned());
@@ -662,6 +667,11 @@ impl<'a> Run<'a> {
                     again.push(set);
                 }
             }
+            again.extend(Self::context_arguments(
+                self.options.dep_options,
+                self.values,
+                &stale.iter().map(|r| r.view.as_str()).collect(),
+            ));
             again.push("build".to_owned());
             again.push("--rebuild".to_owned());
             again.extend(items.iter().cloned());
@@ -809,6 +819,39 @@ impl<'a> Run<'a> {
             });
         }
         Ok(Some(pairs))
+    }
+
+    /// The arguments that carry the option context of `views` to
+    /// `laft-build`, so that their build views resolve with the features
+    /// the views use. With `dep_options = defaults` no context is passed
+    /// and the views resolve with the declared defaults instead.
+    fn context_arguments(
+        dep_options: laft_config::DepOptions,
+        values: &BTreeMap<Name, laft_config::OptionValues>,
+        views: &BTreeSet<&str>,
+    ) -> Vec<String> {
+        if dep_options != laft_config::DepOptions::Context {
+            return vec!["--dep-options".to_owned(), "defaults".to_owned()];
+        }
+        let mut out = Vec::new();
+        for view in views {
+            let Some(values) = view_values(values, view) else {
+                continue;
+            };
+            for (package, options) in &values.fixed {
+                for (option, setting) in options {
+                    out.push("--set".to_owned());
+                    out.push(format!("{}.{}={}", package, option, setting.value));
+                }
+            }
+            for (package, options) in &values.preferred {
+                for (option, value) in options {
+                    out.push("--prefer".to_owned());
+                    out.push(format!("{}.{}={}", package, option, value));
+                }
+            }
+        }
+        out
     }
 
     /// Runs `laft-build seed` on `files`, against the store of `root`.

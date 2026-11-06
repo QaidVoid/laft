@@ -6,9 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use laft_core::{Blake3Hash, Name, PkgRef, StoreId, Timestamp, Variant};
+use laft_index::OptionDecl;
 use laft_pkg::Compression;
 use laft_store::Store;
 
@@ -21,7 +23,7 @@ use crate::jobserver::Jobserver;
 use crate::post::{self, Package};
 use crate::recipe::Runner;
 use crate::scheduler::{DEFAULT_MEMORY, Failed, Memory, Scheduler};
-use crate::view::{self, BuildView, StoreEntry};
+use crate::view::{self, BuildView, OptionContext, StoreEntry, ViewOptions};
 use crate::{
     BuildGraph, BuildRecord, Buildinfo, BuildinfoHost, Built, Cutoff, Fetch, Item, KeyInputs,
     Output, Problem, Recipe, Repos, Schedule, Source, SourceCache, Split, Trigger, env, unpack,
@@ -209,6 +211,32 @@ pub struct BuildFailure {
     pub error: Box<BuildError>,
 }
 
+/// The option values the dependencies of a build resolve with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DepOptions {
+    /// Those of the view the package is built for, as the run's option
+    /// values give them.
+    #[default]
+    Context,
+    /// The declared defaults of the recipe repository, plus the option
+    /// constraints of the recipe.
+    Defaults,
+}
+
+/// The error of the recipe repository, as a build failure.
+fn repo_problem(error: crate::Error) -> BuildError {
+    match error {
+        crate::Error::Problems(problems) => problems
+            .into_iter()
+            .next()
+            .map(BuildError::Problem)
+            .unwrap_or_else(|| {
+                BuildError::problem("R060", "the recipe repository has no problems")
+            }),
+        error => BuildError::problem("R060", error.to_string()),
+    }
+}
+
 /// Builds recipes into packages.
 ///
 /// A build runs these steps:
@@ -279,6 +307,17 @@ pub struct Builder<'a> {
     /// as [`view::assemble`] describes. A reproducibility check pins the
     /// view of the build it repeats.
     pub pinned_view: Option<BTreeSet<StoreId>>,
+    /// The fixed and preferred option values the build views resolve
+    /// with, by package name. They come from the option context of the
+    /// view the build is for.
+    pub options: ViewOptions,
+    /// The option values the dependencies of a build resolve with. The
+    /// default follows the view the package is built for; `defaults`
+    /// resolves them with the declared defaults of the recipe repository.
+    pub dep_options: DepOptions,
+    /// The option declarations of the recipe repository, read from the
+    /// recipes once the first build view needs them.
+    declarations: OnceLock<BTreeMap<Name, Vec<OptionDecl>>>,
     /// Directories that [`Mode::Bootstrap`] phases search for programs
     /// before the root's `usr/bin`, as [`Executor::search_first`]
     /// describes.
@@ -325,9 +364,42 @@ impl<'a> Builder<'a> {
             compression: Compression::DEVELOPMENT,
             add_to_store: true,
             pinned_view: None,
+            options: ViewOptions::default(),
+            dep_options: DepOptions::Context,
+            declarations: OnceLock::new(),
             search: Vec::new(),
             jobserver: None,
         }
+    }
+
+    /// The option knowledge the build views of this builder resolve with:
+    /// the fixed and preferred values of [`Self::options`], unless
+    /// [`DepOptions::Defaults`] leaves them out, and the option
+    /// declarations of the recipe repository.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the `R071` and `R072` problems of an `options.stav` that
+    /// breaks a rule of the option grammar.
+    pub fn view_options(&self) -> Result<ViewOptions, BuildError> {
+        if self.declarations.get().is_none() {
+            let map = self.repos.option_declarations().map_err(repo_problem)?;
+            // A caller that races this one keeps the map it set, which
+            // holds the same declarations.
+            let _ = self.declarations.set(map);
+        }
+        let declarations = self
+            .declarations
+            .get()
+            .cloned()
+            .expect("the declarations were set above");
+        Ok(ViewOptions {
+            values: match self.dep_options {
+                DepOptions::Context => self.options.values.clone(),
+                DepOptions::Defaults => OptionContext::new(),
+            },
+            declarations,
+        })
     }
 
     /// Gives every build of this builder a share of its job budget
@@ -393,7 +465,9 @@ impl<'a> Builder<'a> {
     /// Fails when the store or the seeds cannot be read.
     pub fn key_inputs(&self, recipe: &Recipe) -> Result<KeyInputs, BuildError> {
         match self.mode {
-            Mode::Store => view::key_inputs(recipe, &self.store, &self.seeds()?),
+            Mode::Store => {
+                view::key_inputs(recipe, &self.store, &self.seeds()?, &self.view_options()?)
+            }
             _ => Ok(KeyInputs::new(recipe, Vec::new(), Vec::new())),
         }
     }
@@ -486,7 +560,7 @@ impl<'a> Builder<'a> {
                 continue;
             };
             let inputs = match self.mode {
-                Mode::Store => view::key_inputs_from(recipe, &entries),
+                Mode::Store => view::key_inputs_from(recipe, &entries, &self.view_options()?),
                 _ => self.key_inputs(recipe)?,
             };
             let latest = db.latest(item)?.map(|s| s.record);
@@ -903,6 +977,7 @@ impl<'a> Builder<'a> {
                 check,
                 &dir.join("root"),
                 self.pinned_view.as_ref(),
+                &self.view_options()?,
             )?),
             _ => None,
         };
@@ -1181,7 +1256,13 @@ impl<'a> Builder<'a> {
             meta: main.meta.clone(),
         };
         let tree = session.dir.join("smoke-root");
-        let usr = view::assemble_smoke(&self.store, &self.seeds()?, &entry, &tree)?;
+        let usr = view::assemble_smoke(
+            &self.store,
+            &self.seeds()?,
+            &entry,
+            &tree,
+            &self.view_options()?,
+        )?;
         let result = post::smoke(
             &usr,
             script,

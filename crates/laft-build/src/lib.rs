@@ -163,7 +163,9 @@ mod test_support;
 
 use std::fmt;
 
-pub use build::{BuildFailure, BuildRoot, Builder, Event, Mode, Outcome, Session, installed};
+pub use build::{
+    BuildFailure, BuildRoot, Builder, DepOptions, Event, Mode, Outcome, Session, installed,
+};
 pub use buildinfo::{
     BUILDINFO_FORMAT, Buildinfo, BuildinfoError, BuildinfoHost, BuiltPackage, Output, RepoState,
     SourceHash, VendorHash, ViewPackage,
@@ -193,6 +195,7 @@ pub use stage::{
 };
 pub use target::{ARCH, CPU, GNU_TRIPLE, MUSL_TRIPLE, SYSROOT, Target};
 pub use vendor::{normalized_tarball, unpack_normalized_tarball};
+pub use view::{OptionContext, ViewOptions};
 
 /// Diagnostics about Stav files, with the names and texts of the files
 /// they point at, ready for a front end to render.

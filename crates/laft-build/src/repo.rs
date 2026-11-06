@@ -197,6 +197,35 @@ impl Repos {
         }))
     }
 
+    /// The option declarations of every package that declares options, by
+    /// package name, as an index records them.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `R071` and `R072` problems of any `options.stav`.
+    pub fn option_declarations(&self) -> Result<BTreeMap<Name, Vec<OptionDecl>>, Error> {
+        let all: Vec<&RecipeRepo> = self.repos.iter().collect();
+        let mut out = BTreeMap::new();
+        let mut problems = Vec::new();
+        for name in self.packages.keys() {
+            let (declared, found) = options::declarations(&all, name);
+            problems.extend(found);
+            if let Some(decls) = declared {
+                out.insert(name.clone(), decls.to_index());
+            }
+        }
+        if problems.is_empty() {
+            Ok(out)
+        } else {
+            Err(Error::Problems(
+                problems
+                    .into_iter()
+                    .map(|f| Problem::new(f.diagnostic.code, f.diagnostic.message))
+                    .collect(),
+            ))
+        }
+    }
+
     /// The names of every package, in order.
     pub fn packages(&self) -> impl Iterator<Item = &Name> {
         self.packages.keys()

@@ -492,6 +492,40 @@ fn a_view_that_refuses_a_candidate_does_not_shadow_another_view() {
     assert_eq!(desk_entry.meta.version.as_str(), "2.0", "llvm=true");
 }
 
+/// The option context of the views the builds are for reaches the
+/// `laft-build` arguments, and `dep_options = defaults` passes none.
+#[test]
+fn the_builds_carry_the_option_context_of_their_views() {
+    let fixed = |name: &str| name.parse().expect("a name");
+    let values = BTreeMap::from([(
+        fixed("system"),
+        laft_config::OptionValues {
+            fixed: BTreeMap::from([(
+                fixed("gtk4"),
+                BTreeMap::from([(
+                    "x11".to_owned(),
+                    laft_config::FixedSetting {
+                        value: OptionValue::Bool(false),
+                        origin: "/etc/laft/system.stav:14:5".to_owned(),
+                    },
+                )]),
+            )]),
+            preferred: BTreeMap::from([(
+                fixed("mesa"),
+                BTreeMap::from([("vulkan".to_owned(), OptionValue::Tag("amd".to_owned()))]),
+            )]),
+        },
+    )]);
+    let views = BTreeSet::from(["system"]);
+    let arguments = Run::context_arguments(laft_config::DepOptions::Context, &values, &views);
+    assert_eq!(
+        arguments,
+        ["--set", "gtk4.x11=false", "--prefer", "mesa.vulkan=amd"]
+    );
+    let arguments = Run::context_arguments(laft_config::DepOptions::Defaults, &values, &views);
+    assert_eq!(arguments, ["--dep-options", "defaults"]);
+}
+
 #[test]
 fn the_seed_runs_against_the_build_root() {
     let arguments = seed_arguments(

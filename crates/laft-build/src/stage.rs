@@ -269,6 +269,9 @@ pub struct StageOptions {
     /// a build inside the root receives in [`crate::LOCK_ENV`] so that it
     /// shares the lock.
     pub lock: Option<String>,
+    /// The fixed and preferred option values the build views of this run
+    /// resolve with, by package name.
+    pub options: crate::view::ViewOptions,
 }
 
 /// What became of one package or script of a stage.
@@ -484,6 +487,7 @@ fn run_steps(
     if let Some(root) = &options.root {
         builder.search = stage.path.iter().map(|p| root.join(p)).collect();
     }
+    builder.options = options.options.clone();
     let logs = build_root.logs().join("stage").join(&stage.name);
     let runner = StageRun {
         stage,
@@ -877,7 +881,7 @@ impl StageRun<'_> {
                 );
                 let mut seen = BTreeSet::new();
                 entries.retain(|entry| seen.insert(entry.id));
-                let inputs = view::key_inputs_from(recipe, &entries);
+                let inputs = view::key_inputs_from(recipe, &entries, &self.builder.view_options()?);
                 let built = inputs.build_key().to_string();
                 let done = step_key(
                     step,
@@ -1198,8 +1202,13 @@ impl StageRun<'_> {
     /// when the store cannot satisfy them, which running the step reports.
     fn resolved(&self, step: &Step, view: &[PkgRef]) -> Result<serde_json::Value, BuildError> {
         let origin = format!("view of step {}", step.name);
-        match crate::view::view_packages(&self.builder.store, &self.builder.seeds()?, view, &origin)
-        {
+        match crate::view::view_packages(
+            &self.builder.store,
+            &self.builder.seeds()?,
+            view,
+            &origin,
+            &self.builder.options,
+        ) {
             Ok(packages) => Ok(packages.iter().map(|p| p.id.to_string()).collect()),
             Err(e) if e.code() == Some("B050") => Ok(serde_json::Value::Null),
             Err(e) => Err(e),
@@ -1238,6 +1247,7 @@ impl StageRun<'_> {
             view,
             &format!("view of step {}", step.name),
             &tree,
+            &self.builder.options,
         )?;
         fs::create_dir_all(self.logs).map_err(io(self.logs))?;
         let log = self.logs.join(format!("{tag}.log"));

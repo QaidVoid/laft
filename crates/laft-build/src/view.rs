@@ -5,9 +5,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use laft_core::{Dep, Name, OptionValue, PkgRef, Provide, Soname, StoreId, Timestamp, Variant};
-use laft_index::{Defaults, Index, IndexEntry};
+use laft_index::{Defaults, Index, IndexEntry, OptionDecl};
 use laft_pkg::{Arch, Meta, StaticDep};
-use laft_resolve::{Installed, Repository, Request, ResolveInput, Universe};
+use laft_resolve::{
+    Installed, OptionRequest, Repository, Request, ResolveInput, Universe, compare_options,
+};
 use laft_store::{PackageInput, Store};
 
 use crate::error::BuildError;
@@ -99,6 +101,25 @@ pub fn requests(recipe: &Recipe, check: bool, available: &BTreeSet<Name>) -> Vec
     let mut seen = BTreeSet::new();
     refs.retain(|r| seen.insert(r.to_string()));
     refs
+}
+
+/// The fixed and preferred option values a build view resolves with,
+/// by package name. They come from the option context of the view the
+/// build is for (`dep_options = context`), so the build sees the same
+/// features the running system has.
+pub type OptionContext = BTreeMap<Name, OptionRequest>;
+
+/// The option knowledge a build view resolves with: the fixed and
+/// preferred values of the option context of the view the build is for,
+/// and the option declarations of the recipe repository, which rank the
+/// candidates the values leave free, as `dep_options = defaults` asks
+/// for.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ViewOptions {
+    /// The fixed and preferred values, by package name.
+    pub values: OptionContext,
+    /// The option declarations of the recipe repository, by package name.
+    pub declarations: BTreeMap<Name, Vec<OptionDecl>>,
 }
 
 /// A package of the build-side store.
@@ -193,6 +214,7 @@ pub fn assemble(
     check: bool,
     tree: &Path,
     pinned: Option<&BTreeSet<StoreId>>,
+    options: &ViewOptions,
 ) -> Result<BuildView, BuildError> {
     assemble_from(
         &store_entries(store)?,
@@ -202,6 +224,7 @@ pub fn assemble(
         check,
         tree,
         pinned,
+        options,
     )
 }
 
@@ -212,6 +235,7 @@ pub fn assemble(
 /// # Errors
 ///
 /// Fails like [`assemble`].
+#[allow(clippy::too_many_arguments)]
 pub fn assemble_from(
     entries: &[StoreEntry],
     store: &Store,
@@ -220,6 +244,7 @@ pub fn assemble_from(
     check: bool,
     tree: &Path,
     pinned: Option<&BTreeSet<StoreId>>,
+    options: &ViewOptions,
 ) -> Result<BuildView, BuildError> {
     let mut entries = entries.to_vec();
     if let Some(pinned) = pinned {
@@ -247,7 +272,7 @@ pub fn assemble_from(
         }
     };
     let origin = format!("build view of {}", Item::of(recipe));
-    let chosen = resolve(&entries, &refs, &origin, None, store, Some(tree))?;
+    let chosen = resolve(&entries, &refs, &origin, None, store, Some(tree), options)?;
     let mut statics = Vec::new();
     if recipe.variant == Variant::Static {
         let by_name: BTreeMap<&Name, &StoreEntry> = chosen
@@ -306,6 +331,7 @@ pub fn assemble_smoke(
     seeds: &BTreeSet<StoreId>,
     main: &StoreEntry,
     tree: &Path,
+    options: &ViewOptions,
 ) -> Result<PathBuf, BuildError> {
     let entries = usable(store_entries(store)?, seeds);
     let mut refs = vec![PkgRef::new(main.meta.name.clone(), None, main.meta.variant)];
@@ -316,7 +342,15 @@ pub fn assemble_smoke(
             .map(|n| PkgRef::new(n, None, Variant::Dynamic)),
     );
     let origin = format!("smoke test of {}", main.meta.name);
-    resolve(&entries, &refs, &origin, Some(main), store, Some(tree))?;
+    resolve(
+        &entries,
+        &refs,
+        &origin,
+        Some(main),
+        store,
+        Some(tree),
+        options,
+    )?;
     Ok(tree.join("usr"))
 }
 
@@ -335,9 +369,10 @@ pub fn assemble_view(
     refs: &[PkgRef],
     origin: &str,
     tree: &Path,
+    options: &ViewOptions,
 ) -> Result<Vec<ViewPackage>, BuildError> {
     let entries = usable(store_entries(store)?, seeds);
-    let chosen = resolve(&entries, refs, origin, None, store, Some(tree))?;
+    let chosen = resolve(&entries, refs, origin, None, store, Some(tree), options)?;
     Ok(chosen.iter().map(|e| view_package(e)).collect())
 }
 
@@ -353,9 +388,10 @@ pub fn view_packages(
     seeds: &BTreeSet<StoreId>,
     refs: &[PkgRef],
     origin: &str,
+    options: &ViewOptions,
 ) -> Result<Vec<ViewPackage>, BuildError> {
     let entries = usable(store_entries(store)?, seeds);
-    let chosen = resolve(&entries, refs, origin, None, store, None)?;
+    let chosen = resolve(&entries, refs, origin, None, store, None, options)?;
     Ok(chosen.iter().map(|e| view_package(e)).collect())
 }
 
@@ -380,15 +416,24 @@ fn resolve<'e>(
     pinned: Option<&StoreEntry>,
     store: &Store,
     tree: Option<&Path>,
+    options: &ViewOptions,
 ) -> Result<Vec<&'e StoreEntry>, BuildError> {
+    let mut declarations = BTreeMap::new();
     let mut packages: Vec<IndexEntry> = entries
         .iter()
-        .map(|e| IndexEntry {
-            meta: e.meta.clone(),
-            id: e.id,
-            file: format!("pool/{}.lpkg", e.id),
-            size: 0,
-            blake3: laft_core::Blake3Hash::of(b""),
+        .map(|e| {
+            if let Some(decls) = options.declarations.get(&e.meta.name)
+                && !declarations.contains_key(&e.meta.name)
+            {
+                declarations.insert(e.meta.name.clone(), decls.clone());
+            }
+            IndexEntry {
+                meta: e.meta.clone(),
+                id: e.id,
+                file: format!("pool/{}.lpkg", e.id),
+                size: 0,
+                blake3: laft_core::Blake3Hash::of(b""),
+            }
         })
         .collect();
     packages.sort_by(|a, b| {
@@ -410,7 +455,7 @@ fn resolve<'e>(
         defaults: Defaults::default(),
         packages,
         yanked: Vec::new(),
-        options: BTreeMap::new(),
+        options: declarations,
         recipes: None,
         profile: None,
     };
@@ -420,6 +465,7 @@ fn resolve<'e>(
         local: false,
     }]);
     let mut input = ResolveInput::new("build");
+    input.options = options.values.clone();
     input.requests = refs
         .iter()
         .map(|r| Request {
@@ -465,10 +511,11 @@ fn name(text: &str) -> Name {
 }
 
 /// The build key inputs of `recipe` against the [`usable`] packages of
-/// `store` with the seeds `seeds`: each link dependency's newest package of
-/// the right variant gives its `abi_epoch` and sonames, and in a `static`
-/// build its store id. A link dependency the store does not have yet
-/// contributes nothing, so its first build changes the key of its
+/// `store` with the seeds `seeds` and the option knowledge `options`:
+/// each link dependency's package of the right variant that the same rule
+/// as the view resolution picks gives its `abi_epoch` and sonames, and in
+/// a `static` build its store id. A link dependency the store does not
+/// have yet contributes nothing, so its first build changes the key of its
 /// dependents.
 ///
 /// # Errors
@@ -478,19 +525,31 @@ pub fn key_inputs(
     recipe: &Recipe,
     store: &Store,
     seeds: &BTreeSet<StoreId>,
+    options: &ViewOptions,
 ) -> Result<KeyInputs, BuildError> {
     Ok(key_inputs_from(
         recipe,
         &usable(store_entries(store)?, seeds),
+        options,
     ))
 }
 
 /// [`key_inputs`] against `entries`, the [`usable`] packages of the store,
 /// so that planning many recipes reads the store once.
-pub fn key_inputs_from(recipe: &Recipe, entries: &[StoreEntry]) -> KeyInputs {
+pub fn key_inputs_from(
+    recipe: &Recipe,
+    entries: &[StoreEntry],
+    options: &ViewOptions,
+) -> KeyInputs {
     let mut links = Vec::new();
     let mut statics = Vec::new();
     for link in &recipe.link_deps {
+        let request = options.values.get(link.name());
+        let decls = options
+            .declarations
+            .get(link.name())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         let newest = entries
             .iter()
             .filter(|e| {
@@ -502,8 +561,19 @@ pub fn key_inputs_from(recipe: &Recipe, entries: &[StoreEntry]) -> KeyInputs {
                         .as_slice()
                         .iter()
                         .all(|c| e.meta.options.get(c.name()).is_some_and(|v| c.matches(v)))
+                    && request.is_none_or(|request| {
+                        request
+                            .fixed
+                            .iter()
+                            .all(|(option, fixed)| e.meta.options.get(option) == Some(&fixed.value))
+                    })
             })
-            .max_by(|a, b| (&a.meta.version, a.meta.rev).cmp(&(&b.meta.version, b.meta.rev)));
+            .min_by(|a, b| {
+                (&b.meta.version, b.meta.rev)
+                    .cmp(&(&a.meta.version, a.meta.rev))
+                    .then_with(|| compare_options(&a.meta.options, &b.meta.options, decls, request))
+                    .then_with(|| a.id.cmp(&b.id))
+            });
         let Some(entry) = newest else {
             continue;
         };

@@ -47,12 +47,13 @@ use std::time::{Duration, SystemTime};
 
 use clap::Parser;
 use laft_build::{
-    BuildError, BuildRoot, Builder, Buildinfo, Cutoff, Db, Event, Item, LOCK_ENV, Mode, Outcome,
-    Recipe, Repos, RootLock, SourceCache, Stage, StageEvent, StageOptions, check_repro,
-    record_repro, run_stage,
+    BuildError, BuildRoot, Builder, Buildinfo, Cutoff, Db, DepOptions, Event, Item, LOCK_ENV, Mode,
+    OptionContext, Outcome, Recipe, Repos, RootLock, SourceCache, Stage, StageEvent, StageOptions,
+    ViewOptions, check_repro, record_repro, run_stage,
 };
 use laft_core::{Name, OptionValue, PkgRef};
 use laft_fetch::{Config, Fetcher};
+use laft_resolve::FixedValue;
 use serde_json::{Value, json};
 
 use crate::cli::{BuildOptions, Cli, Command, Planning};
@@ -132,6 +133,10 @@ struct Context {
     json: bool,
     /// The option values `--set` gave, by package name.
     set: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+    /// The option values `--prefer` gave, by package name.
+    prefer: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+    /// The `--dep-options` choice.
+    dep_options: DepOptions,
 }
 
 fn run(cli: Cli) -> Result<(), Failure> {
@@ -165,6 +170,8 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 min_free_gib,
                 dry_run,
                 rebuild,
+                set: sets(&cli.set)?,
+                prefer: sets(&cli.prefer)?,
             };
             let token = lock.as_ref().map(|l| l.token().to_owned());
             return stage(&root, &file, target, &run, &options, token, json);
@@ -194,6 +201,11 @@ fn run(cli: Cli) -> Result<(), Failure> {
         cache,
         json: cli.json,
         set: sets(&cli.set)?,
+        prefer: sets(&cli.prefer)?,
+        dep_options: match cli.dep_options {
+            cli::DepOptionsArg::Context => DepOptions::Context,
+            cli::DepOptionsArg::Defaults => DepOptions::Defaults,
+        },
     };
     match cli.command {
         Command::Eval { package } => eval(&cx, &package),
@@ -288,6 +300,37 @@ fn build_root(flag: Option<PathBuf>) -> Result<PathBuf, Failure> {
     absolute(&path)
 }
 
+/// The fixed and preferred option values the `--set` and `--prefer`
+/// arguments give, as the views a build resolves with them: every
+/// `--set` value is fixed, so that the views hold the features the user
+/// asked for, and every `--prefer` value steers the choice only.
+fn option_values(
+    set: &BTreeMap<Name, BTreeMap<String, OptionValue>>,
+    prefer: &BTreeMap<Name, BTreeMap<String, OptionValue>>,
+) -> OptionContext {
+    let mut out = OptionContext::new();
+    for (package, _) in set.iter().chain(prefer.iter()) {
+        out.entry(package.clone()).or_default();
+    }
+    for (package, values) in set {
+        let entry = out.get_mut(package).expect("the entry was inserted above");
+        for (option, value) in values {
+            entry.fixed.insert(
+                option.clone(),
+                FixedValue {
+                    value: value.clone(),
+                    origin: "--set".to_owned(),
+                },
+            );
+        }
+    }
+    for (package, values) in prefer {
+        let entry = out.get_mut(package).expect("the entry was inserted above");
+        entry.preferred.extend(values.clone());
+    }
+    out
+}
+
 /// The option values the `--set` arguments give, by package name.
 fn sets(texts: &[String]) -> Result<BTreeMap<Name, BTreeMap<String, OptionValue>>, Failure> {
     let mut out: BTreeMap<Name, BTreeMap<String, OptionValue>> = BTreeMap::new();
@@ -360,6 +403,8 @@ fn items(cx: &Context, texts: &[String]) -> Result<BTreeSet<Item>, Failure> {
 
 fn builder<'a>(cx: &'a Context, mode: Mode, options: Option<&BuildOptions>) -> Builder<'a> {
     let mut builder = Builder::new(&cx.repos, &cx.cache, &cx.root, mode);
+    builder.options.values = option_values(&cx.set, &cx.prefer);
+    builder.dep_options = cx.dep_options;
     if let Some(options) = options {
         builder.check = !options.no_check;
         if let Some(jobs) = options.jobs {
@@ -862,6 +907,10 @@ struct StageArgs {
     min_free_gib: u64,
     dry_run: bool,
     rebuild: bool,
+    /// The fixed option values `--set` gave, by package name.
+    set: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+    /// The preferred option values `--prefer` gave, by package name.
+    prefer: BTreeMap<Name, BTreeMap<String, OptionValue>>,
 }
 
 fn stage(
@@ -901,6 +950,10 @@ fn stage(
         laft_build,
         mirrors: options.mirrors.clone(),
         lock,
+        options: ViewOptions {
+            values: option_values(&run.set, &run.prefer),
+            declarations: BTreeMap::new(),
+        },
     };
     let report = std::sync::Mutex::new(Vec::new());
     let result = run_stage(

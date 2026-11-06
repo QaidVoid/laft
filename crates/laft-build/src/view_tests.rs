@@ -1,9 +1,24 @@
 use super::*;
 use crate::test_support::{TestPkg, recipe, refs};
 use laft_core::OptionValue;
+use laft_index::OptionType;
+use laft_resolve::FixedValue;
 
 fn none() -> BTreeSet<StoreId> {
     BTreeSet::new()
+}
+
+/// The option knowledge of a view that resolves with the declared
+/// defaults of `declarations` and no fixed or preferred values.
+fn defaults_of(declarations: BTreeMap<Name, Vec<OptionDecl>>) -> ViewOptions {
+    ViewOptions {
+        values: OptionContext::new(),
+        declarations,
+    }
+}
+
+fn no_options() -> ViewOptions {
+    ViewOptions::default()
 }
 
 fn names(refs: &[PkgRef]) -> Vec<String> {
@@ -104,6 +119,7 @@ fn the_view_holds_the_closure_of_the_requests() {
         false,
         &dir.path().join("view"),
         None,
+        &no_options(),
     )
     .unwrap();
     assert!(view.usr.join("lib/libz.so.1").is_file());
@@ -144,6 +160,7 @@ fn a_static_view_records_the_static_libraries_it_links() {
         false,
         &dir.path().join("view"),
         None,
+        &no_options(),
     )
     .unwrap();
     let statics: Vec<(&str, StoreId)> = view
@@ -166,6 +183,7 @@ fn a_view_the_store_cannot_satisfy_fails() {
         false,
         &dir.path().join("view"),
         None,
+        &no_options(),
     )
     .unwrap_err();
     assert_eq!(error.code(), Some("B050"));
@@ -188,7 +206,14 @@ fn a_smoke_view_holds_the_package_and_its_runtime_closure() {
         .iter()
         .find(|e| e.meta.name.as_str() == "app")
         .unwrap();
-    let usr = assemble_smoke(&store, &none(), app, &dir.path().join("smoke")).unwrap();
+    let usr = assemble_smoke(
+        &store,
+        &none(),
+        app,
+        &dir.path().join("smoke"),
+        &no_options(),
+    )
+    .unwrap();
     for present in ["app", "zlib", "dash", "coreutils"] {
         assert!(usr.join("share").join(present).exists(), "{present}");
     }
@@ -206,7 +231,7 @@ fn key_inputs_take_link_dependencies_from_the_store() {
     .add(&store, dir.path());
     let mut recipe = recipe("app");
     recipe.link_deps = refs(&["zlib", "missing"]);
-    let inputs = key_inputs(&recipe, &store, &none()).unwrap();
+    let inputs = key_inputs(&recipe, &store, &none(), &no_options()).unwrap();
     assert_eq!(inputs.links.len(), 1);
     assert_eq!(inputs.links[0].abi_epoch, 2);
     assert_eq!(
@@ -241,7 +266,7 @@ fn key_inputs_follow_the_option_constraints_of_the_link() {
     .add(&store, &second);
     let mut recipe = recipe("app");
     recipe.link_deps = refs(&["mesa{!llvm}"]);
-    let inputs = key_inputs(&recipe, &store, &none()).unwrap();
+    let inputs = key_inputs(&recipe, &store, &none(), &no_options()).unwrap();
     assert_eq!(inputs.links.len(), 1);
     assert_eq!(
         inputs.links[0].options.get("llvm"),
@@ -270,6 +295,7 @@ fn the_view_takes_an_alternative_from_its_highest_priority_member() {
         false,
         &dir.path().join("view"),
         None,
+        &no_options(),
     )
     .unwrap();
     assert_eq!(std::fs::read(view.usr.join("bin/cc")).unwrap(), b"gcc");
@@ -304,6 +330,7 @@ fn a_pinned_view_keeps_the_packages_of_an_earlier_build() {
         false,
         &dir.path().join("view"),
         Some(&pinned),
+        &no_options(),
     )
     .unwrap();
     assert_eq!(
@@ -322,6 +349,7 @@ fn a_pinned_view_keeps_the_packages_of_an_earlier_build() {
         false,
         &dir.path().join("again"),
         Some(&pinned),
+        &no_options(),
     )
     .unwrap_err();
     assert_eq!(error.code(), Some("B050"));
@@ -345,7 +373,16 @@ fn a_seed_serves_views_until_a_build_makes_a_package_of_its_origin() {
     let seeds = BTreeSet::from([seed, seed_dev]);
     let mut recipe = recipe("app");
     recipe.link_deps = refs(&["zlib"]);
-    let view = assemble(&store, &seeds, &recipe, false, &dir.path().join("a"), None).unwrap();
+    let view = assemble(
+        &store,
+        &seeds,
+        &recipe,
+        false,
+        &dir.path().join("a"),
+        None,
+        &no_options(),
+    )
+    .unwrap();
     assert_eq!(
         std::fs::read(view.usr.join("lib/libz.so.1")).unwrap(),
         b"seed"
@@ -358,7 +395,16 @@ fn a_seed_serves_views_until_a_build_makes_a_package_of_its_origin() {
         ..TestPkg::new("zlib")
     }
     .add(&store, dir.path());
-    let view = assemble(&store, &seeds, &recipe, false, &dir.path().join("b"), None).unwrap();
+    let view = assemble(
+        &store,
+        &seeds,
+        &recipe,
+        false,
+        &dir.path().join("b"),
+        None,
+        &no_options(),
+    )
+    .unwrap();
     assert_eq!(
         std::fs::read(view.usr.join("lib/libz.so.1")).unwrap(),
         b"built"
@@ -383,6 +429,7 @@ fn a_seed_serves_views_until_a_build_makes_a_package_of_its_origin() {
         false,
         &dir.path().join("c"),
         Some(&pinned),
+        &no_options(),
     )
     .unwrap();
     assert_eq!(
@@ -457,7 +504,7 @@ fn key_inputs_follow_the_usable_packages() {
     let seeds = BTreeSet::from([seed]);
     let mut recipe = recipe("app");
     recipe.link_deps = refs(&["zlib"]);
-    let inputs = key_inputs(&recipe, &store, &seeds).unwrap();
+    let inputs = key_inputs(&recipe, &store, &seeds, &no_options()).unwrap();
     assert_eq!(
         inputs.links[0].sonames.iter().collect::<Vec<_>>(),
         ["libz.so.1"]
@@ -470,7 +517,7 @@ fn key_inputs_follow_the_usable_packages() {
         ..TestPkg::new("zlib")
     }
     .add(&store, dir.path());
-    let inputs = key_inputs(&recipe, &store, &seeds).unwrap();
+    let inputs = key_inputs(&recipe, &store, &seeds, &no_options()).unwrap();
     assert_eq!(
         inputs.links[0].sonames.iter().collect::<Vec<_>>(),
         ["libz.so.2"]
@@ -500,7 +547,7 @@ fn the_newest_entry_decides_the_options_of_a_link_dependency() {
     .add(&store, dir.path());
     let mut recipe = recipe("app");
     recipe.link_deps = refs(&["zlib"]);
-    let inputs = key_inputs(&recipe, &store, &none()).unwrap();
+    let inputs = key_inputs(&recipe, &store, &none(), &no_options()).unwrap();
     assert_eq!(inputs.links[0].options.get("ssl"), Some(&OptionValue::TRUE));
 }
 
@@ -518,6 +565,7 @@ fn a_pinned_view_holds_every_package_of_the_earlier_view_without_its_checks() {
         true,
         &dir.path().join("checked"),
         None,
+        &no_options(),
     )
     .unwrap();
     assert!(checked.packages.iter().any(|p| p.name.as_str() == "expect"));
@@ -529,7 +577,102 @@ fn a_pinned_view_holds_every_package_of_the_earlier_view_without_its_checks() {
         false,
         &dir.path().join("again"),
         Some(&pinned),
+        &no_options(),
     )
     .unwrap();
     assert_eq!(again.packages, checked.packages);
+}
+
+/// Test 14 of the options work: with `x11 = false` fixed for gtk4, the
+/// app's build view holds the X11-free gtk4; with the declared defaults
+/// it holds the default gtk4; and the two builds have different keys.
+#[test]
+fn the_option_context_and_the_defaults_decide_which_option_set_a_view_takes() {
+    let dir = laft_test::tempdir();
+    let store = store_with_base(dir.path());
+    let values = |on: bool| BTreeMap::from([("x11".to_owned(), OptionValue::Bool(on))]);
+    let seeded = TestPkg {
+        options: values(true),
+        ..TestPkg::new("gtk4")
+    }
+    .add(&store, dir.path());
+    std::fs::remove_dir_all(dir.path().join("payload-gtk4-dynamic")).unwrap();
+    let built = TestPkg {
+        options: values(false),
+        ..TestPkg::new("gtk4")
+    }
+    .add(&store, dir.path());
+    let declarations = BTreeMap::from([(
+        "gtk4".parse().unwrap(),
+        vec![OptionDecl {
+            name: "x11".to_owned(),
+            kind: OptionType::Bool("bool".to_owned()),
+            default: OptionValue::Bool(true),
+            doc: "whether gtk4 was built with X11".to_owned(),
+        }],
+    )]);
+    let defaults = defaults_of(declarations);
+    let context = ViewOptions {
+        values: BTreeMap::from([(
+            "gtk4".parse().unwrap(),
+            OptionRequest {
+                fixed: BTreeMap::from([(
+                    "x11".to_owned(),
+                    FixedValue {
+                        value: OptionValue::Bool(false),
+                        origin: "the configuration".to_owned(),
+                    },
+                )]),
+                preferred: BTreeMap::new(),
+            },
+        )]),
+        declarations: defaults.declarations.clone(),
+    };
+    let mut recipe = recipe("app");
+    recipe.link_deps = refs(&["gtk4"]);
+
+    let gtk_of = |options: &ViewOptions, name: &str| {
+        assemble(
+            &store,
+            &none(),
+            &recipe,
+            false,
+            &dir.path().join(name),
+            None,
+            options,
+        )
+        .unwrap()
+        .packages
+        .iter()
+        .find(|p| p.name.as_str() == "gtk4")
+        .unwrap()
+        .id
+    };
+    assert_eq!(gtk_of(&context, "context"), built, "the context fixes x11");
+    assert_eq!(
+        gtk_of(&defaults, "defaults"),
+        seeded,
+        "the defaults prefer the declared default"
+    );
+
+    let entries = usable(store_entries(&store).unwrap(), &none());
+    let context_key = key_inputs_from(&recipe, &entries, &context).build_key();
+    let defaults_key = key_inputs_from(&recipe, &entries, &defaults).build_key();
+    assert_ne!(context_key, defaults_key);
+    let links_of = |options: &ViewOptions| {
+        key_inputs_from(&recipe, &entries, options)
+            .links
+            .first()
+            .expect("the link input is there")
+            .options
+            .clone()
+    };
+    assert_eq!(
+        links_of(&context).get("x11"),
+        Some(&OptionValue::Bool(false))
+    );
+    assert_eq!(
+        links_of(&defaults).get("x11"),
+        Some(&OptionValue::Bool(true))
+    );
 }

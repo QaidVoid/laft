@@ -25,9 +25,32 @@ pub(crate) struct Cli {
     /// tag does not exist, is refused.
     #[arg(long = "set", value_name = "PKG.OPTION=VALUE")]
     pub(crate) set: Vec<String>,
+    /// Prefer an option value in the views a build resolves: `--prefer
+    /// mesa.llvm=false`. Repeat for more. Unlike `--set`, a preference
+    /// does not refuse a candidate that records another value.
+    #[arg(long = "prefer", value_name = "PKG.OPTION=VALUE")]
+    pub(crate) prefer: Vec<String>,
+    /// The option values the dependencies of a build resolve with:
+    /// `context`, those of the view the package is built for (the
+    /// default), or `defaults`, the declared defaults of the recipes.
+    #[arg(
+        long = "dep-options",
+        value_name = "CONTEXT|DEFAULTS",
+        default_value = "context"
+    )]
+    pub(crate) dep_options: DepOptionsArg,
     /// What to do.
     #[command(subcommand)]
     pub(crate) command: Command,
+}
+
+/// The `--dep-options` choices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum DepOptionsArg {
+    /// The values of the view the package is built for.
+    Context,
+    /// The declared defaults of the recipes.
+    Defaults,
 }
 
 /// The commands.

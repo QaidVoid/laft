@@ -106,6 +106,6 @@ pub use error::{Bound, BoundSource, Error, ErrorKind, ValueOrigin};
 pub use explain::{Chain, Learned, Package, Reason, Step, Warning, Why};
 pub use resolve::{
     BuildRequest, Buildable, FixedValue, Installed, OptionRequest, Request, Resolution,
-    ResolveInput, Selected, Upgrade,
+    ResolveInput, Selected, Upgrade, compare_options,
 };
 pub use universe::{Candidate, Repository, Source, Universe};

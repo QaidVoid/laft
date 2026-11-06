@@ -54,6 +54,7 @@ fn options(dir: &Path) -> StageOptions {
         laft_build: PathBuf::from("/nonexistent"),
         mirrors: Vec::new(),
         lock: None,
+        options: Default::default(),
     }
 }
 

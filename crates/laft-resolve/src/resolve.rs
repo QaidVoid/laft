@@ -420,13 +420,15 @@ fn value_rank(value: Option<&OptionValue>, tags: &[String]) -> usize {
     }
 }
 
-/// Compares two candidates of one name by their option values: the fewest
-/// free options that differ from their preferred values first, then the
-/// values option by option in declaration order, with `false` before
-/// `true` and tags in declaration order.
-fn option_order(
-    a: &Candidate<'_>,
-    b: &Candidate<'_>,
+/// Compares two packages' option values by the resolver's own order: the
+/// fewest free options that differ from their preferred values, or from
+/// the declaration's default, first, then the values option by option in
+/// declaration order, with `false` before `true` and tags in declaration
+/// order. The same rule orders the link dependencies of a build key, so
+/// that a build key and the view it was computed from cannot disagree.
+pub fn compare_options(
+    a: &BTreeMap<String, OptionValue>,
+    b: &BTreeMap<String, OptionValue>,
     decls: &[OptionDecl],
     request: Option<&OptionRequest>,
 ) -> Ordering {
@@ -438,16 +440,16 @@ fn option_order(
             .and_then(|p| p.get(opt))
             .or_else(|| decls.iter().find(|d| d.name == opt).map(|d| &d.default))
     };
-    let deviations = |c: &Candidate<'_>| {
+    let deviations = |options: &BTreeMap<String, OptionValue>| {
         let mut count = 0;
-        for (opt, value) in &c.meta.options {
+        for (opt, value) in options {
             if is_free(opt) && expected(opt) != Some(value) {
                 count += 1;
             }
         }
         if let Some(preferred) = preferred {
             for opt in preferred.keys() {
-                if is_free(opt) && !c.meta.options.contains_key(opt) {
+                if is_free(opt) && !options.contains_key(opt) {
                     count += 1;
                 }
             }
@@ -460,10 +462,8 @@ fn option_order(
     }
     let mut names: Vec<&str> = decls.iter().map(|d| d.name.as_str()).collect();
     let mut extra: Vec<&str> = a
-        .meta
-        .options
         .keys()
-        .chain(b.meta.options.keys())
+        .chain(b.keys())
         .map(String::as_str)
         .filter(|n| !names.contains(n))
         .collect();
@@ -479,13 +479,24 @@ fn option_order(
                 OptionType::Bool(_) => &[],
             })
             .unwrap_or(&[]);
-        let rank = |c: &Candidate<'_>| value_rank(c.meta.options.get(opt), tags);
+        let rank = |options: &BTreeMap<String, OptionValue>| value_rank(options.get(opt), tags);
         let by_value = rank(a).cmp(&rank(b));
         if by_value.is_ne() {
             return by_value;
         }
     }
     Ordering::Equal
+}
+
+/// Compares two candidates of one name by their option values, with
+/// [`compare_options`].
+fn option_order(
+    a: &Candidate<'_>,
+    b: &Candidate<'_>,
+    decls: &[OptionDecl],
+    request: Option<&OptionRequest>,
+) -> Ordering {
+    compare_options(&a.meta.options, &b.meta.options, decls, request)
 }
 
 /// The value a constraint demands, as `option=value`.
