@@ -265,7 +265,8 @@ fn info_shows_the_option_declarations_and_the_published_sets() {
         info.stdout
     );
     let info = fx.laft(&["info", "--json", "mesa"]).expect(0).json();
-    assert_eq!(info["options"][0]["name"], "x11");
+    assert_eq!(info["options"]["x11"], true);
+    assert_eq!(info["option_decls"][0]["name"], "x11");
     assert_eq!(info["published"][0]["values"]["x11"], "false");
     assert_eq!(
         info["published"][0]["entries"],
@@ -289,6 +290,73 @@ fn mesa_recipes(dir: &std::path::Path) -> std::path::PathBuf {
     )
     .expect("writable");
     recipes
+}
+
+/// The recipe sources of a `mesa` package that declares `vulkan` and a
+/// different `x11` default, as another recipe repository would.
+fn extra_recipes(dir: &std::path::Path) -> std::path::PathBuf {
+    let recipes = dir.join("recipes-extra");
+    fs::create_dir_all(recipes.join("recipes/mesa")).expect("writable");
+    fs::write(recipes.join("recipes.stav"), "recipe_repo extra {}\n").expect("writable");
+    fs::write(
+        recipes.join("recipes/mesa/package.stav"),
+        "package mesa {\n  version = \"1.0\"\n  summary = \"Mesa\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+    fs::write(
+        recipes.join("recipes/mesa/options.stav"),
+        "## The Vulkan support.\nstruct Options {\n  ## Build against Vulkan.\n  vulkan: Bool = true\n  ## Build against X11.\n  x11: Bool = false\n}\n",
+    )
+    .expect("writable");
+    recipes
+}
+
+/// `laft info` shows the option declarations of the highest priority
+/// repository that declares them, as the resolver ranks repositories.
+#[test]
+fn info_shows_the_declarations_of_the_highest_priority_repository() {
+    let core_mesa = || {
+        pkg("mesa", "1.0")
+            .file("usr/bin/mesa", b"m")
+            .option("x11", laft_core::OptionValue::Bool(false))
+    };
+    let extra_mesa = || {
+        pkg("mesa", "1.0")
+            .file("usr/bin/mesa", b"m")
+            .option("x11", laft_core::OptionValue::Bool(false))
+            .option("vulkan", laft_core::OptionValue::Bool(false))
+    };
+    let fx = fixture!(hello());
+    fx.publish_with_recipes(vec![core_mesa()], Some(&mesa_recipes(fx.dir())));
+    let extra_url = fx.publish_as("extra", vec![extra_mesa()], Some(&extra_recipes(fx.dir())));
+    let config = format!(
+        "system {{\n  hostname = \"forge\"\n  packages = [shell, kmod, laft, busybox, mesa]\n  repo core {{ url = \"{}\", key = \"{}\" }}\n  repo extra {{ url = \"{}\", key = \"{}\", priority = 10 }}\n  fs \"/\" {{ device = \"UUID=3f1c2a8e\", fstype = ext4, fsck = false }}\n  fs \"/boot\" {{ device = \"UUID=1A2B-3C4D\", fstype = vfat }}\n  boot {{ microcode = off }}\n}}\n",
+        fx.url(),
+        fx.public_key(),
+        extra_url,
+        fx.public_key()
+    );
+    fs::write(fx.root().join("etc/laft/system.stav"), config).expect("writable");
+    fx.laft(&["repo", "sync"]).expect(0);
+
+    let info = fx.laft(&["info", "mesa"]).expect(0);
+    assert!(
+        info.stdout
+            .contains("options      vulkan (bool, default true) Build against Vulkan."),
+        "{}",
+        info.stdout
+    );
+    assert!(
+        info.stdout
+            .contains("options      x11 (bool, default false) Build against X11."),
+        "{}",
+        info.stdout
+    );
+    assert!(
+        !info.stdout.contains("x11 (bool, default true)"),
+        "{}",
+        info.stdout
+    );
 }
 
 #[test]

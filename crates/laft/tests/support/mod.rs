@@ -396,6 +396,36 @@ impl Fixture {
     /// As [`Self::publish`], with the recipe repository `recipes` checked
     /// into the index, which is where package options are declared.
     pub(crate) fn publish_with_recipes(&self, packages: Vec<Pkg>, recipes: Option<&Path>) {
+        let repo = self.dir.path().join("repo");
+        self.index_generation(&repo, "core", packages, recipes);
+        repo_tool(&["publish", s(&repo), s(&self.dir.path().join("www"))]);
+    }
+
+    /// As [`Self::publish_with_recipes`], but under the repository `name`,
+    /// with its own repository and published directories. Returns the
+    /// `file://` URL of the published copy.
+    pub(crate) fn publish_as(
+        &self,
+        name: &str,
+        packages: Vec<Pkg>,
+        recipes: Option<&Path>,
+    ) -> String {
+        let repo = self.dir.path().join(format!("repo-{name}"));
+        let www = self.dir.path().join(format!("www-{name}"));
+        self.index_generation(&repo, name, packages, recipes);
+        repo_tool(&["publish", s(&repo), s(&www)]);
+        format!("file://{}", www.display())
+    }
+
+    /// Builds `packages` and adds them to the repository `repo` as a new
+    /// index generation named `name`, signed with the fixture's key.
+    fn index_generation(
+        &self,
+        repo: &Path,
+        name: &str,
+        packages: Vec<Pkg>,
+        recipes: Option<&Path>,
+    ) {
         static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let out = self.dir.path().join(format!(
             "out-{}",
@@ -404,16 +434,15 @@ impl Fixture {
         for package in packages {
             package.write(&out);
         }
-        let repo = self.dir.path().join("repo");
         if repo.exists() {
             std::thread::sleep(std::time::Duration::from_millis(1100));
         }
         let mut args = vec![
             "index".to_owned(),
             "--repo".to_owned(),
-            s(&repo).to_owned(),
+            s(repo).to_owned(),
             "--name".to_owned(),
-            "core".to_owned(),
+            name.to_owned(),
             "--channel".to_owned(),
             "current".to_owned(),
             "--key".to_owned(),
@@ -426,7 +455,6 @@ impl Fixture {
         args.push(s(&out).to_owned());
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         repo_tool(&refs);
-        repo_tool(&["publish", s(&repo), s(&self.dir.path().join("www"))]);
     }
 
     /// Writes the system configuration with `body` inside `system { }`,

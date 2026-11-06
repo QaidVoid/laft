@@ -11,7 +11,7 @@ use laft_pkg::{Entry, Manifest, Reader};
 use laft_store::{Generation, PackageRecord, Reason};
 use serde_json::{Value, json};
 
-use crate::env::{Env, RepoIndex, SyncMode};
+use crate::env::{Env, RepoIndex, SyncMode, options_of};
 use crate::failure::{Failure, exit};
 use crate::resolve::SYSTEM;
 use crate::ui::{self, table};
@@ -258,9 +258,9 @@ pub(crate) fn info(env: &Env, text: &str) -> Result<u8, Failure> {
         .filter(|e| e.meta.name == meta.name && e.meta.version == meta.version)
         .map(|e| e.meta.variant.to_string())
         .collect();
-    let decls = indexes
-        .iter()
-        .find_map(|r| r.accepted.index.options.get(&meta.name))
+    let decls = options_of(&indexes)
+        .options
+        .get(&meta.name)
         .cloned()
         .unwrap_or_default();
     let sets = published_sets(&indexes, &meta.name);
@@ -270,7 +270,7 @@ pub(crate) fn info(env: &Env, text: &str) -> Result<u8, Failure> {
             map.insert("repo".into(), json!(index.name));
             let names: Vec<&String> = views.iter().map(|(v, _)| v).collect();
             map.insert("installed_in".into(), json!(names));
-            map.insert("options".into(), json!(decls));
+            map.insert("option_decls".into(), json!(decls));
             map.insert("published".into(), published_json(&sets));
         }
         env.ui.doc(value);
