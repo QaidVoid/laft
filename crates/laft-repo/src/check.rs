@@ -857,7 +857,7 @@ fn option_metadata(input: &Input<'_>, findings: &mut Vec<Finding>) {
     for entry in &input.index.packages {
         let meta = &entry.meta;
         let kr014 = |message: String| finding("KR014", Level::Error, message).packages([meta]);
-        let Some(decls) = input.index.options.get(&meta.name) else {
+        let Some(decls) = input.index.options.get(&meta.origin) else {
             if meta.options.is_empty() {
                 continue;
             }
@@ -892,7 +892,7 @@ fn option_metadata(input: &Input<'_>, findings: &mut Vec<Finding>) {
             }
         }
         if let Some(profile) = &input.index.profile
-            && let Some(values) = profile.values.get(&meta.name)
+            && let Some(values) = profile.values.get(&meta.origin)
         {
             for (option, value) in values {
                 match meta.options.get(option) {

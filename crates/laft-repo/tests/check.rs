@@ -632,6 +632,99 @@ fn kr014_option_metadata_that_is_not_what_the_recipe_declares() {
     assert!(!success);
 }
 
+/// A subpackage carries the options of the recipe that built it, so KR014
+/// looks the declarations and the profile values up by origin, not by the
+/// package's own name.
+#[test]
+fn kr014_a_subpackage_is_checked_against_its_recipe_declarations() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let declarations = |index: &mut laft_index::Index| {
+        index.options.insert(
+            "mesa".parse().unwrap(),
+            vec![bool_decl("llvm", true, "Build the LLVM backend.")],
+        );
+    };
+    let repo = dir.path().join("repo");
+    let packages = [
+        pkg("mesa", "25.1")
+            .option("llvm", laft_core::OptionValue::TRUE)
+            .write(&out),
+        pkg("mesa-dev", "25.1")
+            .origin("mesa")
+            .option("llvm", laft_core::OptionValue::TRUE)
+            .write(&out),
+    ];
+    fixture(&repo, "current", 0, &packages, declarations);
+    let (codes, report, success) = check(&repo, &[]);
+    assert!(codes.is_empty(), "{report}");
+    assert!(success);
+
+    // A value the recipe does not declare is refused on the subpackage too.
+    let extra = dir.path().join("extra");
+    let packages = [
+        pkg("mesa", "25.1")
+            .option("llvm", laft_core::OptionValue::TRUE)
+            .write(&extra),
+        pkg("mesa-dev", "25.1")
+            .origin("mesa")
+            .option("llvm", laft_core::OptionValue::TRUE)
+            .option("nope", laft_core::OptionValue::FALSE)
+            .write(&extra),
+    ];
+    fixture(&repo, "current", 0, &packages, declarations);
+    let (codes, report, _) = check(&repo, &[]);
+    assert_eq!(codes, ["KR014"], "{report}");
+    assert!(
+        report["findings"][0]["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p.as_str().unwrap().contains("mesa-dev")),
+        "{report}"
+    );
+
+    // The profile's promise covers the subpackage through the origin.
+    let profile = dir.path().join("profile");
+    let declarations = |index: &mut laft_index::Index| {
+        index.options.insert(
+            "mesa".parse().unwrap(),
+            vec![bool_decl("llvm", true, "Build the LLVM backend.")],
+        );
+        index.profile = Some(laft_index::ProfileMember {
+            name: "minimal".to_owned(),
+            values: [(
+                "mesa".parse::<laft_core::Name>().unwrap(),
+                [("llvm".to_owned(), laft_core::OptionValue::FALSE)]
+                    .into_iter()
+                    .collect(),
+            )]
+            .into_iter()
+            .collect(),
+        });
+    };
+    let packages = [
+        pkg("mesa", "25.1")
+            .option("llvm", laft_core::OptionValue::FALSE)
+            .write(&profile),
+        pkg("mesa-dev", "25.1")
+            .origin("mesa")
+            .option("llvm", laft_core::OptionValue::TRUE)
+            .write(&profile),
+    ];
+    fixture(&repo, "current", 0, &packages, declarations);
+    let (codes, report, _) = check(&repo, &[]);
+    assert_eq!(codes, ["KR014"], "{report}");
+    assert!(
+        report["findings"][0]["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.as_str().unwrap().contains("the profile minimal sets")),
+        "{report}"
+    );
+}
+
 #[test]
 fn kr005_an_identity_shared_with_a_sibling_profile_keeps_its_store_id() {
     let dir = laft_test::tempdir();

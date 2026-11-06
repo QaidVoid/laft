@@ -151,7 +151,7 @@ pub struct RecipeSnapshot {
 pub struct ProfileMember {
     /// The profile name.
     pub name: String,
-    /// The values of the profile, by package name and option name.
+    /// The values of the profile, by recipe origin and option name.
     pub values: BTreeMap<Name, BTreeMap<String, OptionValue>>,
 }
 

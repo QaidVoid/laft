@@ -118,6 +118,12 @@ impl Pkg {
         self
     }
 
+    /// Sets the recipe the package was built from.
+    pub(crate) fn origin(mut self, name: &str) -> Self {
+        self.meta.origin = name.parse().expect("valid name");
+        self
+    }
+
     /// Writes buildinfo that marks the build as made from a dirty recipe
     /// tree.
     pub(crate) fn dirty(mut self) -> Self {
