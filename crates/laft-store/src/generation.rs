@@ -68,7 +68,8 @@ pub struct CarryOver {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Generation {
-    /// The format version, 1.
+    /// The format version. Version 2 records the option values of every
+    /// package.
     pub format: u32,
     /// The generation number.
     pub generation: u64,

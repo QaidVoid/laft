@@ -115,7 +115,8 @@ pub struct ViewInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ViewManifest {
-    /// The format version, 1.
+    /// The format version. Version 2 records the option values of every
+    /// package.
     pub version: u32,
     /// The view name.
     pub name: Name,
