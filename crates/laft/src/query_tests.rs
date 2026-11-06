@@ -8,6 +8,7 @@ fn record(name: &str, reasons: Vec<Reason>) -> PackageRecord {
         variant: Variant::Dynamic,
         id: laft_core::StoreId::from_manifest_hash(&laft_core::Blake3Hash::of(name.as_bytes())),
         dir: name.into(),
+        options: BTreeMap::new(),
         reasons,
     }
 }

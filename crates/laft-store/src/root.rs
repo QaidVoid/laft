@@ -66,6 +66,8 @@ impl Root {
 
     /// Reads the manifest of generation `number`.
     ///
+    /// Formats 1 and 2 are read; format 1 records carry no option values.
+    ///
     /// # Errors
     ///
     /// Fails when the generation has no readable, valid `gen.json`, which
@@ -73,10 +75,14 @@ impl Root {
     pub fn generation(&self, number: u64) -> Result<Generation> {
         let path = self.gen_dir(number).join("gen.json");
         let generation: Generation = read_json(&path)?;
-        if generation.format != crate::generation::FORMAT || generation.generation != number {
-            return Err(corrupt(&path, "unsupported format or wrong generation"));
+        let legacy = generation.format == 1;
+        if (legacy || generation.format == crate::generation::FORMAT)
+            && generation.generation == number
+        {
+            Ok(generation)
+        } else {
+            Err(corrupt(&path, "unsupported format or wrong generation"))
         }
-        Ok(generation)
     }
 
     /// The generation that `laft/gens/default` points at, the one the
@@ -100,16 +106,23 @@ impl Root {
 
     /// Reads the manifest of version `version` of view `name`.
     ///
+    /// Formats 1 and 2 are read; format 1 records carry no option values.
+    ///
     /// # Errors
     ///
     /// Fails when the version has no readable, valid `view.json`.
     pub fn view(&self, name: &Name, version: u64) -> Result<ViewManifest> {
         let path = self.view_dir(name, version).join("view.json");
         let view: ViewManifest = read_json(&path)?;
-        if view.version != crate::view::FORMAT || view.view_gen != version || &view.name != name {
-            return Err(corrupt(&path, "unsupported format or wrong view"));
+        let legacy = view.version == 1;
+        if (legacy || view.version == crate::view::FORMAT)
+            && view.view_gen == version
+            && &view.name == name
+        {
+            Ok(view)
+        } else {
+            Err(corrupt(&path, "unsupported format or wrong view"))
         }
-        Ok(view)
     }
 
     pub(crate) fn laft(&self) -> PathBuf {

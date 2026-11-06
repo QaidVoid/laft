@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 use crate::test_support::{
@@ -350,4 +350,109 @@ fn files_added_to_a_staged_generation_are_published_with_it() {
     assert_eq!(fs::read(dir.join("usr/bin/generated")).unwrap(), b"cache");
     assert_mode(&dir.join("boot"), 0o555);
     assert_eq!(env.root.generation(1).unwrap().etc.managed, ["hostname"]);
+}
+
+#[test]
+fn records_the_option_values_of_every_package() {
+    let env = Env::new();
+    let tool = Pkg::new("tool", "2")
+        .file("usr/bin/tool", b"tool")
+        .option("x11", laft_core::OptionValue::Bool(false))
+        .build(&env);
+    let number = commit(&env, &[&tool]);
+    let generation = env.root.generation(number).expect("complete");
+    assert_eq!(
+        generation.packages[0].options["x11"],
+        laft_core::OptionValue::Bool(false)
+    );
+}
+
+#[test]
+fn a_format_1_record_loads_without_option_values() {
+    let id = laft_core::StoreId::from_manifest_hash(&laft_core::Blake3Hash::of(b"tool"));
+    let record: crate::PackageRecord = serde_json::from_str(&format!(
+        r#"{{"name":"tool","version":"1.0","rev":1,"variant":"dynamic","id":"{id}","dir":"d","reasons":[]}}"#
+    ))
+    .expect("a format 1 record has no options field");
+    assert!(record.options.is_empty());
+}
+
+#[test]
+fn a_legacy_generation_loads_without_option_values() {
+    let env = Env::new();
+    let tool = Pkg::new("tool", "2")
+        .file("usr/bin/tool", b"tool")
+        .option("x11", laft_core::OptionValue::Bool(false))
+        .build(&env);
+    let number = commit(&env, &[&tool]);
+    let path = env.root.gen_dir(number).join("gen.json");
+    let writable = |path: &std::path::Path| {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o644)).expect("chmod");
+    };
+    writable(&path);
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).expect("readable")).expect("valid");
+    value["format"] = serde_json::json!(1);
+    for package in value["packages"].as_array_mut().expect("packages") {
+        package
+            .as_object_mut()
+            .expect("an object")
+            .remove("options");
+    }
+    fs::write(&path, serde_json::to_vec(&value).expect("serializes")).expect("writable");
+    let generation = env.root.generation(number).expect("a legacy generation");
+    assert!(generation.packages[0].options.is_empty());
+
+    writable(&path);
+    value["format"] = serde_json::json!(99);
+    fs::write(&path, serde_json::to_vec(&value).expect("serializes")).expect("writable");
+    assert!(env.root.generation(number).is_err(), "format 99 is refused");
+}
+
+#[test]
+fn the_view_reader_accepts_format_1_and_2_and_refuses_others() {
+    let env = Env::new();
+    let id = laft_core::StoreId::from_manifest_hash(&laft_core::Blake3Hash::of(b"tool"));
+    let view_dir = env.root.views_dir().join("tool").join("1");
+    fs::create_dir_all(&view_dir).expect("writable");
+    let record = serde_json::json!({
+        "name": "tool", "version": "1.0", "rev": 1, "variant": "dynamic",
+        "id": id.to_string(), "dir": "d",
+        "options": {"x11": false}, "reasons": [],
+    });
+    let write = |version: u32, with_options: bool| {
+        let mut package = record.clone();
+        if !with_options {
+            package
+                .as_object_mut()
+                .expect("an object")
+                .remove("options");
+        }
+        let manifest = serde_json::json!({
+            "version": version, "name": "tool", "view_gen": 1,
+            "created": "2026-01-01T00:00:00Z",
+            "packages": [package],
+            "alternatives": {}, "users": [], "groups": [],
+            "allowed_uids": [], "allowed_gids": [], "triggers": {},
+        });
+        fs::write(
+            view_dir.join("view.json"),
+            serde_json::to_vec(&manifest).expect("serializes"),
+        )
+        .expect("writable");
+    };
+    let tool = name("tool");
+    write(2, true);
+    let manifest = env.root.view(&tool, 1).expect("format 2");
+    assert_eq!(
+        manifest.packages[0].options["x11"],
+        laft_core::OptionValue::Bool(false)
+    );
+
+    write(1, false);
+    let manifest = env.root.view(&tool, 1).expect("a legacy manifest");
+    assert!(manifest.packages[0].options.is_empty());
+
+    write(3, true);
+    assert!(env.root.view(&tool, 1).is_err(), "format 3 is refused");
 }

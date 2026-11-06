@@ -2,6 +2,8 @@
 
 mod support;
 
+use std::fs;
+
 use support::pkg;
 
 fn hello() -> support::Pkg {
@@ -166,6 +168,49 @@ fn repositories_generations_and_etc_can_be_inspected() {
     let doctor = fx.laft(&["doctor"]).expect(9);
     assert!(doctor.stdout.contains("layout"), "{}", doctor.stdout);
     assert!(doctor.stdout.contains("journal"), "{}", doctor.stdout);
+}
+
+#[test]
+fn gens_show_prints_the_option_values_of_each_package() {
+    let mesa = pkg("mesa", "1.0")
+        .file("usr/bin/mesa", b"m")
+        .option("x11", laft_core::OptionValue::Bool(false));
+    let fx = fixture!(hello());
+    fx.publish_with_recipes(vec![mesa], Some(&mesa_recipes(fx.dir())));
+    fx.configure(", mesa", "");
+    fx.laft(&["apply", "-y"]).expect(0);
+
+    let show = fx.laft(&["gens", "show", "1", "--packages"]).expect(0);
+    assert!(show.stdout.contains("x11=false"), "{}", show.stdout);
+    let json = fx
+        .laft(&["gens", "show", "--json", "1", "--packages"])
+        .expect(0)
+        .json();
+    let mesa = json["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .find(|p| p["name"] == "mesa")
+        .expect("mesa is in the generation");
+    assert_eq!(mesa["options"]["x11"], false);
+}
+
+/// The recipe sources of a `mesa` package that declares one option.
+fn mesa_recipes(dir: &std::path::Path) -> std::path::PathBuf {
+    let recipes = dir.join("recipes-src");
+    fs::create_dir_all(recipes.join("recipes/mesa")).expect("writable");
+    fs::write(recipes.join("recipes.stav"), "recipe_repo core {}\n").expect("writable");
+    fs::write(
+        recipes.join("recipes/mesa/package.stav"),
+        "package mesa {\n  version = \"1.0\"\n  summary = \"Mesa\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+    fs::write(
+        recipes.join("recipes/mesa/options.stav"),
+        "## The X11 support.\nstruct Options {\n  ## Build against X11.\n  x11: Bool = true\n}\n",
+    )
+    .expect("writable");
+    recipes
 }
 
 #[test]

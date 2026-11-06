@@ -3,15 +3,16 @@ use std::fs::{self, DirBuilder, File};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, symlink};
 use std::path::{Path, PathBuf};
 
-use laft_core::{Blake3Hash, Name, StoreId, Timestamp, Variant, Version};
+use laft_core::{Blake3Hash, Name, OptionValue, StoreId, Timestamp, Variant, Version};
 use laft_pkg::{Entry, Identity};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Conflict, Error, Result, io};
 use crate::{CarriedModule, CarryOver, Store, fault};
 
-/// The version of the `view.json` format.
-pub(crate) const FORMAT: u32 = 1;
+/// The version of the `view.json` format. Version 2 records the option
+/// values of every package; version 1 records none.
+pub(crate) const FORMAT: u32 = 2;
 
 /// Links kept free below the filesystem's limit, so that a store file never
 /// gets close enough for a later step to fail with `EMLINK`.
@@ -38,6 +39,20 @@ pub enum Reason {
         by: Name,
         /// The dependency it satisfies, for example `so:libz.so.1`.
         dep: String,
+    },
+    /// An option value of the chosen build that differs from the view's
+    /// preferred value.
+    #[serde(rename = "option_moved")]
+    OptionMoved {
+        /// The option whose value differs.
+        option: String,
+        /// The value the selected build has.
+        chosen: OptionValue,
+        /// The preferred value of the view.
+        preferred: OptionValue,
+        /// Why the view took the other value: the fixed setting with its
+        /// origin, or the dependency that demanded it.
+        why: String,
     },
 }
 
@@ -67,6 +82,10 @@ pub struct PackageRecord {
     pub id: StoreId,
     /// The store entry's directory name.
     pub dir: String,
+    /// The option values the package was selected and built with. Legacy
+    /// records of format 1 carry none.
+    #[serde(default)]
+    pub options: BTreeMap<String, OptionValue>,
     /// Why the package is in the view.
     pub reasons: Vec<Reason>,
 }
@@ -177,11 +196,15 @@ struct Loaded {
 
 /// The record of the store entry `input` names.
 pub(crate) fn record(store: &Store, input: &PackageInput) -> Result<PackageRecord> {
-    let manifest = store.manifest(&input.dir)?;
-    Ok(package_record(&manifest, input))
+    let (manifest, meta) = store.load(&input.dir)?;
+    Ok(package_record(&manifest, &meta.options, input))
 }
 
-fn package_record(manifest: &laft_pkg::Manifest, input: &PackageInput) -> PackageRecord {
+fn package_record(
+    manifest: &laft_pkg::Manifest,
+    options: &BTreeMap<String, OptionValue>,
+    input: &PackageInput,
+) -> PackageRecord {
     let identity = manifest.package();
     PackageRecord {
         name: identity.name.clone(),
@@ -190,6 +213,7 @@ fn package_record(manifest: &laft_pkg::Manifest, input: &PackageInput) -> Packag
         variant: identity.variant,
         id: manifest.store_id(),
         dir: input.dir.clone(),
+        options: options.clone(),
         reasons: input.reasons.clone(),
     }
 }
@@ -209,7 +233,7 @@ pub(crate) fn layout(
     for input in packages {
         let (manifest, meta) = store.load(&input.dir)?;
         loaded.push(Loaded {
-            record: package_record(&manifest, input),
+            record: package_record(&manifest, &meta.options, input),
             identity: manifest.package().clone(),
             entries: manifest.entries().to_vec(),
             groups: meta.alternatives,
@@ -236,9 +260,11 @@ pub(crate) fn layout(
             kernel: carry.kernel.clone(),
             id: manifest.store_id(),
         });
+        let (_, meta) = store.load(&carry.dir)?;
         loaded.push(Loaded {
             record: package_record(
                 &manifest,
+                &meta.options,
                 &PackageInput {
                     dir: carry.dir.clone(),
                     reasons: Vec::new(),

@@ -45,6 +45,7 @@ pub(crate) struct Pkg {
     files: Vec<(String, Vec<u8>)>,
     symlinks: Vec<(String, String)>,
     alternatives: Vec<(String, Vec<String>)>,
+    options: BTreeMap<String, laft_core::OptionValue>,
 }
 
 /// A built package file.
@@ -63,7 +64,14 @@ impl Pkg {
             files: Vec::new(),
             symlinks: Vec::new(),
             alternatives: Vec::new(),
+            options: BTreeMap::new(),
         }
+    }
+
+    /// Records an option value in the metadata.
+    pub(crate) fn option(mut self, name: &str, value: laft_core::OptionValue) -> Self {
+        self.options.insert(name.to_owned(), value);
+        self
     }
 
     /// Adds a file. Files under `usr/bin` are executable.
@@ -158,7 +166,7 @@ impl Pkg {
             triggers: vec![],
             static_deps: vec![],
             abi: Default::default(),
-            options: BTreeMap::new(),
+            options: self.options.clone(),
             abi_epoch: 0,
             requested_privileges: vec![],
             installed_size: size,

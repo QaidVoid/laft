@@ -50,9 +50,11 @@ struct BootJson {
 
 /// Reads generation `number` from the generations directory `gens`.
 ///
-/// A generation is valid when its `gen.json` is a format 1 manifest of that
-/// number with a backend name and a PID 1 command, its `usr/bin` is a
-/// directory, and its `boot/boot.json` is a version 1 boot record.
+/// A generation is valid when its `gen.json` is a format 1 or 2 manifest
+/// of that number with a backend name and a PID 1 command, its `usr/bin`
+/// is a directory, and its `boot/boot.json` is a version 1 boot record.
+/// Only the fields booting needs are read; format 2 records carry the
+/// option values of their packages, which booting ignores.
 ///
 /// # Errors
 ///
@@ -60,7 +62,7 @@ struct BootJson {
 pub fn read(gens: &Path, number: u64) -> Result<Generation, String> {
     let dir = gens.join(number.to_string());
     let gen_json: GenJson = read_json(&dir.join("gen.json"))?;
-    if gen_json.format != 1 || gen_json.generation != number {
+    if !matches!(gen_json.format, 1 | 2) || gen_json.generation != number {
         return Err(format!(
             "{}/gen.json has an unsupported format or another number",
             dir.display()

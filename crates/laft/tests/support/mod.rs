@@ -91,6 +91,13 @@ impl Pkg {
         self
     }
 
+    /// Records an option value in the metadata, as a build of a recipe
+    /// with options would.
+    pub(crate) fn option(mut self, name: &str, value: laft_core::OptionValue) -> Self {
+        self.meta.options.insert(name.to_owned(), value);
+        self
+    }
+
     /// Writes the package file and its buildinfo into `out`.
     pub(crate) fn write(mut self, out: &Path) -> PathBuf {
         fs::create_dir_all(out).expect("writable");

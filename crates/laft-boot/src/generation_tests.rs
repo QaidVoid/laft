@@ -89,6 +89,26 @@ fn incomplete_generations_are_not_valid() {
 }
 
 #[test]
+fn format_2_generations_boot_and_format_3_does_not() {
+    let tmp = laft_test::tempdir();
+    let gens = tmp.path();
+    write_generation(gens, 9, RUNNING);
+    fs::write(
+        gens.join("9/gen.json"),
+        r#"{"format":2,"generation":9,"init":{"backend":"runit","exec":["/usr/bin/runit"]},"packages":[{"name":"tool","options":{"x11":false}}]}"#,
+    )
+    .unwrap();
+    assert_eq!(read(gens, 9), Ok(generation(9, RUNNING)));
+
+    fs::write(
+        gens.join("9/gen.json"),
+        r#"{"format":3,"generation":9,"init":{"backend":"runit","exec":["/usr/bin/runit"]}}"#,
+    )
+    .unwrap();
+    assert!(read(gens, 9).unwrap_err().contains("unsupported format"));
+}
+
+#[test]
 fn default_link_names_a_number_or_nothing() {
     let tmp = laft_test::tempdir();
     let link = tmp.path().join("default");

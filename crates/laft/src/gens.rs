@@ -133,15 +133,22 @@ pub(crate) fn show(env: &Env, number: u64, packages: bool) -> Result<u8, Failure
             .packages
             .iter()
             .map(|p| {
+                let options = p
+                    .options
+                    .iter()
+                    .map(|(name, value)| format!("{name}={value}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 vec![
                     p.name.to_string(),
                     format!("{}-r{}", p.version, p.rev),
                     p.variant.to_string(),
+                    options,
                 ]
             })
             .collect();
         out.push('\n');
-        out.push_str(&table(&["PACKAGE", "VERSION", "VARIANT"], &rows));
+        out.push_str(&table(&["PACKAGE", "VERSION", "VARIANT", "OPTIONS"], &rows));
     }
     env.ui.page(&out);
     Ok(0)

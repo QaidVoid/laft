@@ -63,6 +63,7 @@ fn generation(env: &Env, number: u64, release: &str, initramfs: &[u8], config: &
             variant: Default::default(),
             id: id(release),
             dir: format!("{}-linux-6.17", id(release)),
+            options: BTreeMap::new(),
             reasons: vec![],
         }],
         initrd_packages: vec![],

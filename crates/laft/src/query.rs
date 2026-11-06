@@ -594,11 +594,43 @@ pub(crate) fn why(env: &Env, name: &str, view: Option<&str>, all: bool) -> Resul
                     let _ = writeln!(out, "{indent}requested at {origin} ({text})");
                     steps.push(json!({"package": package, "requested": text, "origin": origin}));
                 }
+                Reason::OptionMoved { .. } => {}
             }
             indent.push_str("  ");
         }
+        let deviations: Vec<&Reason> = record
+            .reasons
+            .iter()
+            .filter(|r| matches!(r, Reason::OptionMoved { .. }))
+            .collect();
+        if !deviations.is_empty() {
+            let values = record
+                .options
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(
+                out,
+                "{} {}-r{} ({values})",
+                record.name, record.version, record.rev
+            );
+            for reason in deviations {
+                let Reason::OptionMoved {
+                    option,
+                    chosen,
+                    why,
+                    ..
+                } = reason
+                else {
+                    continue;
+                };
+                let _ = writeln!(out, "  {:<15}{}", format!("{option}={chosen}"), why);
+            }
+        }
         docs.push(json!({"view": view, "package": record.name,
-            "version": format!("{}-r{}", record.version, record.rev), "chain": steps,
+            "version": format!("{}-r{}", record.version, record.rev),
+            "options": record.options, "chain": steps,
             "reasons": record.reasons}));
     }
     if env.ui.json {

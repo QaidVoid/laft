@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{PackageInput, PackageRecord};
 
-/// The version of the `gen.json` format.
-pub(crate) const FORMAT: u32 = 1;
+/// The version of the `gen.json` format. Version 2 records the option
+/// values of every package; version 1 records none.
+pub(crate) const FORMAT: u32 = 2;
 
 /// What a generation is assembled from, apart from what the transaction
 /// knows itself.
