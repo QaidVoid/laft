@@ -498,6 +498,7 @@ impl<'a> Run<'a> {
                 ));
             }
         }
+        readable_by_build_account(&dir)?;
         self.built.bytes += source.snapshot.size;
         Ok(())
     }
@@ -1263,6 +1264,55 @@ fn verified(path: &Path, source: &SnapshotSource) -> bool {
 /// recipe cache.
 fn snapshot_dir(env: &Env, blake3: &Blake3Hash) -> PathBuf {
     env.path("/laft/cache/recipes").join(blake3.to_string())
+}
+
+/// Makes the unpacked snapshot tree of `dir` usable by the build
+/// account: the fetch cache is root-private, but `laft-build` opens the
+/// recipes of a snapshot as that account, so the cache directories above
+/// the tree become traversable and the tree itself readable. When this
+/// process is root, the tree also changes to the build account.
+pub(crate) fn readable_by_build_account(dir: &Path) -> Result<(), Failure> {
+    for ancestor in dir.ancestors().skip(1).take(2) {
+        fs::set_permissions(ancestor, fs::Permissions::from_mode(0o711))
+            .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", ancestor.display())))?;
+    }
+    let uid = rustix::process::Uid::from_raw(BUILD_UID);
+    let gid = rustix::process::Gid::from_raw(BUILD_GID);
+    let root = rustix::process::getuid().is_root();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755))
+            .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", dir.display())))?;
+        if root {
+            rustix::fs::chown(&dir, Some(uid), Some(gid))
+                .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", dir.display())))?;
+        }
+        for entry in fs::read_dir(&dir)
+            .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", dir.display())))?
+        {
+            let entry = entry
+                .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", dir.display())))?;
+            let path = entry.path();
+            let meta = entry
+                .metadata()
+                .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", path.display())))?;
+            if meta.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if meta.is_file() {
+                let mode = meta.permissions().mode() | 0o444;
+                fs::set_permissions(&path, fs::Permissions::from_mode(mode & 0o777))
+                    .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", path.display())))?;
+                if root {
+                    rustix::fs::chown(&path, Some(uid), Some(gid)).map_err(|e| {
+                        Failure::new(exit::FAILURE, format!("{}: {e}", path.display()))
+                    })?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The build root at `/laft/build`, owned by the build account with mode

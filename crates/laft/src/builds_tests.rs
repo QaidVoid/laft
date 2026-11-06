@@ -1066,6 +1066,43 @@ fn a_failed_build_reports_the_stderr_of_its_phase() {
     assert!(text.contains("the phase failed on purpose"), "{text}");
 }
 
+/// The unpacked snapshot tree becomes traversable and readable for the
+/// build account, whose path to it crosses the root-private fetch cache.
+#[test]
+fn a_snapshot_tree_becomes_readable_by_the_build_account() {
+    let dir = laft_test::tempdir();
+    let cache = dir.path().join("cache");
+    let recipes = cache.join("recipes");
+    let snapshot = recipes.join("abc");
+    let package = snapshot.join("recipes/hello");
+    fs::create_dir_all(&package).expect("writable");
+    fs::write(package.join("package.stav"), "package hello {}").expect("writable");
+    for path in [&cache, &recipes, &snapshot] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).expect("chmod");
+    }
+    fs::set_permissions(
+        package.join("package.stav"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .expect("chmod");
+    crate::builds::readable_by_build_account(&snapshot).expect("the tree becomes readable");
+    let mode = |path: &Path| {
+        fs::metadata(path)
+            .expect("the path exists")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    assert_eq!(mode(&cache), 0o711, "the cache is traversable");
+    assert_eq!(mode(&recipes), 0o711, "the recipe cache is traversable");
+    assert_eq!(mode(&snapshot), 0o755, "the snapshot is readable");
+    assert_eq!(
+        mode(&package.join("package.stav")),
+        0o644,
+        "the recipe is readable"
+    );
+}
+
 #[test]
 fn a_round_seeds_builds_publishes_and_a_second_round_rests() {
     let dir = laft_test::tempdir();
