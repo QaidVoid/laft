@@ -851,13 +851,19 @@ impl<'a> Run<'a> {
     ) -> Result<BTreeMap<String, Reported>, Failure> {
         let output = self.exec_captured(arguments)?;
         if !output.status.success() {
-            return Err(Failure::new(
-                exit::FAILURE,
-                format!(
-                    "the build of {names} failed; its logs are below {}",
-                    self.env.path("/laft/build/logs").display()
-                ),
-            ));
+            let mut message = format!(
+                "the build of {names} failed with {}; its logs are below {}",
+                output.status,
+                self.env.path("/laft/build/logs").display()
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = stderr.trim();
+            if !stderr.is_empty() {
+                let tail: Vec<&str> = stderr.lines().rev().take(40).collect();
+                message.push('\n');
+                message.push_str(&tail.into_iter().rev().collect::<Vec<_>>().join("\n"));
+            }
+            return Err(Failure::new(exit::FAILURE, message));
         }
         parse_report(&output.stdout)
     }

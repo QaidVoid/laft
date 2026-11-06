@@ -695,9 +695,19 @@ fn source_tarball(dir: &Path) -> (Vec<u8>, String) {
 
 /// The recipe repository of `hello`, as a snapshot archive published at
 /// `repo`, with `hex` as the hash of its source and `mirror` as its
-/// mirror. `variants` is the recipe's `variants` set. Returns the archive
-/// bytes.
-fn publish_recipes(dir: &Path, repo: &Path, mirror: &Path, hex: &str, variants: &str) -> Vec<u8> {
+/// mirror, and the `install` phase given. `variants` is the recipe's
+/// `variants` set. Returns the archive bytes.
+fn publish_recipes_with(
+    dir: &Path,
+    repo: &Path,
+    mirror: &Path,
+    hex: &str,
+    variants: &str,
+    install: &str,
+) -> Vec<u8> {
+    // The phase goes into a stav string, so its quotes and backslashes
+    // are escaped.
+    let install = install.replace('\\', "\\\\").replace('"', "\\\"");
     let recipe = format!(
         r#"package hello {{
   version = "1.0"
@@ -712,7 +722,7 @@ fn publish_recipes(dir: &Path, repo: &Path, mirror: &Path, hex: &str, variants: 
   build custom {{}}
   env = {{ LD_LIBRARY_PATH = "/usr/lib" }}
   phases {{
-    install = "mkdir -p \"$DESTDIR/usr/share/hello\" && printf hello > \"$DESTDIR/usr/share/hello/hello.txt\""
+    install = "{install}"
   }}
 }}
 "#
@@ -893,9 +903,29 @@ fn unseeded_round_of(dir: &Path) -> Option<Round> {
     round_of_variants(dir, "dynamic", false)
 }
 
+/// As [`round_of`], with the recipe's `install` phase given.
+fn round_of_phase(dir: &Path, install: &str) -> Option<Round> {
+    round_of_variants_with(dir, "dynamic", true, install)
+}
+
 /// As [`round_of`], with the recipe's `variants` set given and `seed_view`
 /// saying whether the build view is seeded before the run.
 fn round_of_variants(dir: &Path, variants: &str, seed_view: bool) -> Option<Round> {
+    round_of_variants_with(
+        dir,
+        variants,
+        seed_view,
+        "mkdir -p \"$DESTDIR/usr/share/hello\" && printf hello > \"$DESTDIR/usr/share/hello/hello.txt\"",
+    )
+}
+
+/// As [`round_of_variants`], with the recipe's `install` phase given.
+fn round_of_variants_with(
+    dir: &Path,
+    variants: &str,
+    seed_view: bool,
+    install: &str,
+) -> Option<Round> {
     if !Path::new("/bin/sh").exists() {
         println!("skipping: the host has no /bin/sh");
         return None;
@@ -918,7 +948,7 @@ fn round_of_variants(dir: &Path, variants: &str, seed_view: bool) -> Option<Roun
     let (_, hex) = source_tarball(dir);
     let www = dir.join("www");
     let url = format!("file://{}", www.display());
-    let snapshot = publish_recipes(dir, &www, &dir.join("mirror"), &hex, variants);
+    let snapshot = publish_recipes_with(dir, &www, &dir.join("mirror"), &hex, variants, install);
     let greet = publish_empty(&www, "greet", "The greeting library");
     if !Path::new("/bin/sh").exists() {
         println!("skipping: the host has no /bin/sh");
@@ -1006,6 +1036,34 @@ fn round_of_variants(dir: &Path, variants: &str, seed_view: bool) -> Option<Roun
         hello,
         www,
     })
+}
+
+/// A build whose phase fails reports the exit status of the build and the
+/// standard error of the phase, so that the cause is visible without
+/// reading the logs.
+#[test]
+fn a_failed_build_reports_the_stderr_of_its_phase() {
+    let dir = laft_test::tempdir();
+    let Some(round) = round_of_phase(
+        dir.path(),
+        "printf 'the phase failed on purpose' >&2; exit 3",
+    ) else {
+        return;
+    };
+    let error = crate::builds::run(
+        &round.env,
+        std::slice::from_ref(&round.request),
+        &round.snapshots,
+        &round.indexes,
+        &build_options(),
+        &BTreeMap::new(),
+    )
+    .expect_err("the build fails");
+    let mut text = error.message.clone();
+    text.push('\n');
+    text.push_str(&error.context.join("\n"));
+    assert!(text.contains("failed with"), "{text}");
+    assert!(text.contains("the phase failed on purpose"), "{text}");
 }
 
 #[test]
