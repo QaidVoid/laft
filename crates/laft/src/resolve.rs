@@ -327,7 +327,9 @@ pub(crate) struct ViewContext<'a> {
 /// Resolves the system view and every declared view of `config`.
 ///
 /// Every view resolves with its fixed and preferred option values from
-/// `context`. When `allow_builds` is false, selecting a package that
+/// `context`. The initrd closure resolves with the system view's values,
+/// so that a package in both closures, the kernel included, is built the
+/// same. When `allow_builds` is false, selecting a package that
 /// `buildable` can build fails with S011, and when it is true, the
 /// resolution carries the build requests to run.
 pub(crate) fn resolve<'a>(
@@ -367,6 +369,12 @@ pub(crate) fn resolve<'a>(
         .collect();
     input.installed = installed.view(INITRD);
     input.upgrade = upgrade.clone();
+    input.options = options
+        .get(&SYSTEM.parse().expect("a valid name"))
+        .map(option_request)
+        .unwrap_or_default();
+    input.buildable = buildable.to_vec();
+    input.allow_builds = allow_builds;
     let initrd = universe.resolve(&input)?;
     let mut views = BTreeMap::new();
     for name in config.views.keys() {

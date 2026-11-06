@@ -315,6 +315,114 @@ fn the_owner_contributes_its_newest_entry() {
     assert_eq!(found[0].rev, 2);
 }
 
+/// The initrd closure resolves with the system view's option values, the
+/// same buildables and the same `allow_builds`, so that a package in both
+/// closures, the kernel included, is built with the same values.
+#[test]
+fn the_initrd_resolves_with_the_systems_option_values_and_buildables() {
+    let dir = laft_test::tempdir();
+    std::fs::write(
+        dir.path().join("system.stav"),
+        "system {\n  packages = [busybox]\n  \
+         fs \"/\" { device = \"UUID=1\", fstype = ext4 }\n  \
+         fs \"/boot\" { device = \"UUID=2\", fstype = vfat }\n}\n",
+    )
+    .expect("writable");
+    let config = laft_config::load(
+        dir.path(),
+        &|_| Ok(()),
+        &laft_config::IndexOptions::default(),
+    )
+    .expect("valid")
+    .config;
+    let mut static_meta = meta_of(
+        "busybox",
+        "1.37.0",
+        &[("x", laft_core::OptionValue::Bool(true))],
+    );
+    static_meta.variant = Variant::Static;
+    let mut e2fsprogs = meta_of("e2fsprogs", "1.47.0", &[]);
+    e2fsprogs.variant = Variant::Static;
+    let core = repo_index(
+        "core",
+        1,
+        vec![
+            entry(
+                meta_of(
+                    "busybox",
+                    "1.37.0",
+                    &[("x", laft_core::OptionValue::Bool(true))],
+                ),
+                "d",
+            ),
+            entry(static_meta, "s"),
+            entry(e2fsprogs, "e"),
+            entry(meta_of("intel-ucode", "20261001", &[]), "u"),
+            entry(meta_of("linux", "6.12.0", &[]), "k"),
+        ],
+        BTreeMap::new(),
+        false,
+    );
+    let mut options = BTreeMap::new();
+    options.insert(
+        "system".parse().expect("a name"),
+        laft_config::OptionValues {
+            fixed: BTreeMap::from([(
+                "busybox".parse().expect("a name"),
+                BTreeMap::from([(
+                    "x".to_owned(),
+                    laft_config::FixedSetting {
+                        value: laft_core::OptionValue::Bool(false),
+                        origin: "/etc/laft/system.stav:2:21".to_owned(),
+                    },
+                )]),
+            )]),
+            preferred: BTreeMap::new(),
+        },
+    );
+    let buildable = |variant| laft_resolve::Buildable {
+        name: "busybox".parse().expect("a name"),
+        version: "1.38.0".parse().expect("a version"),
+        rev: 1,
+        variant,
+        defaults: BTreeMap::from([("x".to_owned(), laft_core::OptionValue::Bool(true))]),
+    };
+    let context = ViewContext {
+        options: &options,
+        buildable: &[buildable(Variant::Dynamic), buildable(Variant::Static)],
+        allow_builds: true,
+    };
+    let installed = InstalledMetas {
+        views: BTreeMap::new(),
+    };
+    let services = ServiceSet::new(&config.services).expect("valid services");
+    let host = laft_activate::Host {
+        cpu_vendor: Some("GenuineIntel".to_owned()),
+        ..Default::default()
+    };
+    let indexes = [core];
+    let resolved = resolve(
+        &universe(&indexes),
+        &config,
+        &context,
+        &services,
+        &installed,
+        &Upgrade::None,
+        &host,
+    )
+    .expect("the views resolve");
+    assert_eq!(
+        resolved.system.builds[0].values.get("x"),
+        Some(&laft_core::OptionValue::Bool(false))
+    );
+    assert_eq!(resolved.initrd.builds.len(), 1);
+    assert_eq!(resolved.initrd.builds[0].buildable.variant, Variant::Static);
+    assert_eq!(
+        resolved.initrd.builds[0].values.get("x"),
+        Some(&laft_core::OptionValue::Bool(false))
+    );
+}
+
 #[test]
 fn a_repository_without_a_snapshot_contributes_no_buildables() {
     let plain = repo_index(
