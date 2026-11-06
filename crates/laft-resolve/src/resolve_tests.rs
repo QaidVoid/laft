@@ -989,14 +989,9 @@ fn check_sound(r: &Resolution<'_>, requests: &[Request], options: &BTreeMap<Name
         let meta = selected.candidate.meta;
         assert_eq!(&meta.name, name);
         if let Some(req) = options.get(name) {
-            for (opt, value) in &req.preferred {
-                if let Some(recorded) = meta.options.get(opt) {
-                    assert_eq!(
-                        recorded, value,
-                        "{name} contradicts the preferred value of {opt}"
-                    );
-                }
-            }
+            // A preferred value may lose to a newer version: the
+            // preference order of spec 17 §6.4 ranks deviations below the
+            // version, so only fixed values are hard for a package.
             for (opt, fixed) in &req.fixed {
                 assert_eq!(
                     meta.options.get(opt),
@@ -1098,6 +1093,37 @@ fn check_sound(r: &Resolution<'_>, requests: &[Request], options: &BTreeMap<Name
                     build.values.get(opt),
                     Some(&fixed.value),
                     "the build of {} would ignore the fixed value of {opt}",
+                    build.buildable.name
+                );
+            }
+            // The values of a build start from the declared defaults and
+            // take the preferred values over them, so a preference that
+            // neither a fixed value nor the option constraints of a
+            // satisfied dependency overrides holds.
+            for (opt, value) in &req.preferred {
+                if req.fixed.contains_key(opt)
+                    || build.reasons.iter().any(|reason| {
+                        matches!(
+                            reason,
+                            Reason::Dependency { dep: Dep::Pkg(_, _, opts), .. }
+                                if opts.as_slice().iter().any(|c| c.name() == opt)
+                        )
+                    })
+                    || r.learned.iter().any(|learned| {
+                        matches!(
+                            learned,
+                            Learned::Require { name, dep: Dep::Pkg(_, _, opts), .. }
+                                if *name == build.buildable.name
+                                    && opts.as_slice().iter().any(|c| c.name() == opt)
+                        )
+                    })
+                {
+                    continue;
+                }
+                assert_eq!(
+                    build.values.get(opt),
+                    Some(value),
+                    "the build of {} would ignore the preferred value of {opt}",
                     build.buildable.name
                 );
             }
@@ -1329,8 +1355,6 @@ impl Scenario {
 
 /// A buildable of each variant: the static one does not displace the
 /// dynamic one, and a fixed value reaches the build of either variant.
-/// A buildable of each variant: the static one does not displace the
-/// dynamic one, and a fixed value reaches the build of either variant.
 #[test]
 fn each_variant_keeps_its_own_buildable() {
     let core = index("core", vec![pkg("zlib 1.3.1")]);
@@ -1430,6 +1454,9 @@ proptest! {
         if scenario.upgrade {
             i.upgrade = Upgrade::All;
         }
+        i.options = scenario.input_options.clone();
+        i.buildable = scenario.buildable.clone();
+        i.allow_builds = scenario.allow_builds;
         if let Ok(r) = universe(&repos).resolve(&i) {
             check_sound(&r, &scenario.requests, &i.options);
         }
@@ -1439,7 +1466,13 @@ proptest! {
     fn large_universes_resolve_soundly(scenario in arb_scenario(200)) {
         let repos: Vec<(&Index, i64)> = scenario.repos.iter().map(|(i, p)| (i, *p)).collect();
         let installed: Vec<&Meta> = scenario.installed.iter().collect();
-        let i = input("system", scenario.requests.clone(), &installed);
+        let mut i = input("system", scenario.requests.clone(), &installed);
+        if scenario.upgrade {
+            i.upgrade = Upgrade::All;
+        }
+        i.options = scenario.input_options.clone();
+        i.buildable = scenario.buildable.clone();
+        i.allow_builds = scenario.allow_builds;
         if let Ok(r) = universe(&repos).resolve(&i) {
             check_sound(&r, &scenario.requests, &i.options);
         }
