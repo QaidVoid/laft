@@ -93,6 +93,7 @@ pub(crate) fn key(env: &Env, repository: &str) -> Result<u8, Failure> {
             ),
         ));
     }
+    let _lock = env.lock("repo key")?;
     let key = crate::local::Local::of(env.root.path()).public_key()?;
     if env.ui.json {
         env.ui

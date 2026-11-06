@@ -462,35 +462,41 @@ impl Local {
 
     /// Writes the secret key box to the key file, unless the file exists
     /// already, and says whether it wrote it. The key file appears
-    /// complete or not at all, readable only by the owner, and an
-    /// existing key is never replaced.
+    /// complete or not at all, readable only by the owner from the first
+    /// byte, and an existing key is never replaced.
     fn write_secret_exclusive(&self, boxed: &SecretKeyBox) -> Result<bool, Failure> {
         let bytes = boxed.to_bytes();
         if let Some(dir) = self.key.parent() {
             fs::create_dir_all(dir).map_err(|e| self.failed(format!("{}: {e}", dir.display())))?;
         }
-        let tmp = self.key.with_file_name(format!(
-            ".{}.laft-tmp",
-            self.key
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default()
-        ));
-        let write = || -> std::io::Result<()> {
+        let name = self
+            .key
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        let tmp = self
+            .key
+            .with_file_name(format!(".{name}.{}.laft-tmp", process::id()));
+        let write = || -> std::io::Result<bool> {
             {
-                let mut file = fs::File::create(&tmp)?;
+                let mut file = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(&tmp)?;
                 std::io::Write::write_all(&mut file, &bytes)?;
-                file.set_permissions(fs::Permissions::from_mode(0o600))?;
                 file.sync_all()?;
             }
-            fs::hard_link(&tmp, &self.key)?;
-            Ok(())
+            match fs::hard_link(&tmp, &self.key) {
+                Ok(()) => Ok(true),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+                Err(e) => Err(e),
+            }
         };
         let linked = write();
         let _ = fs::remove_file(&tmp);
         match linked {
-            Ok(()) => Ok(true),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Ok(wrote) => Ok(wrote),
             Err(e) => Err(self.failed(format!("{}: {e}", self.key.display()))),
         }
     }

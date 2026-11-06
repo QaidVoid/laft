@@ -1,12 +1,13 @@
 use super::*;
 use laft_core::Variant;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use std::fs;
 
 use laft_core::{Blake3Hash, OptionValue};
 use laft_index::{Index, PublicKey, Signature};
 use laft_pkg::{Compression, Manifest, Meta, scan, write_package};
+use minisign::{SecretKey, SecretKeyBox};
 
 /// The package `file` with its buildinfo, as `add` takes them.
 fn package_of(file: &Path, buildinfo: &Path) -> PackageFile {
@@ -137,6 +138,48 @@ fn a_local_key_is_generated_once_and_stays_secret() {
     let line = text.lines().last().expect("a key line").trim();
     let listed: PublicKey = line.parse().expect("a public key");
     assert_eq!(listed, first);
+}
+
+#[test]
+fn a_key_is_written_without_following_a_leftover_temporary_path() {
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("root");
+    let state = root.join("laft/state");
+    fs::create_dir_all(&state).expect("writable");
+    let victim = state.join("victim");
+    fs::write(&victim, b"do not touch").expect("writable");
+    std::os::unix::fs::symlink(&victim, state.join(".local.key.laft-tmp")).expect("writable");
+
+    let local = Local::of(&root);
+    let key = local.public_key().expect("a key");
+    assert_eq!(
+        fs::read(&victim).expect("readable"),
+        b"do not touch",
+        "the temporary path of the key file is not followed"
+    );
+    let entries: BTreeSet<String> = fs::read_dir(&state)
+        .expect("readable")
+        .filter_map(Result::ok)
+        .filter_map(|e| e.file_name().to_string_lossy().into_owned().parse().ok())
+        .collect();
+    assert_eq!(
+        entries,
+        BTreeSet::from([
+            ".local.key.laft-tmp".to_owned(),
+            "local.key".to_owned(),
+            "local.key.pub".to_owned(),
+            "victim".to_owned(),
+        ]),
+        "no temporary file is left behind"
+    );
+    let boxed = SecretKeyBox::from_string(
+        &fs::read_to_string(state.join("local.key")).expect("the key exists"),
+    )
+    .expect("the key is complete");
+    let secret = SecretKey::from_unencrypted_box(boxed).expect("the key is readable");
+    let public = minisign::PublicKey::from_secret_key(&secret).expect("a public key");
+    let listed: PublicKey = public.to_base64().parse().expect("a listed key");
+    assert_eq!(listed, key);
 }
 
 #[test]
