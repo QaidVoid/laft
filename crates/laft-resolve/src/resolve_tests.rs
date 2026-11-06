@@ -1327,6 +1327,68 @@ impl Scenario {
     }
 }
 
+/// A buildable of each variant: the static one does not displace the
+/// dynamic one, and a fixed value reaches the build of either variant.
+/// A buildable of each variant: the static one does not displace the
+/// dynamic one, and a fixed value reaches the build of either variant.
+#[test]
+fn each_variant_keeps_its_own_buildable() {
+    let core = index("core", vec![pkg("zlib 1.3.1")]);
+    let mut i = input_with(
+        "system",
+        vec![req("zlib")],
+        &[],
+        &[fixed(
+            "zlib",
+            &[("x", "false", "/etc/laft/system.stav:3:1")],
+        )],
+    );
+    i.buildable = vec![
+        buildable("zlib", "1.3.2", &[("x", "true")]),
+        Buildable {
+            variant: Variant::Static,
+            ..buildable("zlib", "1.3.2", &[("x", "true")])
+        },
+    ];
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)])
+        .resolve(&i)
+        .expect("the view resolves");
+    assert_eq!(labels(&r), Vec::<String>::new());
+    assert_eq!(r.builds.len(), 1);
+    assert_eq!(r.builds[0].buildable.variant, Variant::Dynamic);
+    assert_eq!(
+        r.builds[0].values.get("x"),
+        Some(&laft_core::OptionValue::Bool(false))
+    );
+    let mut i = input_with(
+        "system",
+        vec![req("zlib:static")],
+        &[],
+        &[fixed(
+            "zlib",
+            &[("x", "false", "/etc/laft/system.stav:3:1")],
+        )],
+    );
+    i.buildable = vec![
+        buildable("zlib", "1.3.2", &[("x", "true")]),
+        Buildable {
+            variant: Variant::Static,
+            ..buildable("zlib", "1.3.2", &[("x", "true")])
+        },
+    ];
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)])
+        .resolve(&i)
+        .expect("the view resolves");
+    assert_eq!(r.builds.len(), 1);
+    assert_eq!(r.builds[0].buildable.variant, Variant::Static);
+    assert_eq!(
+        r.builds[0].values.get("x"),
+        Some(&laft_core::OptionValue::Bool(false))
+    );
+}
+
 /// Builds denied still resolve like builds allowed, and the S011 names
 /// the values of the build the resolution would have run, not the values
 /// of the pass that first reached for a build.

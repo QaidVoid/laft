@@ -568,8 +568,9 @@ struct Ctx<'u, 'a> {
     input: &'u ResolveInput<'a>,
     installed: BTreeMap<&'u str, InstalledState<'a>>,
     extra_provides: BTreeMap<Key<'a>, Vec<&'a Name>>,
-    /// The packages a recipe snapshot can build, one per name.
-    buildable: BTreeMap<&'u str, &'u Buildable>,
+    /// The packages a recipe snapshot can build, one per name and
+    /// variant.
+    buildable: BTreeMap<(&'u str, Variant), &'u Buildable>,
     /// The candidates of names whose order the view's option values and the
     /// declarations refine: best first by the preference order of the view.
     option_sorted: HashMap<&'u str, Vec<Candidate<'a>>>,
@@ -579,12 +580,12 @@ impl<'u, 'a> Ctx<'u, 'a> {
     fn new(universe: &'u Universe<'a>, input: &'u ResolveInput<'a>) -> Self {
         let mut installed = BTreeMap::new();
         let mut extra_provides: BTreeMap<Key<'a>, Vec<&'a Name>> = BTreeMap::new();
-        let mut buildable: BTreeMap<&'u str, &'u Buildable> = BTreeMap::new();
-        fn rank(b: &Buildable) -> (&Version, u32, &Variant, &BTreeMap<String, OptionValue>) {
-            (&b.version, b.rev, &b.variant, &b.defaults)
+        let mut buildable: BTreeMap<(&'u str, Variant), &'u Buildable> = BTreeMap::new();
+        fn rank(b: &Buildable) -> (&Version, u32, &BTreeMap<String, OptionValue>) {
+            (&b.version, b.rev, &b.defaults)
         }
         for entry in &input.buildable {
-            match buildable.entry(entry.name.as_str()) {
+            match buildable.entry((entry.name.as_str(), entry.variant)) {
                 std::collections::btree_map::Entry::Occupied(mut at)
                     if rank(entry) > rank(at.get()) =>
                 {
@@ -670,9 +671,14 @@ impl<'u, 'a> Ctx<'u, 'a> {
         }
     }
 
-    /// The package a recipe snapshot can build, when the snapshot has one.
-    fn buildable(&self, name: &Name) -> Option<&'u Buildable> {
-        self.buildable.get(name.as_str()).copied()
+    /// The package a recipe snapshot can build for the variant, or, when
+    /// the want names no variant, the dynamic one, else the static one.
+    fn buildable(&self, name: &Name, variant: Option<Variant>) -> Option<&'u Buildable> {
+        let at = |v| self.buildable.get(&(name.as_str(), v)).copied();
+        match variant {
+            Some(v) => at(v),
+            None => at(Variant::Dynamic).or_else(|| at(Variant::Static)),
+        }
     }
 
     fn prefer(&self, name: &Name) -> bool {
@@ -822,7 +828,7 @@ impl<'u, 'a> Ctx<'u, 'a> {
     /// because several repositories list it. A yanked installed package
     /// does not count.
     fn has_candidates(&self, name: &str) -> bool {
-        self.buildable.contains_key(name)
+        self.buildable.keys().any(|(n, _)| *n == name)
             || self.is_ambiguous(name)
             || self
                 .ordered(name)
@@ -1010,7 +1016,7 @@ enum Pick<'a> {
     /// installed one kept by preference.
     Package(Candidate<'a>, bool),
     /// A package the snapshot builds with these values.
-    Build(BTreeMap<String, OptionValue>),
+    Build(BTreeMap<String, OptionValue>, Variant),
 }
 
 /// Where the option values of a demanded build come from.
@@ -1110,36 +1116,37 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         if let Some((c, true)) = best {
             return Ok(Some(Pick::Package(c, true)));
         }
-        if let Some(values) = self.buildable_values(name, want) {
+        if let Some((variant, values)) = self.buildable_values(name, want) {
             let b = self
                 .ctx
-                .buildable(name)
+                .buildable(name, Some(variant))
                 .expect("buildable values imply a buildable");
             let wins = match best {
                 Some((c, _)) => (&b.version, b.rev) > (&c.meta.version, c.meta.rev),
                 None => true,
             };
             if wins {
-                return Ok(Some(Pick::Build(values)));
+                return Ok(Some(Pick::Build(values, variant)));
             }
         }
         Ok(best.map(|(c, kept)| Pick::Package(c, kept)))
     }
 
-    /// The values a build of `name` would use, when the snapshot has the
-    /// package and the values satisfy `want` and every constraint of the
-    /// branch: the declared defaults, with the preferred and fixed values
-    /// of the view and the option constraints of the learned dependencies
-    /// and of `want` applied over them, in that order. The build takes
-    /// the option context of the view; `dep_options` of the build
-    /// planning decides how its build dependencies resolve.
+    /// The values a build of `name` would use, with the variant it builds,
+    /// when the snapshot has the package and the values satisfy `want` and
+    /// every constraint of the branch: the declared defaults, with the
+    /// preferred and fixed values of the view and the option constraints
+    /// of the learned dependencies and of `want` applied over them, in
+    /// that order. The build takes the option context of the view;
+    /// `dep_options` of the build planning decides how its build
+    /// dependencies resolve.
     fn buildable_values(
         &self,
         name: &Name,
         want: &Want<'_>,
-    ) -> Option<BTreeMap<String, OptionValue>> {
-        let b = self.ctx.buildable(name)?;
-        if !want.matches(&b.version, b.rev) || want.variant.is_some_and(|v| v != b.variant) {
+    ) -> Option<(Variant, BTreeMap<String, OptionValue>)> {
+        let b = self.ctx.buildable(name, want.variant)?;
+        if !want.matches(&b.version, b.rev) {
             return None;
         }
         if want.variant.is_none()
@@ -1187,7 +1194,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         applied.push(want.options);
         let holds = applied.iter().all(|opts| constraints_hold(&values, opts))
             && self.fixed_ok(name, &values);
-        holds.then_some(values)
+        holds.then_some((b.variant, values))
     }
 
     fn select(&mut self, candidate: Candidate<'a>, reasons: Vec<Reason>, kept: bool) {
@@ -1217,17 +1224,19 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         &mut self,
         name: &Name,
         values: BTreeMap<String, OptionValue>,
+        variant: Variant,
         want: &Want<'_>,
         asked: Option<Asked<'_>>,
         reasons: Vec<Reason>,
     ) -> Result<(), Stop<'a>> {
         if !self.ctx.input.allow_builds {
-            self.denied
-                .get_or_insert(Box::new(self.nothing_published(name, &values, want, asked)));
+            self.denied.get_or_insert(Box::new(
+                self.nothing_published(name, &values, variant, want, asked),
+            ));
         }
         let buildable = self
             .ctx
-            .buildable(name)
+            .buildable(name, Some(variant))
             .expect("buildable values imply a buildable");
         self.builds.insert(
             name.clone(),
@@ -1247,12 +1256,13 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         &self,
         name: &Name,
         values: &BTreeMap<String, OptionValue>,
+        variant: Variant,
         want: &Want<'_>,
         asked: Option<Asked<'_>>,
     ) -> ErrorKind {
         let b = self
             .ctx
-            .buildable(name)
+            .buildable(name, Some(variant))
             .expect("buildable values imply a buildable");
         let empty = BTreeMap::new();
         let fixed = self
@@ -1331,7 +1341,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
     /// The text after a published candidate's label in S011: the option
     /// values it was built with, as they differ from the declared defaults.
     fn published_set(&self, name: &Name, meta: &Meta) -> String {
-        let Some(b) = self.ctx.buildable(name) else {
+        let Some(b) = self.ctx.buildable(name, Some(meta.variant)) else {
             return "defaults".to_owned();
         };
         if meta.options.is_empty() {
@@ -1519,10 +1529,11 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 Some(Pick::Package(candidate, kept)) => {
                     self.select(candidate, request.reasons.clone(), kept);
                 }
-                Some(Pick::Build(values)) => {
+                Some(Pick::Build(values, variant)) => {
                     self.build(
                         &request.name,
                         values,
+                        variant,
                         &want,
                         Some(Asked::Request {
                             origin: &request.origin,
@@ -1781,10 +1792,11 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 self.select(candidate, vec![reason], kept);
                 return Ok(());
             }
-            Some(Pick::Build(values)) => {
+            Some(Pick::Build(values, variant)) => {
                 return self.build(
                     name,
                     values,
+                    variant,
                     &want,
                     Some(Asked::Dependency(by.meta, dep)),
                     vec![reason],
@@ -1977,10 +1989,11 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                 if self.selected.contains_key(*name) || self.builds.contains_key(*name) {
                     continue;
                 }
-                if let Some(values) = self.buildable_values(name, &want) {
+                if let Some((variant, values)) = self.buildable_values(name, &want) {
                     return self.build(
                         name,
                         values,
+                        variant,
                         &want,
                         Some(Asked::Dependency(by.meta, dep)),
                         vec![reason],
