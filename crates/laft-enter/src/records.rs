@@ -17,8 +17,10 @@ use serde::Deserialize;
 /// what is read as root.
 pub(crate) const MAX_RECORD: u64 = 64 << 20;
 
-/// The format version of both records.
-const FORMAT: u32 = 1;
+/// The format versions of the records that are read. Version 2 records
+/// the option values of every package; version 1 records none. Both bind
+/// the same fields this program reads.
+const SUPPORTED: [u32; 2] = [1, 2];
 
 /// The facts about an opened record file that decide whether it is trusted.
 #[derive(Debug, Clone, Copy)]
@@ -75,7 +77,7 @@ pub(crate) struct ViewRecord {
 /// when the record names another view or another version.
 pub(crate) fn parse_view(bytes: &[u8], name: &str, version: u64) -> Result<ViewRecord, String> {
     let record: ViewRecord = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-    if record.version != FORMAT {
+    if !SUPPORTED.contains(&record.version) {
         return Err(format!("unsupported format version {}", record.version));
     }
     if record.name != name || record.view_gen != version {
@@ -110,7 +112,7 @@ struct ViewPrivileges {
 /// format.
 pub(crate) fn parse_privileged(bytes: &[u8]) -> Result<PrivilegedRecord, String> {
     let record: PrivilegedRecord = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-    if record.version != FORMAT {
+    if !SUPPORTED.contains(&record.version) {
         return Err(format!("unsupported format version {}", record.version));
     }
     Ok(record)

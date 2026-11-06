@@ -83,9 +83,19 @@ fn a_view_record_for_another_view_or_version_is_refused() {
     assert!(parse_view(VIEW.as_bytes(), "dev", 8).is_err());
 }
 
+/// A view record of format 2, whose packages carry the option values
+/// that format added, parses, and a later format is refused.
 #[test]
-fn a_view_record_of_another_format_is_refused() {
-    let newer = VIEW.replace(r#""version": 1"#, r#""version": 2"#);
+fn a_view_record_of_format_2_parses_and_a_later_one_is_refused() {
+    let packages = r#""packages": [{"name": "mesa", "version": "1.0", "rev": 1,
+        "variant": "dynamic", "id": "b3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "dir": "mesa-1.0-1-0123456789abcdef0123456789abcdef0123456789abcdef",
+        "options": {"x11": false}, "reasons": []}]"#;
+    let record = VIEW
+        .replace(r#""version": 1"#, r#""version": 2"#)
+        .replace(r#""packages": []"#, packages);
+    parse_view(record.as_bytes(), "dev", 7).expect("format 2 parses");
+    let newer = VIEW.replace(r#""version": 1"#, r#""version": 3"#);
     let error = parse_view(newer.as_bytes(), "dev", 7).unwrap_err();
     assert!(error.contains("format"), "{error}");
 }
@@ -110,9 +120,13 @@ fn privileged_paths_apply_only_to_the_recorded_view_version() {
     assert_eq!(privileged_paths(&record, "other", 7), None);
 }
 
+/// A privileged record of format 2 parses, and a later format is
+/// refused.
 #[test]
-fn a_privileged_record_of_another_format_is_refused() {
-    let newer = PRIVILEGED.replace(r#""version": 1,"#, r#""version": 2,"#);
+fn a_privileged_record_of_format_2_parses_and_a_later_one_is_refused() {
+    let format_2 = PRIVILEGED.replace(r#""version": 1,"#, r#""version": 2,"#);
+    assert!(parse_privileged(format_2.as_bytes()).is_ok());
+    let newer = PRIVILEGED.replace(r#""version": 1,"#, r#""version": 3,"#);
     assert!(parse_privileged(newer.as_bytes()).is_err());
     assert!(parse_privileged(br#"{"version": 1}"#).is_err());
 }
