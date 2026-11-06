@@ -85,7 +85,8 @@ pub struct Index {
     /// Repository defaults for alternatives and providers.
     pub defaults: Defaults,
     /// The available packages, by name ascending, then by version and
-    /// revision descending, then dynamic before static.
+    /// revision descending, then dynamic before static, then by option
+    /// values.
     pub packages: Vec<IndexEntry>,
     /// Withdrawn packages, in the order of `packages` and without
     /// duplicates. None has the store id or the name, version, revision and
@@ -209,6 +210,11 @@ pub struct Yank {
     pub rev: u32,
     /// The variant.
     pub variant: Variant,
+    /// The option values of the withdrawn set, so one set of a revision
+    /// can be withdrawn while another stays available. Left out when the
+    /// set has no values.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, OptionValue>,
     /// Why it was withdrawn, one line shown to users.
     pub reason: String,
     /// When it was withdrawn.
@@ -372,14 +378,22 @@ impl Index {
                 return Err(err(format!("store id {} is listed twice", entry.id)));
             }
             let m = &entry.meta;
-            identities.insert((&m.name, &m.version, m.rev, m.variant));
+            identities.insert((&m.name, &m.version, m.rev, m.variant, &m.options));
         }
-        fn order(e: &IndexEntry) -> (&Name, Reverse<(&Version, u32)>, Variant) {
+        /// The sort key of a package in `packages` or a yank in
+        /// `yanked`.
+        type OrderKey<'a> = (
+            &'a Name,
+            Reverse<(&'a Version, u32)>,
+            Variant,
+            &'a BTreeMap<String, OptionValue>,
+        );
+        fn order(e: &IndexEntry) -> OrderKey<'_> {
             let m = &e.meta;
-            (&m.name, Reverse((&m.version, m.rev)), m.variant)
+            (&m.name, Reverse((&m.version, m.rev)), m.variant, &m.options)
         }
-        fn yank_order(y: &Yank) -> (&Name, Reverse<(&Version, u32)>, Variant) {
-            (&y.name, Reverse((&y.version, y.rev)), y.variant)
+        fn yank_order(y: &Yank) -> OrderKey<'_> {
+            (&y.name, Reverse((&y.version, y.rev)), y.variant, &y.options)
         }
         if self
             .packages
@@ -387,7 +401,7 @@ impl Index {
             .any(|pair| order(&pair[0]) >= order(&pair[1]))
         {
             return Err(err(
-                "`packages` must be sorted by name, then by version and revision descending, then by variant, without duplicates".into(),
+                "`packages` must be sorted by name, then by version and revision descending, then by variant and option values, without duplicates".into(),
             ));
         }
         for yank in &self.yanked {
@@ -406,7 +420,13 @@ impl Index {
                     yank.id
                 )));
             }
-            if identities.contains(&(&yank.name, &yank.version, yank.rev, yank.variant)) {
+            if identities.contains(&(
+                &yank.name,
+                &yank.version,
+                yank.rev,
+                yank.variant,
+                &yank.options,
+            )) {
                 return Err(err(format!(
                     "yanked package {} {}-r{} is also available",
                     yank.name, yank.version, yank.rev

@@ -64,6 +64,7 @@ pub(crate) fn run(
             version: e.meta.version,
             rev: e.meta.rev,
             variant: e.meta.variant,
+            options: e.meta.options.clone(),
             reason: request.reason.trim().to_owned(),
             time: options.now,
         })

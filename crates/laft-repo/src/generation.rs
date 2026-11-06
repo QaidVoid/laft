@@ -70,7 +70,8 @@ fn last_generation(repo: &Repository, channel: &Channel) -> Result<Option<u64>> 
 }
 
 /// Sorts packages by name, then by version and revision descending, then
-/// dynamic before static, and yanked packages the same way.
+/// dynamic before static, then by option values, and yanked packages the
+/// same way.
 pub(crate) fn sort(index: &mut Index) {
     index.packages.sort_by(|a, b| {
         let key = |e: &laft_index::IndexEntry| {
@@ -79,6 +80,7 @@ pub(crate) fn sort(index: &mut Index) {
                 m.name.clone(),
                 Reverse((m.version.clone(), m.rev)),
                 m.variant,
+                m.options.clone(),
             )
         };
         key(a).cmp(&key(b))
@@ -89,6 +91,7 @@ pub(crate) fn sort(index: &mut Index) {
                 y.name.clone(),
                 Reverse((y.version.clone(), y.rev)),
                 y.variant,
+                y.options.clone(),
             )
         };
         key(a).cmp(&key(b))

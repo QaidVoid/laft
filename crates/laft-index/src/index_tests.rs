@@ -12,6 +12,7 @@ fn yank(name: &str) -> Yank {
         version: gone.meta.version,
         rev: 1,
         variant: Variant::Dynamic,
+        options: BTreeMap::new(),
         reason: "broken build".into(),
         time: Timestamp::from_secs(T0),
     }
@@ -372,6 +373,65 @@ fn yanks_are_sorted_without_duplicates() {
     assert!(same_id.validate().is_err());
 }
 
+/// Two option sets of one revision are two entries: the option values
+/// join the identity and break the sort tie between them.
+#[test]
+fn two_option_sets_of_one_revision_are_distinct_sorted_entries() {
+    let mut sets = index(T0);
+    let mut with_llvm = entry("mesa-with-llvm", "1.0");
+    let mut without = entry("mesa-without-llvm", "1.0");
+    for e in [&mut with_llvm, &mut without] {
+        e.meta.name = "mesa".parse().expect("valid name");
+    }
+    with_llvm.meta.options = [("llvm".to_owned(), OptionValue::Bool(true))]
+        .into_iter()
+        .collect();
+    sets.packages = vec![without, with_llvm];
+    sets.validate()
+        .expect("two option sets of one revision sort by their values");
+    let bytes = sets.encode().expect("valid");
+    assert_eq!(Index::decode(&bytes).expect("decodes"), sets);
+
+    let mut unsorted = sets.clone();
+    unsorted.packages.reverse();
+    assert!(unsorted.validate().is_err());
+}
+
+/// A yank names the option set it withdraws: one set of a revision can be
+/// yanked while the other stays available.
+#[test]
+fn a_yank_names_its_option_set() {
+    let mut sets = index(T0);
+    let mut with_llvm = entry("mesa-with-llvm", "1.0");
+    let mut without = entry("mesa-without-llvm", "1.0");
+    for e in [&mut with_llvm, &mut without] {
+        e.meta.name = "mesa".parse().expect("valid name");
+    }
+    with_llvm.meta.options = [("llvm".to_owned(), OptionValue::Bool(true))]
+        .into_iter()
+        .collect();
+    sets.packages = vec![without];
+    sets.yanked = vec![Yank {
+        id: with_llvm.id,
+        name: with_llvm.meta.name.clone(),
+        version: with_llvm.meta.version.clone(),
+        rev: with_llvm.meta.rev,
+        variant: with_llvm.meta.variant,
+        options: with_llvm.meta.options.clone(),
+        reason: "broken".into(),
+        time: Timestamp::from_secs(T0),
+    }];
+    sets.validate()
+        .expect("one set yanked, the other stays available");
+
+    let mut conflict = sets.clone();
+    conflict.yanked[0].options.clear();
+    let error = conflict
+        .validate()
+        .expect_err("the default set is available");
+    assert!(error.to_string().contains("also available"), "{error}");
+}
+
 #[test]
 fn invalid_provider_defaults_are_rejected() {
     let mut bad = index(T0);
@@ -473,6 +533,7 @@ fn arb_index() -> impl Strategy<Value = Index> {
                             m.name.clone(),
                             Reverse((m.version.clone(), m.rev)),
                             m.variant,
+                            m.options.clone(),
                         )
                     };
                     key(a).cmp(&key(b))
@@ -480,7 +541,13 @@ fn arb_index() -> impl Strategy<Value = Index> {
                 packages.dedup_by(|a, b| {
                     let key = |e: &IndexEntry| {
                         let m = &e.meta;
-                        (m.name.clone(), m.version.clone(), m.rev, m.variant)
+                        (
+                            m.name.clone(),
+                            m.version.clone(),
+                            m.rev,
+                            m.variant,
+                            m.options.clone(),
+                        )
                     };
                     key(a) == key(b) || a.id == b.id
                 });
@@ -496,6 +563,7 @@ fn arb_index() -> impl Strategy<Value = Index> {
                             version: gone.meta.version,
                             rev: gone.meta.rev,
                             variant: gone.meta.variant,
+                            options: gone.meta.options.clone(),
                             reason: reason.clone(),
                             time: Timestamp::from_secs(signed),
                         }
@@ -503,8 +571,8 @@ fn arb_index() -> impl Strategy<Value = Index> {
                     .filter(|y| {
                         !packages.iter().any(|p| {
                             let m = &p.meta;
-                            (&m.name, &m.version, m.rev, m.variant)
-                                == (&y.name, &y.version, y.rev, y.variant)
+                            (&m.name, &m.version, m.rev, m.variant, &m.options)
+                                == (&y.name, &y.version, y.rev, y.variant, &y.options)
                         })
                     })
                     .collect();
@@ -513,6 +581,7 @@ fn arb_index() -> impl Strategy<Value = Index> {
                         y.name.clone(),
                         Reverse((y.version.clone(), y.rev)),
                         y.variant,
+                        y.options.clone(),
                     )
                 };
                 yanked.sort_by_key(key);

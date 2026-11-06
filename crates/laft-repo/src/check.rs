@@ -694,7 +694,7 @@ type Identity<'a> = (
 /// architecture.
 fn revisions(input: &Input<'_>, findings: &mut Vec<Finding>) {
     let mut published: HashMap<Identity<'_>, BTreeSet<StoreId>> = HashMap::new();
-    let mut withdrawn: HashMap<(&Name, &Version, u32, Variant), BTreeSet<StoreId>> = HashMap::new();
+    let mut withdrawn: HashMap<Identity<'_>, BTreeSet<StoreId>> = HashMap::new();
     for index in input.published.into_iter().chain(input.others) {
         for e in &index.packages {
             let m = &e.meta;
@@ -705,7 +705,7 @@ fn revisions(input: &Input<'_>, findings: &mut Vec<Finding>) {
         }
         for y in &index.yanked {
             withdrawn
-                .entry((&y.name, &y.version, y.rev, y.variant))
+                .entry((&y.name, &y.version, y.rev, y.variant, &y.options))
                 .or_default()
                 .insert(y.id);
         }
@@ -714,7 +714,7 @@ fn revisions(input: &Input<'_>, findings: &mut Vec<Finding>) {
         let m = &entry.meta;
         let identity = (&m.name, &m.version, m.rev, m.variant, &m.options);
         let published_ids = published.get(&identity);
-        let withdrawn_ids = withdrawn.get(&(&m.name, &m.version, m.rev, m.variant));
+        let withdrawn_ids = withdrawn.get(&identity);
         let others: Vec<&StoreId> = published_ids
             .into_iter()
             .chain(withdrawn_ids)

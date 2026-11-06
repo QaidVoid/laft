@@ -170,6 +170,7 @@ pub(crate) fn yank(meta: &Meta, reason: &str) -> Yank {
         version: meta.version.clone(),
         rev: meta.rev,
         variant: meta.variant,
+        options: meta.options.clone(),
         reason: reason.to_owned(),
         time: "2026-10-27T09:00:00Z".parse().expect("valid timestamp"),
     }
