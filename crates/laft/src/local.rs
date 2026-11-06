@@ -36,6 +36,10 @@ const CHANNEL: &str = "local";
 /// How many index generations of the local repository are kept.
 const KEEP_SNAPSHOTS: usize = 5;
 
+/// An index expiring within this many seconds is re-signed, so that no
+/// client is served or synced an index whose validity has run out.
+const REFRESH_WITHIN_SECS: u64 = 86_400;
+
 /// The suffix of a signature file.
 const SIG: &str = ".minisig";
 
@@ -302,6 +306,31 @@ impl Local {
             Timestamp::from_secs(index.timestamp.as_secs() + laft_index::MAX_VALIDITY_SECS);
         self.write(index)?;
         Ok(added)
+    }
+
+    /// Re-signs the index with a fresh expiry when it expires within
+    /// [`REFRESH_WITHIN_SECS`], and says whether it rewrote it. A client
+    /// that is served or synced refuses an index whose validity has run
+    /// out, so the index is renewed before that can happen.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the index cannot be read, signed or written.
+    pub(crate) fn refresh(&self) -> Result<bool, Failure> {
+        let Some(bytes) = self.read_entry()? else {
+            return Ok(false);
+        };
+        let mut index = Index::decode(&bytes)
+            .map_err(|e| self.failed(format!("{}: {e}", self.entry().display())))?;
+        let now = Timestamp::now().as_secs();
+        if index.expires.as_secs() > now.saturating_add(REFRESH_WITHIN_SECS) {
+            return Ok(false);
+        }
+        index.generation += 1;
+        index.timestamp = Timestamp::now();
+        index.expires = Timestamp::from_secs(now + laft_index::MAX_VALIDITY_SECS);
+        self.write(index)?;
+        Ok(true)
     }
 
     /// Reads the buildinfo at `path`, parses it, and checks that it names

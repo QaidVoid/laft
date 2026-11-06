@@ -65,6 +65,7 @@ pub(crate) fn sync(env: &Env, wanted: &[String]) -> Result<u8, Failure> {
 ///
 /// This never returns: the process serves until it is stopped.
 pub(crate) fn serve(env: &Env, listen: Option<&str>) -> Result<u8, Failure> {
+    crate::local::Local::of(env.root.path()).refresh()?;
     let root = env.root.path().join("laft/local");
     let server = crate::serve::Serve::bind(&root, listen)?;
     let addr = server.addr();

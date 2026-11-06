@@ -1,5 +1,5 @@
 use super::*;
-use laft_core::Variant;
+use laft_core::{Timestamp, Variant};
 use std::collections::{BTreeMap, BTreeSet};
 
 use std::fs;
@@ -180,6 +180,56 @@ fn a_key_is_written_without_following_a_leftover_temporary_path() {
     let public = minisign::PublicKey::from_secret_key(&secret).expect("a public key");
     let listed: PublicKey = public.to_base64().parse().expect("a listed key");
     assert_eq!(listed, key);
+}
+
+#[test]
+fn an_index_near_expiry_is_resigned_before_it_expires() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("build/out");
+    fs::create_dir_all(&out).expect("writable");
+    let (file, buildinfo, _) = write_package_file(&meta("mesa"), &out);
+    let local = Local::of(&dir.path().join("root"));
+    local
+        .add(&[package_of(&file, &buildinfo)])
+        .expect("the package is added");
+
+    // Rewind the expiry to an hour from now, as if nothing had been added
+    // for weeks.
+    let entry = local.entry();
+    let mut index = Index::decode(&fs::read(&entry).expect("readable")).expect("an index");
+    index.expires = Timestamp::from_secs(Timestamp::now().as_secs() + 3_600);
+    let stale = index.encode().expect("the index encodes");
+    write_new(&entry, &stale).expect("writable");
+
+    let before = fs::read(&entry).expect("readable");
+    assert!(local.refresh().expect("the index is re-signed"));
+    let bytes = fs::read(&entry).expect("readable");
+    assert_ne!(bytes, before, "the index is rewritten");
+    let index = Index::decode(&bytes).expect("a valid index");
+    assert!(
+        index.expires.as_secs() >= Timestamp::now().as_secs() + 86_400,
+        "the index is valid again"
+    );
+    let signature = fs::read_to_string(signed(&entry)).expect("the index is signed");
+    let decoded = Signature::decode(signature.as_bytes()).expect("a signature");
+    assert!(
+        local
+            .public_key()
+            .expect("a key")
+            .verifies(&bytes, &decoded),
+        "the fresh signature verifies"
+    );
+
+    // An index with validity left is left alone.
+    assert!(!local.refresh().expect("readable"));
+    assert_eq!(fs::read(&entry).expect("readable"), bytes);
+}
+
+#[test]
+fn refreshing_a_repository_without_an_index_does_nothing() {
+    let dir = laft_test::tempdir();
+    let local = Local::of(&dir.path().join("root"));
+    assert!(!local.refresh().expect("nothing to refresh"));
 }
 
 #[test]
