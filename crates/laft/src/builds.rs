@@ -33,12 +33,14 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use laft_build::{BuildRoot, Builder, Mode, Repos, SourceCache};
+use laft_build::{BuildRoot, Builder, Buildinfo, Mode, Repos, SourceCache};
 use laft_core::{Blake3Hash, Name, OptionConstraint, OptionValue, PkgRef};
+use laft_store::read_regular;
+use serde_json::Value;
 
-use crate::env::{ARCH, Env, RepoIndex};
+use crate::env::{Env, RepoIndex};
 use crate::failure::{Failure, exit};
-use crate::local::{Local, write_new};
+use crate::local::{BUILDINFO_MAX_BYTES, Local, PackageFile, write_new};
 use crate::resolve::{SnapshotMap, SnapshotSource};
 
 /// The account local builds run as, `laft-build` of the system accounts.
@@ -590,7 +592,11 @@ impl<'a> Run<'a> {
     }
 
     /// Builds the requests of `blake3` through the `laft-build` binary,
-    /// then verifies and publishes the package files of the build.
+    /// then verifies and publishes the package files of the build. Only
+    /// the outputs that `laft-build` names for the requested items are
+    /// published, with the buildinfo that names them; when an item is up
+    /// to date, its recorded outputs are published, and when those no
+    /// longer match the record, the item is built again.
     fn build(
         &mut self,
         blake3: &Blake3Hash,
@@ -598,6 +604,7 @@ impl<'a> Run<'a> {
         root: &BuildRoot,
     ) -> Result<(), Failure> {
         let mut arguments = vec![
+            "--json".to_owned(),
             "--root".to_owned(),
             root.path().to_string_lossy().into_owned(),
             "--recipes".to_owned(),
@@ -618,31 +625,86 @@ impl<'a> Run<'a> {
         self.env
             .ui
             .phase("building", format!("{names} from a recipe snapshot"));
-        let status = self.exec(&arguments)?;
-        if !status.success() {
-            return Err(Failure::new(
-                exit::FAILURE,
-                format!(
-                    "the build of {names} failed; its logs are below {}",
-                    root.logs().display()
-                ),
-            ));
-        }
-        let mut files = Vec::new();
-        let entries = fs::read_dir(root.out())
-            .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", root.out().display())))?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path
-                .extension()
-                .is_some_and(|extension| extension == "lpkg")
-            {
-                files.push(path);
+        let report = self.build_once(&arguments, &names)?;
+        let mut pairs = self.reported(root, &report)?;
+        let mut stale: Vec<&Request> = Vec::new();
+        for request in requests {
+            if report.contains_key(&request.item()) {
+                continue;
+            }
+            match self.recorded(root, request)? {
+                Some(more) => pairs.extend(more),
+                None => stale.push(request),
             }
         }
-        files.sort();
+        if !stale.is_empty() {
+            // The output directory holds other files where the recorded
+            // outputs of these items should be, such as the packages of
+            // another option set. Build them again, so that exactly what
+            // this configuration asked for is published.
+            let items = stale
+                .iter()
+                .map(|request| request.item())
+                .collect::<BTreeSet<_>>();
+            let names = items.iter().cloned().collect::<Vec<_>>().join(", ");
+            let mut again = vec![
+                "--json".to_owned(),
+                "--root".to_owned(),
+                root.path().to_string_lossy().into_owned(),
+                "--recipes".to_owned(),
+                snapshot_dir(self.env, blake3)
+                    .to_string_lossy()
+                    .into_owned(),
+            ];
+            for request in &stale {
+                for set in request.sets() {
+                    again.push("--set".to_owned());
+                    again.push(set);
+                }
+            }
+            again.push("build".to_owned());
+            again.push("--rebuild".to_owned());
+            again.extend(items.iter().cloned());
+            let report = self.build_once(&again, &names)?;
+            for item in &items {
+                if !report.contains_key(item) {
+                    return Err(Failure::new(
+                        exit::FAILURE,
+                        format!(
+                            "the rebuild of {item} reports nothing, which is an internal error"
+                        ),
+                    ));
+                }
+            }
+            pairs.extend(self.reported(root, &report)?);
+        }
         let local = Local::of(self.env.root.path());
-        local.add(&package_files(&files))?;
+        let added = local.add(&pairs)?;
+        let listed: Vec<laft_index::IndexEntry> = match local.index()? {
+            Some(index) => index.packages,
+            None => Vec::new(),
+        };
+        for request in requests {
+            let found = added.iter().any(|added| {
+                added.name == request.name
+                    && added.variant == request.variant
+                    && added.options == request.values
+            }) || listed.iter().any(|entry| {
+                entry.meta.name == request.name
+                    && entry.meta.variant == request.variant
+                    && entry.meta.options == request.values
+            });
+            if !found {
+                return Err(Failure::new(
+                    exit::FAILURE,
+                    format!(
+                        "the build of {} produced no package with the values {} the configuration asked for",
+                        request.item(),
+                        request.signature()
+                    ),
+                ));
+            }
+        }
         let mut names: Vec<Name> = Vec::new();
         for request in requests {
             if !names.contains(&request.name) {
@@ -650,8 +712,103 @@ impl<'a> Run<'a> {
             }
         }
         self.built.names.extend(names);
-        let refs: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
+        let refs: Vec<&Path> = pairs.iter().map(|pair| pair.path.as_path()).collect();
         self.exec_seed(root, &refs)
+    }
+
+    /// Runs `laft-build` with `arguments` and parses its JSON report,
+    /// which names what it built. Standard output is the report; the
+    /// progress lines stay on standard error.
+    fn build_once(
+        &self,
+        arguments: &[String],
+        names: &str,
+    ) -> Result<BTreeMap<String, Reported>, Failure> {
+        let output = self.exec_captured(arguments)?;
+        if !output.status.success() {
+            return Err(Failure::new(
+                exit::FAILURE,
+                format!(
+                    "the build of {names} failed; its logs are below {}",
+                    self.env.path("/laft/build/logs").display()
+                ),
+            ));
+        }
+        parse_report(&output.stdout)
+    }
+
+    /// The package files and buildinfo of every item `report` names.
+    fn reported(
+        &self,
+        root: &BuildRoot,
+        report: &BTreeMap<String, Reported>,
+    ) -> Result<Vec<PackageFile>, Failure> {
+        let mut pairs = Vec::new();
+        for entry in report.values() {
+            let buildinfo = self.output_file(root, &entry.buildinfo)?;
+            for name in &entry.packages {
+                pairs.push(PackageFile {
+                    path: self.output_file(root, name)?,
+                    buildinfo: buildinfo.clone(),
+                });
+            }
+        }
+        Ok(pairs)
+    }
+
+    /// The path of the file `name` of the output directory of `root`.
+    /// Only plain file names are accepted.
+    fn output_file(&self, root: &BuildRoot, name: &str) -> Result<PathBuf, Failure> {
+        let plain = !name.is_empty()
+            && name
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..");
+        if !plain {
+            return Err(Failure::new(
+                exit::FAILURE,
+                format!("the build reports a file name this run cannot publish: {name}"),
+            ));
+        }
+        Ok(root.out().join(name))
+    }
+
+    /// The package files the build database records for `request`, when
+    /// the buildinfo in the output directory still names the recorded
+    /// outputs. `None` when there is no record, or when the output
+    /// directory holds other files there, which means the request must be
+    /// built again.
+    fn recorded(
+        &self,
+        root: &BuildRoot,
+        request: &Request,
+    ) -> Result<Option<Vec<PackageFile>>, Failure> {
+        let item = laft_build::Item::new(request.name.clone(), request.variant);
+        let stored = root.db().latest(&item).map_err(build_failure)?;
+        let Some(stored) = stored else {
+            return Ok(None);
+        };
+        let path = self.output_file(root, &stored.buildinfo)?;
+        let bytes = read_regular(&path, BUILDINFO_MAX_BYTES)
+            .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", path.display())))?;
+        let info = Buildinfo::from_json(&bytes)
+            .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", path.display())))?;
+        let named = stored.record.outputs.len() == info.outputs.len()
+            && stored
+                .record
+                .outputs
+                .iter()
+                .all(|(name, id)| info.outputs.iter().any(|o| &o.name == name && &o.id == id));
+        if !named {
+            return Ok(None);
+        }
+        let mut pairs = Vec::new();
+        for name in &stored.files {
+            pairs.push(PackageFile {
+                path: self.output_file(root, name)?,
+                buildinfo: path.clone(),
+            });
+        }
+        Ok(Some(pairs))
     }
 
     /// Runs `laft-build seed` on `files`, against the store of `root`.
@@ -668,6 +825,35 @@ impl<'a> Run<'a> {
             ));
         }
         Ok(())
+    }
+
+    /// Runs the `laft-build` binary next to this program with
+    /// `arguments`, capturing its standard output, as the build account
+    /// when this process is root.
+    fn exec_captured(&self, arguments: &[String]) -> Result<std::process::Output, Failure> {
+        let exe = std::env::current_exe()
+            .map_err(|e| Failure::new(exit::FAILURE, format!("the program directory: {e}")))?
+            .parent()
+            .map(|dir| dir.join("laft-build"))
+            .ok_or_else(|| Failure::new(exit::FAILURE, "the program has no directory"))?;
+        let mut command = Command::new(&exe);
+        command.args(arguments);
+        command.env_clear();
+        command.env(
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        );
+        command.env("HOME", self.env.path("/laft/build"));
+        command.stdout(std::process::Stdio::piped());
+        // `run_as` switches to the build account when this process is
+        // root; a caller that is not root, as the tests are, runs the
+        // build with its own ids.
+        let output = if rustix::process::getuid().is_root() {
+            laft_sandbox::run_as_output(&mut command, BUILD_UID, BUILD_GID)
+        } else {
+            command.output()
+        };
+        output.map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", exe.display())))
     }
 
     /// Runs the `laft-build` binary next to this program with
@@ -710,35 +896,62 @@ fn seed_arguments(root: &Path, files: &[&Path]) -> Vec<String> {
     arguments
 }
 
-/// The package files of `paths`, each with the buildinfo written next to
-/// it: `<file>.buildinfo.json`, or the one laft-build writes, which is
-/// named without the architecture.
-fn package_files(paths: &[PathBuf]) -> Vec<crate::local::PackageFile> {
-    paths
-        .iter()
-        .map(|path| {
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default()
-                .to_owned();
-            let stem = name.strip_suffix(".lpkg").unwrap_or(&name);
-            let without_arch = stem
-                .strip_suffix(&format!(".{ARCH}"))
-                .unwrap_or(stem)
-                .to_owned();
-            let sibling = path.with_file_name(format!("{name}.buildinfo.json"));
-            let buildinfo = if sibling.is_file() {
-                sibling
-            } else {
-                path.with_file_name(format!("{without_arch}.buildinfo.json"))
-            };
-            crate::local::PackageFile {
-                path: path.clone(),
-                buildinfo,
-            }
-        })
-        .collect()
+/// What `laft-build` reports for one item it built: the file names of its
+/// packages and of its buildinfo in the output directory.
+#[derive(Debug)]
+struct Reported {
+    packages: Vec<String>,
+    buildinfo: String,
+}
+
+/// Parses the JSON report of `laft-build --json build`: an object with a
+/// `built` array that names, per item, the packages and the buildinfo in
+/// the output directory.
+fn parse_report(bytes: &[u8]) -> Result<BTreeMap<String, Reported>, Failure> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| {
+        Failure::new(
+            exit::FAILURE,
+            format!("the build report cannot be read: {e}"),
+        )
+    })?;
+    let built = value
+        .get("built")
+        .and_then(|built| built.as_array())
+        .ok_or_else(|| Failure::new(exit::FAILURE, "the build report has no built list"))?;
+    let mut out = BTreeMap::new();
+    for entry in built {
+        let text = |key: &str| {
+            entry
+                .get(key)
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    Failure::new(
+                        exit::FAILURE,
+                        format!("the build report has no {key} for an item"),
+                    )
+                })
+        };
+        let packages = entry
+            .get("packages")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| Failure::new(exit::FAILURE, "the build report has no packages"))?
+            .iter()
+            .map(|value| {
+                value.as_str().map(str::to_owned).ok_or_else(|| {
+                    Failure::new(exit::FAILURE, "the build report names a package strangely")
+                })
+            })
+            .collect::<Result<Vec<_>, Failure>>()?;
+        out.insert(
+            text("item")?,
+            Reported {
+                packages,
+                buildinfo: text("buildinfo")?,
+            },
+        );
+    }
+    Ok(out)
 }
 
 /// The groups in an order in which every group comes after the groups

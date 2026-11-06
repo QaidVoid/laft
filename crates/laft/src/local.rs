@@ -43,7 +43,7 @@ const SIG: &str = ".minisig";
 const PACKAGE_MAX_BYTES: u64 = 4 << 30;
 
 /// The most bytes a buildinfo file may take when it is added.
-const BUILDINFO_MAX_BYTES: u64 = 4 << 20;
+pub(crate) const BUILDINFO_MAX_BYTES: u64 = 4 << 20;
 
 /// A package file with the buildinfo of the build that made it.
 #[derive(Debug, Clone)]

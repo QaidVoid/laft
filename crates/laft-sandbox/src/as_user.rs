@@ -2,7 +2,7 @@
 
 use std::io;
 use std::os::unix::process::CommandExt;
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Output};
 
 use rustix::process::{Gid, Uid, getgid, getuid};
 
@@ -22,6 +22,29 @@ use rustix::process::{Gid, Uid, getgid, getuid};
 /// the child, when `no_new_privs` cannot be set or the ids cannot be
 /// switched.
 pub fn run_as(command: &mut Command, uid: u32, gid: u32) -> io::Result<ExitStatus> {
+    // SAFETY: the hook runs in the forked child before `exec`. It only
+    // makes system calls and never allocates, takes a lock or touches
+    // state shared with other threads of the parent, which is what a
+    // child of a multithreaded process may do.
+    unsafe { command.pre_exec(ids_hook(uid, gid)?) };
+    command.status()
+}
+
+/// Runs `command` as `uid` and `gid`, as [`run_as`] does, and captures
+/// its output. Standard error keeps the configuration of `command`, which
+/// is inherited when it is not set.
+///
+/// # Errors
+///
+/// Fails as [`run_as`] does.
+pub fn run_as_output(command: &mut Command, uid: u32, gid: u32) -> io::Result<Output> {
+    // SAFETY: as in `run_as`.
+    unsafe { command.pre_exec(ids_hook(uid, gid)?) };
+    command.output()
+}
+
+/// Checks the ids and returns the hook that switches them in the child.
+fn ids_hook(uid: u32, gid: u32) -> io::Result<impl FnMut() -> io::Result<()>> {
     if uid == 0 || gid == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -35,7 +58,7 @@ pub fn run_as(command: &mut Command, uid: u32, gid: u32) -> io::Result<ExitStatu
             "only root may run a program as another user",
         ));
     }
-    let ids = move || -> io::Result<()> {
+    Ok(move || -> io::Result<()> {
         rustix::thread::set_no_new_privs(true)
             .map_err(|e| io::Error::from_raw_os_error(e.raw_os_error()))?;
         if switch {
@@ -48,13 +71,7 @@ pub fn run_as(command: &mut Command, uid: u32, gid: u32) -> io::Result<ExitStatu
                 .map_err(|e| io::Error::from_raw_os_error(e.raw_os_error()))?;
         }
         Ok(())
-    };
-    // SAFETY: the hook runs in the forked child before `exec`. It only
-    // makes system calls and never allocates, takes a lock or touches
-    // state shared with other threads of the parent, which is what a
-    // child of a multithreaded process may do.
-    unsafe { command.pre_exec(ids) };
-    command.status()
+    })
 }
 
 #[cfg(test)]

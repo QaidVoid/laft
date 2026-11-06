@@ -834,14 +834,25 @@ fn host_tool_files(tools: &[&str]) -> Vec<(String, Vec<u8>, u32)> {
         .collect()
 }
 
-#[test]
-fn a_round_seeds_builds_publishes_and_a_second_round_rests() {
+/// Everything one round of a build test needs.
+struct Round {
+    env: Env,
+    snapshots: SnapshotMap,
+    indexes: Vec<RepoIndex>,
+    request: Request,
+    hello: Name,
+    www: PathBuf,
+}
+
+/// The environment of a round test: a served recipe snapshot that builds
+/// `hello`, a seeded build view, and the request for it. `None` when the
+/// host cannot run the builds.
+fn round_of(dir: &Path) -> Option<Round> {
     if !Path::new("/bin/sh").exists() {
         println!("skipping: the host has no /bin/sh");
-        return;
+        return None;
     }
-    let dir = laft_test::tempdir();
-    let probe = dir.path().join("probe");
+    let probe = dir.join("probe");
     fs::create_dir_all(probe.join("build")).expect("writable");
     fs::create_dir_all(probe.join("out")).expect("writable");
     match laft_sandbox::Sandbox::new("/usr", probe.join("build"), probe.join("out"))
@@ -851,19 +862,19 @@ fn a_round_seeds_builds_publishes_and_a_second_round_rests() {
         Ok(status) if status.success() => {}
         other => {
             println!("skipping: the sandbox is unavailable: {other:?}");
-            return;
+            return None;
         }
     }
     laft_build_exe();
-    let env = env_of(dir.path());
-    let (_, hex) = source_tarball(dir.path());
-    let www = dir.path().join("www");
+    let env = env_of(dir);
+    let (_, hex) = source_tarball(dir);
+    let www = dir.join("www");
     let url = format!("file://{}", www.display());
-    let snapshot = publish_recipes(dir.path(), &www, &dir.path().join("mirror"), &hex);
+    let snapshot = publish_recipes(dir, &www, &dir.join("mirror"), &hex);
     let greet = publish_empty(&www, "greet", "The greeting library");
     if !Path::new("/bin/sh").exists() {
         println!("skipping: the host has no /bin/sh");
-        return;
+        return None;
     }
     let dash_files = host_shell_files();
     let dash_refs: Vec<(&str, &[u8], u32)> = dash_files
@@ -927,6 +938,30 @@ fn a_round_seeds_builds_publishes_and_a_second_round_rests() {
         values: BTreeMap::new(),
         view: "system".to_owned(),
         reasons: Vec::new(),
+    };
+    Some(Round {
+        env,
+        snapshots,
+        indexes,
+        request,
+        hello,
+        www,
+    })
+}
+
+#[test]
+fn a_round_seeds_builds_publishes_and_a_second_round_rests() {
+    let dir = laft_test::tempdir();
+    let Some(Round {
+        env,
+        snapshots,
+        indexes,
+        request,
+        hello,
+        www: _,
+    }) = round_of(dir.path())
+    else {
+        return;
     };
     let built = match run(
         &env,
@@ -1014,6 +1049,130 @@ fn a_round_seeds_builds_publishes_and_a_second_round_rests() {
         .filter(|entry| entry.meta.name == hello)
         .collect();
     assert_eq!(locals.len(), 1, "no duplicate is published");
+}
+
+/// The buildinfo of one package, as `laft-build` writes it next to it.
+fn buildinfo_of(
+    meta: &laft_pkg::Meta,
+    id: laft_core::StoreId,
+    file: &str,
+) -> laft_build::Buildinfo {
+    laft_build::Buildinfo {
+        format: laft_build::BUILDINFO_FORMAT,
+        package: laft_build::BuiltPackage {
+            name: meta.name.clone(),
+            version: meta.version.clone(),
+            rev: meta.rev,
+            variant: meta.variant,
+        },
+        build_key: Blake3Hash::of(b"key"),
+        plan_hash: Blake3Hash::of(b"plan"),
+        recipe_repos: Vec::new(),
+        sources: Vec::new(),
+        vendors: Vec::new(),
+        patches: Vec::new(),
+        toolchain_epoch: 1,
+        abi_epoch: 0,
+        build_view: Vec::new(),
+        env: Default::default(),
+        outputs: vec![laft_build::Output {
+            name: meta.name.clone(),
+            variant: meta.variant,
+            id,
+            file: file.to_owned(),
+        }],
+        abi: Default::default(),
+        host: laft_build::BuildinfoHost {
+            laft_build: "0.1.0".into(),
+            kernel: "test".into(),
+            jobs: 1,
+            started: "2026-01-01T00:00:00Z".parse().expect("a timestamp"),
+            finished: "2026-01-01T00:00:01Z".parse().expect("a timestamp"),
+        },
+        bootstrap: false,
+    }
+}
+
+/// An up to date round publishes only the recorded outputs of its
+/// requests, never another file the output directory still holds.
+#[test]
+fn an_up_to_date_round_publishes_only_the_recorded_outputs() {
+    let dir = laft_test::tempdir();
+    let Some(Round {
+        env,
+        snapshots,
+        indexes,
+        request,
+        hello,
+        www,
+    }) = round_of(dir.path())
+    else {
+        return;
+    };
+    let options = build_options();
+    let built = run(
+        &env,
+        std::slice::from_ref(&request),
+        &snapshots,
+        &indexes,
+        &options,
+        &BTreeMap::new(),
+    )
+    .unwrap_or_else(|failure| panic!("the first round failed to build: {failure:?}"));
+    assert_eq!(built.names, vec![hello.clone()]);
+    let local = Local::of(env.root.path());
+    let first = local
+        .source()
+        .expect("the local key works")
+        .expect("a local index exists");
+    let generation = first.accepted.index.generation;
+
+    // A package that a build of another option set left in the output
+    // directory, with the buildinfo that names it.
+    let out = env.path("/laft/build/out");
+    let stale = publish_pkg(&www, "stale", "A stale output", &[]);
+    let stale_name = "stale-1.0-r1.x86_64-v3.lpkg";
+    fs::copy(www.join(&stale.file), out.join(stale_name)).expect("the stale file is planted");
+    let info = buildinfo_of(&stale.meta, stale.id, stale_name);
+    fs::write(
+        out.join(format!("{stale_name}.buildinfo.json")),
+        info.to_json(),
+    )
+    .expect("writable");
+
+    run(
+        &env,
+        &[request],
+        &snapshots,
+        &indexes,
+        &options,
+        &BTreeMap::new(),
+    )
+    .expect("the second round succeeds");
+    let second = local
+        .source()
+        .expect("the local key works")
+        .expect("a local index exists");
+    assert_eq!(
+        second.accepted.index.generation, generation,
+        "the stale output is not published"
+    );
+    assert!(
+        second
+            .accepted
+            .index
+            .packages
+            .iter()
+            .all(|entry| entry.meta.name == hello),
+        "only hello is listed: {:?}",
+        second
+            .accepted
+            .index
+            .packages
+            .iter()
+            .map(|entry| entry.meta.name.to_string())
+            .collect::<Vec<_>>()
+    );
 }
 
 /// The builds run as the static `laft-build` account of the registry.

@@ -52,7 +52,7 @@ mod sys;
 #[cfg(test)]
 mod test_support;
 
-pub use as_user::run_as;
+pub use as_user::{run_as, run_as_output};
 pub use enter::{enter_view, private_mount_namespace};
 pub use error::Error;
 pub use fixed::{FixedSandbox, NOBODY};
