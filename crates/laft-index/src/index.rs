@@ -92,12 +92,16 @@ pub struct Index {
     /// variant of an available package.
     pub yanked: Vec<Yank>,
     /// The option declarations of every recipe with options, by package
-    /// name.
+    /// name. Left out of the encoded index when empty, so readers from
+    /// before the options work keep reading the index.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub options: BTreeMap<Name, Vec<OptionDecl>>,
     /// The recipe snapshot this generation was built from, when the
     /// repository publishes recipe snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipes: Option<RecipeSnapshot>,
     /// The profile this index was built for, in a profile index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<ProfileMember>,
 }
 
@@ -213,7 +217,7 @@ pub struct Yank {
 
 impl Index {
     /// The index format version this crate reads and writes.
-    pub const FORMAT: u32 = 2;
+    pub const FORMAT: u32 = 1;
 
     /// The trusted comment to sign the encoded index with.
     pub fn comment(&self) -> IndexComment {

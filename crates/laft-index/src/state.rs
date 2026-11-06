@@ -133,8 +133,10 @@ pub struct KeysRecord {
 pub struct IndexRecord {
     /// The channel.
     pub channel: Name,
-    /// The channel profile, when the accepted index was one.
-    #[serde(default)]
+    /// The channel profile, when the accepted index was one. Left out of
+    /// the record when unset, so readers from before the profile work keep
+    /// reading it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<Name>,
     /// The architecture.
     pub arch: Arch,

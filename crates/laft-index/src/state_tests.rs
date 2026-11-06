@@ -75,6 +75,37 @@ impl Client {
     }
 }
 
+/// A record of a base channel encodes without a `profile` member, so
+/// readers from before the profile work keep reading the record.
+#[test]
+fn a_base_channel_record_encodes_without_a_profile_member() {
+    let record = IndexRecord {
+        channel: "current".parse().expect("valid name"),
+        profile: None,
+        arch: laft_pkg::Arch::X86_64V3,
+        generation: 1,
+        blake3: None,
+        signer: "0123456789abcdef".parse().expect("valid key id"),
+    };
+    let value = serde_json::to_value(&record).expect("the record serializes");
+    let object = value.as_object().expect("an object");
+    assert!(!object.contains_key("profile"));
+    let decoded: IndexRecord =
+        serde_json::from_value(value).expect("the record without a profile decodes");
+    assert_eq!(decoded, record);
+
+    let with_profile = IndexRecord {
+        profile: Some("minimal".parse().expect("valid name")),
+        ..record
+    };
+    let value = serde_json::to_value(&with_profile).expect("the record serializes");
+    let object = value.as_object().expect("an object");
+    assert_eq!(
+        object.get("profile").and_then(|p| p.as_str()),
+        Some("minimal")
+    );
+}
+
 #[track_caller]
 fn assert_kind(
     result: Result<impl std::fmt::Debug, Error>,

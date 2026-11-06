@@ -104,16 +104,55 @@ fn an_option_declaration_must_fit_its_own_fields() {
     assert!(err.to_string().contains("`recipes` names"), "{err}");
 }
 
+/// The index as the tools before the options work wrote it: format 1
+/// without the `options`, `recipes` and `profile` members.
 #[test]
-fn a_compressed_format_1_index_is_rejected() {
-    let mut stale = index(T0);
-    stale.format = 1;
-    let json = serde_json::to_vec(&stale).expect("the sample index serializes");
+fn a_format_1_index_without_the_new_members_decodes() {
+    let mut value = serde_json::to_value(index(T0)).expect("the sample index serializes");
+    let object = value.as_object_mut().expect("an object");
+    object.insert("format".to_owned(), serde_json::Value::from(1));
+    object.remove("options");
+    object.remove("recipes");
+    object.remove("profile");
+    let json = serde_json::to_vec(&value).expect("the index serializes");
     let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 3).expect("zstd");
     encoder.write_all(&json).expect("zstd");
     let frame = encoder.finish().expect("zstd");
-    let err = Index::decode(&frame).expect_err("format 1 predates this reader");
-    assert!(err.to_string().contains("format 1"), "{err}");
+    let decoded = Index::decode(&frame).expect("a format 1 index without the new members decodes");
+    assert!(decoded.options.is_empty());
+    assert_eq!(decoded.recipes, None);
+    assert_eq!(decoded.profile, None);
+}
+
+/// An index whose members are all empty carries them nowhere: the
+/// published bytes are the ones every format 1 reader accepts.
+#[test]
+fn an_index_with_no_options_recipes_or_profile_encodes_without_the_members() {
+    let mut original = index(T0);
+    original.options = Default::default();
+    original.recipes = None;
+    original.profile = None;
+    let value = serde_json::to_value(&original).expect("the sample index serializes");
+    let object = value.as_object().expect("an object");
+    assert!(!object.contains_key("options"));
+    assert!(!object.contains_key("recipes"));
+    assert!(!object.contains_key("profile"));
+    let decoded = Index::decode(&original.encode().expect("valid")).expect("decodes");
+    assert_eq!(decoded, original);
+}
+
+#[test]
+fn another_format_is_rejected() {
+    for format in [2u32, 3] {
+        let mut stale = index(T0);
+        stale.format = format;
+        let json = serde_json::to_vec(&stale).expect("the sample index serializes");
+        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 3).expect("zstd");
+        encoder.write_all(&json).expect("zstd");
+        let frame = encoder.finish().expect("zstd");
+        let err = Index::decode(&frame).expect_err("another format is rejected");
+        assert!(err.to_string().contains("format"), "{err}");
+    }
 }
 
 #[test]
