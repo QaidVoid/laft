@@ -43,6 +43,33 @@ fn a_static_view_requests_static_libraries_and_the_cross_toolchain() {
     );
 }
 
+/// The option constraints of the recipe's dependencies survive into the
+/// view requests, and a `-dev` request follows the option set of its
+/// library, so a view never pairs `mesa{llvm=false}` with an
+/// `llvm=true` `mesa-dev`.
+#[test]
+fn view_requests_carry_option_constraints() {
+    let mut recipe = recipe("app");
+    recipe.build_deps = refs(&["meson{docs}"]);
+    recipe.link_deps = refs(&["mesa{!llvm}", "lua5.4{jit}"]);
+    recipe.check_deps = refs(&["python{!docs}"]);
+    let available = ["mesa-dev".parse().unwrap()].into_iter().collect();
+    let requested = requests(&recipe, true, &available);
+    let want = [
+        "meson{docs}",
+        "mesa{!llvm}",
+        "mesa-dev{!llvm}",
+        "lua5.4{jit}",
+        "python{!docs}",
+    ];
+    for reference in want {
+        assert!(
+            requested.iter().any(|r| r.to_string() == reference),
+            "{reference} is not requested"
+        );
+    }
+}
+
 fn store_with_base(dir: &Path) -> Store {
     let store = Store::at(dir.join("store"));
     for name in BUILD_BASE {

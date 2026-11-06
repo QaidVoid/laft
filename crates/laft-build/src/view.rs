@@ -61,7 +61,14 @@ pub const SMOKE_BASE: &[&str] = &["coreutils", "dash"];
 ///
 /// The resolver adds the runtime dependencies of all of them.
 pub fn requests(recipe: &Recipe, check: bool, available: &BTreeSet<Name>) -> Vec<PkgRef> {
-    let dynamic = |r: &PkgRef| PkgRef::new(r.name().clone(), r.prefix().cloned(), Variant::Dynamic);
+    let dynamic = |r: &PkgRef| {
+        PkgRef::new_with_options(
+            r.name().clone(),
+            r.prefix().cloned(),
+            Variant::Dynamic,
+            r.options().clone(),
+        )
+    };
     let named = |n: &str| {
         n.parse::<Name>()
             .ok()
@@ -75,7 +82,12 @@ pub fn requests(recipe: &Recipe, check: bool, available: &BTreeSet<Name>) -> Vec
             && let Ok(dev) = format!("{}-dev", link.name()).parse::<Name>()
             && available.contains(&dev)
         {
-            refs.push(PkgRef::new(dev, link.prefix().cloned(), Variant::Dynamic));
+            refs.push(PkgRef::new_with_options(
+                dev,
+                link.prefix().cloned(),
+                Variant::Dynamic,
+                link.options().clone(),
+            ));
         }
     }
     if recipe.variant == Variant::Static {
