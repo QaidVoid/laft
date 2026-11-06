@@ -1114,6 +1114,28 @@ fn pair_repo(dir: &Path, names: &[&str], body: &str) -> PathBuf {
     recipes
 }
 
+/// One option without effect among used ones: the sweep reports the dead
+/// option and keeps the one that changes the plan.
+#[test]
+fn kr012_reports_one_option_without_effect_among_used_ones() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let packages = [pkg("app", "1.0").file("usr/bin/app", "app").write(&out)];
+    let repo = dir.path().join("repo");
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let recipes = pair_repo(
+        dir.path(),
+        &["used", "dead"],
+        "import \"laft/options\" as opt\n\npackage hello {\n  version = \"1.0\"\n  summary = if opt.used { \"used\" } else { \"plain\" }\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    );
+    let (codes, report, success) = check(&repo, &["--recipes", s(&recipes)]);
+    assert_eq!(codes, ["KR012"], "{report}");
+    assert!(success, "a warning does not fail the check");
+    let message = report["findings"][0]["message"].as_str().unwrap();
+    assert!(message.contains("dead"), "{report}");
+    assert!(!message.contains("used"), "{report}");
+}
+
 #[test]
 fn kr012_reports_an_effect_that_needs_two_options() {
     let dir = laft_test::tempdir();
@@ -1171,7 +1193,7 @@ fn kr012_notes_the_combinations_it_did_not_evaluate() {
     assert!(message.contains("option without effect"), "{report}");
     let detail = report["findings"][0]["details"][0].as_str().unwrap();
     assert!(
-        detail.contains("the first 64 of 128 combinations"),
+        detail.contains("the first 64 of 2187 combinations"),
         "{report}"
     );
 }

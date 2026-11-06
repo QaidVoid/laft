@@ -1094,15 +1094,17 @@ fn plan_hashes(recipes: &[laft_build::Recipe]) -> Vec<laft_core::Blake3Hash> {
 /// check.
 const KR012_COMBINATIONS: usize = 64;
 
-/// KR012: options whose combinations of other values all give the recipe
-/// the plan the defaults give.
+/// KR012: options that give the recipe the plan the defaults give, as far
+/// as the sweep can tell them apart.
 ///
-/// The check enumerates the cross product of the non-default values of
-/// every declared option, because an effect can need several values
-/// together, and evaluates the recipe with each of the first
-/// [`KR012_COMBINATIONS`] of them. A recipe whose default evaluation is
-/// empty, because it builds nothing for this architecture, has no plan to
-/// compare and is skipped with a note.
+/// The check enumerates combinations of the non-default values of every
+/// declared option, including the ones that set a single option, because
+/// an effect can need several values together, and evaluates the recipe
+/// with each of the first [`KR012_COMBINATIONS`] of them. An option has
+/// an effect when two evaluated combinations that differ only in that
+/// option give different plan hashes. A recipe whose default evaluation
+/// is empty, because it builds nothing for this architecture, has no plan
+/// to compare and is skipped with a note.
 fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
     let repos = input.recipes.expect("the check runs with recipes");
     for name in repos.packages() {
@@ -1121,8 +1123,13 @@ fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
                 continue;
             }
         };
+        let mut hashes: HashMap<BTreeMap<String, OptionValue>, _> = HashMap::new();
         let default = match repos.evaluate_with(name, &BTreeMap::new()) {
-            Ok(evaluation) => plan_hashes(&evaluation.recipes),
+            Ok(evaluation) => {
+                let hash = plan_hashes(&evaluation.recipes);
+                hashes.insert(BTreeMap::new(), hash.clone());
+                hash
+            }
             Err(e) => {
                 findings.push(
                     finding(
@@ -1148,15 +1155,12 @@ fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
         }
         let (combinations, total) = value_combinations(&decls.declarations);
         let truncated = total > combinations.len();
-        let mut changes = false;
         let mut broken = false;
         for set in &combinations {
             match repos.evaluate_with(name, set) {
-                Ok(evaluation) if plan_hashes(&evaluation.recipes) != default => {
-                    changes = true;
-                    break;
+                Ok(evaluation) => {
+                    hashes.insert(set.clone(), plan_hashes(&evaluation.recipes));
                 }
-                Ok(_) => {}
                 Err(e) => {
                     let shown = set
                         .iter()
@@ -1176,13 +1180,37 @@ fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
                 }
             }
         }
-        if !changes && !broken {
-            let options = decls
-                .declarations
-                .iter()
-                .map(|decl| decl.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
+        if broken {
+            continue;
+        }
+        let mut useless = Vec::new();
+        for decl in &decls.declarations {
+            let mut has_effect = false;
+            let mut undecided = false;
+            for set in &combinations {
+                if !set.contains_key(&decl.name) {
+                    continue;
+                }
+                let mut base = set.clone();
+                base.remove(&decl.name);
+                match (hashes.get(set), hashes.get(&base)) {
+                    (Some(hash), Some(base)) if hash != base => {
+                        has_effect = true;
+                        break;
+                    }
+                    (Some(_), Some(_)) => {}
+                    _ => {
+                        undecided = true;
+                        break;
+                    }
+                }
+            }
+            if !has_effect && !undecided {
+                useless.push(decl.name.as_str());
+            }
+        }
+        if !useless.is_empty() {
+            let options = useless.join(", ");
             let warned = finding(
                 "KR012",
                 Level::Warning,
@@ -1200,11 +1228,12 @@ fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
     }
 }
 
-/// The cross product of the non-default values of `decls`, as option sets,
-/// capped at [`KR012_COMBINATIONS`] entries. Every option contributes only
-/// its non-default values, so the result holds the all-defaults
+/// The combinations of the non-default values of `decls`, as option sets,
+/// capped at [`KR012_COMBINATIONS`] entries. Every option contributes the
+/// combinations that leave it at its default and the ones that give it
+/// each of its non-default values, so the result holds the all-defaults
 /// combination alone when no option has one, and never otherwise. The
-/// second element is the size of the uncapped product.
+/// second element is the size of the uncapped enumeration.
 fn value_combinations(
     decls: &[laft_index::OptionDecl],
 ) -> (Vec<BTreeMap<String, OptionValue>>, usize) {
@@ -1222,9 +1251,8 @@ fn value_combinations(
         if values.is_empty() {
             continue;
         }
-        total = total.saturating_mul(values.len());
-        let mut next: Vec<BTreeMap<String, OptionValue>> =
-            Vec::with_capacity(combinations.len() * values.len());
+        total = total.saturating_mul(values.len() + 1);
+        let mut next: Vec<BTreeMap<String, OptionValue>> = combinations.clone();
         for combination in &combinations {
             for value in &values {
                 let mut set = combination.clone();
