@@ -631,3 +631,45 @@ fn a_set_option_that_names_an_unknown_option_is_refused() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("PKG.OPTION=VALUE"), "{stderr}");
 }
+
+/// `--set` splits at the last dot, so a package whose name has a dot gets
+/// its values, and a package no repository defines is refused instead of
+/// silently ignored.
+#[test]
+fn a_set_reaches_a_package_whose_name_has_a_dot() {
+    let dir = laft_test::tempdir();
+    let recipes = support::write_repo(
+        &dir.path().join("core"),
+        "core",
+        "",
+        &[
+            (
+                "recipes/lua5.4/options.stav",
+                "## How the library is built.\n\nstruct Options {\n  ## Build the just in time compiler.\n  jit: Bool = true\n}\n",
+            ),
+            (
+                "recipes/lua5.4/package.stav",
+                "import \"laft/options\" as opt\n\npackage lua5.4 {\n  version = \"1.0\"\n  summary = if opt.jit { \"jit on\" } else { \"jit off\" }\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+            ),
+        ],
+    )
+    .to_str()
+    .expect("a UTF-8 path")
+    .to_owned();
+    let run = |extra: &[&str]| {
+        let mut all = vec!["--recipes", &recipes];
+        all.extend_from_slice(extra);
+        without_recipes(dir.path(), &all)
+    };
+
+    let output = run(&["--set", "lua5.4.jit=false", "--json", "eval", "lua5.4"]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value[0]["meta"]["summary"], "jit off");
+    assert_eq!(value[0]["option_values"]["jit"], serde_json::json!(false));
+
+    let output = run(&["--set", "nosuch.tool=false", "--json", "eval", "lua5.4"]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("nosuch"), "{stderr}");
+}

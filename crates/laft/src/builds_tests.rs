@@ -520,7 +520,7 @@ fn the_builds_carry_the_option_context_of_their_views() {
     let arguments = Run::context_arguments(laft_config::DepOptions::Context, &values, &views);
     assert_eq!(
         arguments,
-        ["--set", "gtk4.x11=false", "--prefer", "mesa.vulkan=amd"]
+        ["--option", "gtk4.x11=false", "--prefer", "mesa.vulkan=amd"]
     );
     let arguments = Run::context_arguments(laft_config::DepOptions::Defaults, &values, &views);
     assert_eq!(arguments, ["--dep-options", "defaults"]);

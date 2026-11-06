@@ -133,6 +133,8 @@ struct Context {
     json: bool,
     /// The option values `--set` gave, by package name.
     set: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+    /// The fixed option values `--option` gave, by package name.
+    option: BTreeMap<Name, BTreeMap<String, OptionValue>>,
     /// The option values `--prefer` gave, by package name.
     prefer: BTreeMap<Name, BTreeMap<String, OptionValue>>,
     /// The `--dep-options` choice.
@@ -170,8 +172,9 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 min_free_gib,
                 dry_run,
                 rebuild,
-                set: sets(&cli.set)?,
-                prefer: sets(&cli.prefer)?,
+                set: sets("--set", &cli.set)?,
+                option: sets("--option", &cli.option)?,
+                prefer: sets("--prefer", &cli.prefer)?,
             };
             let token = lock.as_ref().map(|l| l.token().to_owned());
             return stage(&root, &file, target, &run, &options, token, json);
@@ -194,14 +197,19 @@ fn run(cli: Cli) -> Result<(), Failure> {
         ));
     }
     let repos = Repos::open(&paths).map_err(|e| Failure::Usage(e.to_string()))?;
+    let set = sets("--set", &cli.set)?;
+    check_packages(&repos, &set)?;
+    let option = sets("--option", &cli.option)?;
+    let prefer = sets("--prefer", &cli.prefer)?;
     let cache = SourceCache::new(root.sources(), Fetcher::new(Config::new(root.cache())));
     let cx = Context {
         root,
         repos,
         cache,
         json: cli.json,
-        set: sets(&cli.set)?,
-        prefer: sets(&cli.prefer)?,
+        set,
+        option,
+        prefer,
         dep_options: match cli.dep_options {
             cli::DepOptionsArg::Context => DepOptions::Context,
             cli::DepOptionsArg::Defaults => DepOptions::Defaults,
@@ -300,46 +308,58 @@ fn build_root(flag: Option<PathBuf>) -> Result<PathBuf, Failure> {
     absolute(&path)
 }
 
-/// The fixed and preferred option values the `--set` and `--prefer`
-/// arguments give, as the views a build resolves with them: every
-/// `--set` value is fixed, so that the views hold the features the user
-/// asked for, and every `--prefer` value steers the choice only.
+/// The fixed and preferred option values the `--set`, `--option` and
+/// `--prefer` arguments give, as the views a build resolves with them:
+/// every `--set` and `--option` value is fixed, so that the views hold
+/// the features the user asked for, and every `--prefer` value steers
+/// the choice only.
 fn option_values(
     set: &BTreeMap<Name, BTreeMap<String, OptionValue>>,
+    option: &BTreeMap<Name, BTreeMap<String, OptionValue>>,
     prefer: &BTreeMap<Name, BTreeMap<String, OptionValue>>,
 ) -> OptionContext {
     let mut out = OptionContext::new();
-    for (package, _) in set.iter().chain(prefer.iter()) {
-        out.entry(package.clone()).or_default();
-    }
-    for (package, values) in set {
-        let entry = out.get_mut(package).expect("the entry was inserted above");
-        for (option, value) in values {
+    let mut fixed = |package: &Name, values: &BTreeMap<String, OptionValue>, origin: &str| {
+        let entry = out.entry(package.clone()).or_default();
+        for (opt, value) in values {
             entry.fixed.insert(
-                option.clone(),
+                opt.clone(),
                 FixedValue {
                     value: value.clone(),
-                    origin: "--set".to_owned(),
+                    origin: origin.to_owned(),
                 },
             );
         }
+    };
+    for (package, values) in set {
+        fixed(package, values, "--set");
+    }
+    for (package, values) in option {
+        fixed(package, values, "--option");
     }
     for (package, values) in prefer {
-        let entry = out.get_mut(package).expect("the entry was inserted above");
-        entry.preferred.extend(values.clone());
+        out.entry(package.clone())
+            .or_default()
+            .preferred
+            .extend(values.clone());
     }
     out
 }
 
-/// The option values the `--set` arguments give, by package name.
-fn sets(texts: &[String]) -> Result<BTreeMap<Name, BTreeMap<String, OptionValue>>, Failure> {
+/// The option values the `--set` and `--prefer` arguments give, by
+/// package name. The name may contain dots, so the split takes the last
+/// one; option names cannot.
+fn sets(
+    flag: &str,
+    texts: &[String],
+) -> Result<BTreeMap<Name, BTreeMap<String, OptionValue>>, Failure> {
     let mut out: BTreeMap<Name, BTreeMap<String, OptionValue>> = BTreeMap::new();
     for text in texts {
-        let bad = |reason: String| Failure::Usage(format!("--set {text}: {reason}"));
+        let bad = |reason: String| Failure::Usage(format!("{flag} {text}: {reason}"));
         let Some((left, value)) = text.split_once('=') else {
             return Err(bad("expected PKG.OPTION=VALUE".into()));
         };
-        let Some((package, option)) = left.split_once('.') else {
+        let Some((package, option)) = left.rsplit_once('.') else {
             return Err(bad("expected PKG.OPTION=VALUE".into()));
         };
         let package: Name = package
@@ -353,6 +373,22 @@ fn sets(texts: &[String]) -> Result<BTreeMap<Name, BTreeMap<String, OptionValue>
             .insert(option.to_owned(), value);
     }
     Ok(out)
+}
+
+/// Refuses a `--set` or `--prefer` package that no repository defines,
+/// which would otherwise silently change nothing.
+fn check_packages(
+    repos: &Repos,
+    values: &BTreeMap<Name, BTreeMap<String, OptionValue>>,
+) -> Result<(), Failure> {
+    for package in values.keys() {
+        if !repos.packages().any(|known| known == package) {
+            return Err(Failure::Usage(format!(
+                "no recipe repository defines package {package}",
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// The recipes `texts` name, each `<name>` for every variant it builds or
@@ -403,7 +439,7 @@ fn items(cx: &Context, texts: &[String]) -> Result<BTreeSet<Item>, Failure> {
 
 fn builder<'a>(cx: &'a Context, mode: Mode, options: Option<&BuildOptions>) -> Builder<'a> {
     let mut builder = Builder::new(&cx.repos, &cx.cache, &cx.root, mode);
-    builder.options.values = option_values(&cx.set, &cx.prefer);
+    builder.options.values = option_values(&cx.set, &cx.option, &cx.prefer);
     builder.dep_options = cx.dep_options;
     if let Some(options) = options {
         builder.check = !options.no_check;
@@ -909,6 +945,8 @@ struct StageArgs {
     rebuild: bool,
     /// The fixed option values `--set` gave, by package name.
     set: BTreeMap<Name, BTreeMap<String, OptionValue>>,
+    /// The fixed option values `--option` gave, by package name.
+    option: BTreeMap<Name, BTreeMap<String, OptionValue>>,
     /// The preferred option values `--prefer` gave, by package name.
     prefer: BTreeMap<Name, BTreeMap<String, OptionValue>>,
 }
@@ -928,6 +966,7 @@ fn stage(
         check_space(build_root.path())?;
     }
     let repos = Repos::open(&[&stage.recipes]).map_err(|e| Failure::Usage(e.to_string()))?;
+    check_packages(&repos, &run.set)?;
     let cache = SourceCache::new(
         build_root.sources(),
         Fetcher::new(Config::new(build_root.cache())),
@@ -951,7 +990,7 @@ fn stage(
         mirrors: options.mirrors.clone(),
         lock,
         options: ViewOptions {
-            values: option_values(&run.set, &run.prefer),
+            values: option_values(&run.set, &run.option, &run.prefer),
             declarations: BTreeMap::new(),
         },
     };

@@ -840,7 +840,7 @@ impl<'a> Run<'a> {
             };
             for (package, options) in &values.fixed {
                 for (option, setting) in options {
-                    out.push("--set".to_owned());
+                    out.push("--option".to_owned());
                     out.push(format!("{}.{}={}", package, option, setting.value));
                 }
             }

@@ -25,9 +25,15 @@ pub(crate) struct Cli {
     /// tag does not exist, is refused.
     #[arg(long = "set", value_name = "PKG.OPTION=VALUE")]
     pub(crate) set: Vec<String>,
+    /// Fix an option of the views a build resolves: `--option
+    /// mesa.llvm=false`. Repeat for more. Unlike `--set`, this changes no
+    /// recipe evaluation, and the package may be one that no recipe of
+    /// this repository defines.
+    #[arg(long = "option", value_name = "PKG.OPTION=VALUE")]
+    pub(crate) option: Vec<String>,
     /// Prefer an option value in the views a build resolves: `--prefer
-    /// mesa.llvm=false`. Repeat for more. Unlike `--set`, a preference
-    /// does not refuse a candidate that records another value.
+    /// mesa.llvm=false`. Repeat for more. Unlike a fixed value, a
+    /// preference does not refuse a candidate that records another value.
     #[arg(long = "prefer", value_name = "PKG.OPTION=VALUE")]
     pub(crate) prefer: Vec<String>,
     /// The option values the dependencies of a build resolve with:
