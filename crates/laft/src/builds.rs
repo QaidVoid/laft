@@ -33,8 +33,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use laft_build::{BuildRoot, Builder, Buildinfo, Mode, Repos, SourceCache};
-use laft_core::{Blake3Hash, Name, OptionConstraint, OptionValue, PkgRef, Variant};
+use laft_build::{BuildRoot, Builder, Buildinfo, Mode, Recipe, Repos, SourceCache, view};
+use laft_core::{Blake3Hash, Dep, Name, OptionConstraint, OptionValue, PkgRef, Provide, Variant};
 use laft_store::read_regular;
 use serde_json::Value;
 
@@ -391,7 +391,10 @@ impl<'a> Run<'a> {
     }
 
     /// The dependencies of `requests` that no recipe of the snapshot
-    /// builds and no package in the store satisfies.
+    /// builds and no package in the store satisfies, together with the
+    /// requests of the build views themselves, which the store must also
+    /// hold: the base packages, the build and link dependencies and, in
+    /// a static build, the static toolchain.
     fn scan(
         &self,
         blake3: &Blake3Hash,
@@ -415,10 +418,52 @@ impl<'a> Run<'a> {
             recipes.extend(evaluation.recipes);
         }
         let builder = Builder::new(&repos, &cache, root, Mode::Store);
-        builder
-            .plan_open(recipes, &root.db(), &BTreeSet::new(), &BTreeSet::new())
-            .map(|(_, _, unsatisfied)| unsatisfied)
-            .map_err(build_failure)
+        let (_, _, mut unsatisfied) = builder
+            .plan_open(
+                recipes.clone(),
+                &root.db(),
+                &BTreeSet::new(),
+                &BTreeSet::new(),
+            )
+            .map_err(build_failure)?;
+        unsatisfied.extend(self.view_requests(&builder, root, &recipes)?);
+        let mut seen = BTreeSet::new();
+        unsatisfied.retain(|reference| seen.insert(reference.to_string()));
+        Ok(unsatisfied)
+    }
+
+    /// The requests of the build views of `recipes` that no usable
+    /// package of the store satisfies. The view resolution of
+    /// `laft-build` asks for the same packages, so seeding them lets the
+    /// view assemble where an empty or partial store would fail with
+    /// `B050`.
+    fn view_requests(
+        &self,
+        builder: &Builder<'_>,
+        root: &BuildRoot,
+        recipes: &[Recipe],
+    ) -> Result<Vec<PkgRef>, Failure> {
+        let entries = view::usable(
+            view::store_entries(&root.store()).map_err(build_failure)?,
+            &builder.seeds().map_err(build_failure)?,
+        );
+        let held = |reference: &PkgRef| {
+            entries.iter().any(|entry| {
+                entry.meta.name == *reference.name()
+                    && entry.meta.variant == reference.variant()
+                    && reference.options().hold(&entry.meta.options)
+            })
+        };
+        let mut out = Vec::new();
+        for recipe in recipes {
+            let names: BTreeSet<Name> = entries.iter().map(|e| e.meta.name.clone()).collect();
+            for reference in view::requests(recipe, recipe.options.check, &names) {
+                if !held(&reference) {
+                    out.push(reference);
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Fetches the snapshot of `source` and unpacks it into the recipe
@@ -523,8 +568,10 @@ impl<'a> Run<'a> {
     }
 
     /// Builds the requests whose snapshot is `blake3` with the values of
-    /// `signature`: seeds the published dependencies of its graph, then
-    /// builds, then publishes and seeds the results.
+    /// `signature`: seeds the published dependencies of its graph, the
+    /// packages its build view asks for and the runtime dependencies of
+    /// everything it seeds, then builds, then publishes and seeds the
+    /// results.
     fn group(
         &mut self,
         blake3: &Blake3Hash,
@@ -545,33 +592,28 @@ impl<'a> Run<'a> {
             if references.is_empty() {
                 return self.build(blake3, requests, root);
             }
+            let entries = self.usable(root)?;
+            let mut pending: Vec<Need> = references.into_iter().map(Need::View).collect();
+            let mut seen: BTreeSet<String> = BTreeSet::new();
             let mut fresh = false;
-            for reference in &references {
-                let mut found = None;
-                for view in &views {
-                    if let Some((entry, index)) = self.candidate(reference, view) {
-                        found = Some((entry.clone(), index.mirrors.clone()));
-                        break;
-                    }
+            while let Some(need) = pending.pop() {
+                if !seen.insert(need.key()) {
+                    continue;
                 }
-                match found {
-                    Some((entry, mirrors)) => {
-                        // Another option set or variant of the same
-                        // package is its own seed.
-                        if self.seeded.insert(entry.id) {
-                            self.seed(root, &entry, &mirrors)?;
-                            fresh = true;
-                        }
-                    }
-                    None => {
-                        return Err(Failure::new(
-                            exit::FAILURE,
-                            format!(
-                                "{reference} is neither published nor built by any recipe snapshot"
-                            ),
-                        ));
-                    }
+                if held(&entries, &need) {
+                    continue;
                 }
+                let Some((entry, mirrors)) = self.need_entry(&need, &views)? else {
+                    return Err(Failure::new(
+                        exit::FAILURE,
+                        format!("{need} is neither published nor built by any recipe snapshot"),
+                    ));
+                };
+                if self.seeded.insert(entry.id) {
+                    self.seed(root, &entry, &mirrors)?;
+                    fresh = true;
+                }
+                pending.extend(entry.meta.depends.iter().cloned().map(Need::Dep));
             }
             if !fresh {
                 break;
@@ -581,6 +623,67 @@ impl<'a> Run<'a> {
             exit::FAILURE,
             "the dependencies of the builds do not settle, which is an internal error",
         ))
+    }
+
+    /// The usable packages of the store of `root`, which decide whether
+    /// a need is already satisfied.
+    fn usable(&self, root: &BuildRoot) -> Result<Vec<view::StoreEntry>, Failure> {
+        view::store_entries(&root.store()).map_err(build_failure)
+    }
+
+    /// The published entry that satisfies `need`, with its mirrors: for
+    /// a view request, the package a view of the group accepts; for a
+    /// runtime dependency, the package that provides it.
+    fn need_entry(
+        &self,
+        need: &Need,
+        views: &[&str],
+    ) -> Result<Option<(laft_index::IndexEntry, laft_fetch::Mirrors)>, Failure> {
+        let found = match need {
+            Need::View(reference) => views.iter().find_map(|view| {
+                self.candidate(reference, view)
+                    .map(|(entry, index)| (entry.clone(), index.mirrors.clone()))
+            }),
+            Need::Dep(dep) => self
+                .provider(dep)
+                .map(|(entry, index)| (entry.clone(), index.mirrors.clone())),
+        };
+        Ok(found)
+    }
+
+    /// The newest published package that satisfies the dependency `dep`:
+    /// the package of its name, or the provider of the shared object,
+    /// pkg-config module or virtual capability it asks for. A dynamic
+    /// package wins over a static one, because the build views link
+    /// dynamically. Version constraints are left to the view resolution,
+    /// which refuses a build whose providers are too old instead of
+    /// seeding older packages silently.
+    fn provider(&self, dep: &Dep) -> Option<(&laft_index::IndexEntry, &RepoIndex)> {
+        fn rank<'a>(
+            entry: &'a laft_index::IndexEntry,
+            index: &'a RepoIndex,
+        ) -> (&'a laft_core::Version, u32, i64, u8) {
+            (
+                &entry.meta.version,
+                entry.meta.rev,
+                index.repo.priority,
+                u8::from(entry.meta.variant == laft_core::Variant::Dynamic),
+            )
+        }
+        let mut best: Option<(&laft_index::IndexEntry, &RepoIndex)> = None;
+        for index in self.indexes {
+            for entry in &index.accepted.index.packages {
+                if !satisfies(&entry.meta, dep) {
+                    continue;
+                }
+                if best.is_none_or(|(current, current_index)| {
+                    rank(entry, index) > rank(current, current_index)
+                }) {
+                    best = Some((entry, index));
+                }
+            }
+        }
+        best
     }
 
     /// Downloads the package of `entry` from `mirrors` and seeds it into
@@ -1078,6 +1181,67 @@ fn constrain(
             values.insert(name.to_owned(), value);
             Ok(())
         }
+    }
+}
+
+/// One package the store must hold before a group builds: a request of
+/// the build view, or a runtime dependency of an entry the run seeds.
+#[derive(Debug)]
+enum Need {
+    /// A request of the build view.
+    View(PkgRef),
+    /// A runtime dependency of a seeded entry.
+    Dep(Dep),
+}
+
+impl Need {
+    /// The written form, which deduplicates the worklist.
+    fn key(&self) -> String {
+        match self {
+            Self::View(reference) => reference.to_string(),
+            Self::Dep(dep) => dep.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for Need {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::View(reference) => write!(f, "{reference}"),
+            Self::Dep(dep) => write!(f, "{dep}"),
+        }
+    }
+}
+
+/// Whether the metadata `meta` satisfies the dependency `dep`, by its
+/// name and option values, or by one of its provides.
+fn satisfies(meta: &laft_pkg::Meta, dep: &Dep) -> bool {
+    match dep {
+        Dep::Pkg(name, _, options) => &meta.name == name && options.hold(&meta.options),
+        Dep::So(soname) => meta
+            .provides
+            .iter()
+            .any(|p| matches!(p, Provide::So(got) if got == soname)),
+        Dep::Pc(name, _) => meta
+            .provides
+            .iter()
+            .any(|p| matches!(p, Provide::Pc(got, _) if got == name)),
+        Dep::Virtual(name) => meta
+            .provides
+            .iter()
+            .any(|p| matches!(p, Provide::Virtual(got) if got == name)),
+    }
+}
+
+/// Whether the usable packages `entries` hold what `need` asks for.
+fn held(entries: &[view::StoreEntry], need: &Need) -> bool {
+    match need {
+        Need::View(reference) => entries.iter().any(|entry| {
+            entry.meta.name == *reference.name()
+                && entry.meta.variant == reference.variant()
+                && reference.options().hold(&entry.meta.options)
+        }),
+        Need::Dep(dep) => entries.iter().any(|entry| satisfies(&entry.meta, dep)),
     }
 }
 

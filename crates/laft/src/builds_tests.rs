@@ -884,11 +884,18 @@ struct Round {
 /// `hello`, a seeded build view, and the request for it. `None` when the
 /// host cannot run the builds.
 fn round_of(dir: &Path) -> Option<Round> {
-    round_of_variants(dir, "dynamic")
+    round_of_variants(dir, "dynamic", true)
 }
 
-/// As [`round_of`], with the recipe's `variants` set given.
-fn round_of_variants(dir: &Path, variants: &str) -> Option<Round> {
+/// As [`round_of`], but the store starts empty: the run must seed the
+/// build view from the repositories itself.
+fn unseeded_round_of(dir: &Path) -> Option<Round> {
+    round_of_variants(dir, "dynamic", false)
+}
+
+/// As [`round_of`], with the recipe's `variants` set given and `seed_view`
+/// saying whether the build view is seeded before the run.
+fn round_of_variants(dir: &Path, variants: &str, seed_view: bool) -> Option<Round> {
     if !Path::new("/bin/sh").exists() {
         println!("skipping: the host has no /bin/sh");
         return None;
@@ -954,9 +961,11 @@ fn round_of_variants(dir: &Path, variants: &str) -> Option<Round> {
     });
     let mut indexes = vec![index];
     let root = laft_build::BuildRoot::new(env.path("/laft/build"));
-    for entry in &indexes[0].accepted.index.packages {
-        if entry.meta.name != greet.meta.name {
-            laft_build::seed(&root, &www.join(&entry.file)).expect("the build view is seeded");
+    if seed_view {
+        for entry in &indexes[0].accepted.index.packages {
+            if entry.meta.name != greet.meta.name {
+                laft_build::seed(&root, &www.join(&entry.file)).expect("the build view is seeded");
+            }
         }
     }
     if variants.contains("static") {
@@ -1102,6 +1111,64 @@ fn a_round_seeds_builds_publishes_and_a_second_round_rests() {
 }
 
 #[test]
+fn a_run_seeds_the_build_view_of_its_build_from_the_repositories() {
+    let dir = laft_test::tempdir();
+    let Some(Round {
+        env,
+        snapshots,
+        indexes,
+        request,
+        hello,
+        ..
+    }) = unseeded_round_of(dir.path())
+    else {
+        return;
+    };
+    let root = laft_build::BuildRoot::new(env.path("/laft/build"));
+    let start = laft_build::view::store_entries(&root.store()).expect("the store reads");
+    assert!(start.is_empty(), "the store starts empty: {start:?}");
+
+    let built = run(
+        &env,
+        std::slice::from_ref(&request),
+        &snapshots,
+        &indexes,
+        &build_options(),
+        &BTreeMap::new(),
+    )
+    .expect("the run seeds the build view and builds");
+    assert_eq!(built.names, vec![hello.clone()], "the build is reported");
+
+    let entries = laft_build::view::store_entries(&root.store()).expect("the store reads");
+    let names: BTreeSet<&str> = entries
+        .iter()
+        .map(|entry| entry.meta.name.as_str())
+        .collect();
+    for base in laft_build::view::BUILD_BASE {
+        assert!(
+            names.contains(*base),
+            "{base} of the build view is not seeded"
+        );
+    }
+    assert!(
+        names.contains("greet"),
+        "the build dependency is not seeded"
+    );
+    assert!(names.contains("hello"), "the built package is seeded");
+
+    let again = run(
+        &env,
+        &[request],
+        &snapshots,
+        &indexes,
+        &build_options(),
+        &BTreeMap::new(),
+    )
+    .expect("the second round succeeds");
+    assert_eq!(again.bytes, 0, "nothing downloads twice");
+}
+
+#[test]
 fn a_second_variant_of_a_package_builds_with_the_first() {
     let dir = laft_test::tempdir();
     let Some(Round {
@@ -1111,7 +1178,7 @@ fn a_second_variant_of_a_package_builds_with_the_first() {
         request,
         hello,
         www: _,
-    }) = round_of_variants(dir.path(), "dynamic, static")
+    }) = round_of_variants(dir.path(), "dynamic, static", true)
     else {
         return;
     };
