@@ -11,7 +11,7 @@
 //! | KR002 | error | A dependency that no package of the index or of a base index satisfies. |
 //! | KR003 | error | A package that the resolver cannot install on its own. |
 //! | KR004 | error | An alternatives group whose default is not a member, that has no default while the newest versions of several members share the highest priority, whose members ship different paths, or that lists a path its member does not ship. |
-//! | KR005 | error | A package whose name, version, revision, variant and option values are already published with another store id. |
+//! | KR005 | error | A package whose name, version, revision, variant and option values are already published with another store id. Profile indexes are exempt. |
 //! | KR006 | warning | The newest version of a name is older than the newest one previously published. |
 //! | KR007 | error | Packages of several names that can share a view provide the same `so:` or `virtual:` value, and no provider default chooses one of them. |
 //! | KR008 | error | A package file whose metadata or manifest is invalid. |
@@ -689,13 +689,20 @@ type Identity<'a> = (
     &'a BTreeMap<String, OptionValue>,
 );
 
-/// KR005: a published identity keeps its store id, in the channel, in
-/// every sibling profile of it and in every other channel of the
-/// architecture.
+/// KR005: a published identity keeps its store id, in the channel and in
+/// every other channel of the architecture. Profile indexes are exempt:
+/// building a profile rebuilds the packages built against its changed
+/// ones, under the same identity and with new store ids.
 fn revisions(input: &Input<'_>, findings: &mut Vec<Finding>) {
+    if input.index.profile.is_some() {
+        return;
+    }
     let mut published: HashMap<Identity<'_>, BTreeSet<StoreId>> = HashMap::new();
     let mut withdrawn: HashMap<Identity<'_>, BTreeSet<StoreId>> = HashMap::new();
     for index in input.published.into_iter().chain(input.others) {
+        if index.profile.is_some() {
+            continue;
+        }
         for e in &index.packages {
             let m = &e.meta;
             published

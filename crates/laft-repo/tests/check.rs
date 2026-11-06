@@ -780,8 +780,10 @@ fn kr014_a_subpackage_is_checked_against_its_recipe_declarations() {
     );
 }
 
+/// A profile index rebuilds dependents with new store ids, so KR005
+/// compares only indexes that are not profiles.
 #[test]
-fn kr005_an_identity_shared_with_a_sibling_profile_keeps_its_store_id() {
+fn kr005_compares_only_indexes_that_are_not_profiles() {
     let dir = laft_test::tempdir();
     let first = dir.path().join("first");
     let second = dir.path().join("second");
@@ -791,10 +793,28 @@ fn kr005_an_identity_shared_with_a_sibling_profile_keeps_its_store_id() {
         .write(&second);
     assert_ne!(support::entry(&a).id, support::entry(&b).id);
 
-    // The base channel lists the first build, the sibling profile the
-    // second, with the same name, version, revision, variant and options.
+    // Two plain channels: the same identity with another store id is a
+    // forgotten revision bump.
     let repo = dir.path().join("repo");
+    fixture(&repo, "current", 0, std::slice::from_ref(&a), |_| {});
+    fixture(&repo, "stable", 0, std::slice::from_ref(&b), |_| {});
+    let (codes, report, _) = check(&repo, &[]);
+    assert!(codes.contains(&"KR005".to_owned()), "{report}");
+
+    // A sibling profile lists a rebuilt build with a new id: building a
+    // profile rebuilds the packages built against its changed ones.
+    let repo = dir.path().join("profiles");
     fixture(&repo, "current", 0, &[a], |_| {});
+    let b_entry = support::entry(&b);
+    fs::create_dir_all(repo.join("pool")).unwrap();
+    fs::copy(&b, repo.join(format!("pool/{}.lpkg", b_entry.id))).unwrap();
+    fs::create_dir_all(repo.join("buildinfo")).unwrap();
+    let buildinfo = b.with_extension("").with_extension("");
+    fs::copy(
+        PathBuf::from(format!("{}.buildinfo.json", buildinfo.to_string_lossy())),
+        repo.join(format!("buildinfo/{}.json", b_entry.id)),
+    )
+    .unwrap();
     let mut profile = support::read_index(&repo, "current");
     profile.generation += HOUR;
     profile.timestamp = laft_core::Timestamp::from_secs(profile.generation);
@@ -812,10 +832,8 @@ fn kr005_an_identity_shared_with_a_sibling_profile_keeps_its_store_id() {
     )
     .unwrap();
 
-    let (codes, report, success) = check(&repo, &[]);
-    assert!(codes.contains(&"KR005".to_owned()), "{report}");
-    assert!(!success);
-
+    let (codes, report, _) = check(&repo, &[]);
+    assert!(codes.is_empty(), "{report}");
     let output = support::run(&[
         "check",
         "--repo",
@@ -826,7 +844,6 @@ fn kr005_an_identity_shared_with_a_sibling_profile_keeps_its_store_id() {
         "minimal",
         "--json",
     ]);
-    assert!(matches!(output.status.code(), Some(0 | 1)));
     let report: Value =
         serde_json::from_slice(&output.stdout).expect("check --json prints a report");
     let codes: Vec<String> = report["findings"]
@@ -835,7 +852,7 @@ fn kr005_an_identity_shared_with_a_sibling_profile_keeps_its_store_id() {
         .iter()
         .map(|f| f["code"].as_str().unwrap().to_owned())
         .collect();
-    assert!(codes.contains(&"KR005".to_owned()), "{report}");
+    assert!(codes.is_empty(), "{report}");
 }
 
 #[test]
