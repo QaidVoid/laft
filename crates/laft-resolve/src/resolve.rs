@@ -1874,19 +1874,32 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         by: Candidate<'a>,
         reason: Reason,
     ) -> Result<(), Stop<'a>> {
-        let satisfied = self.providers.get(&key).and_then(|names| {
-            names
-                .iter()
-                .find(|n| {
-                    self.selected
-                        .get(**n)
-                        .is_some_and(|s| provides(s.candidate.meta, dep))
-                })
-                .copied()
-        });
+        let satisfied = self
+            .providers
+            .get(&key)
+            .and_then(|names| {
+                names
+                    .iter()
+                    .find(|n| {
+                        self.selected
+                            .get(**n)
+                            .is_some_and(|s| provides(s.candidate.meta, dep))
+                    })
+                    .copied()
+            })
+            .or_else(|| {
+                // A name the snapshot builds has no selected package, so
+                // the build pending for it is the provider of this pass.
+                self.ctx
+                    .provider_names(key)
+                    .into_iter()
+                    .find(|name| self.builds.contains_key(*name))
+            });
         if let Some(name) = satisfied {
             if let Some(sel) = self.selected.get_mut(name) {
                 sel.reasons.push(reason);
+            } else if let Some(build) = self.builds.get_mut(name) {
+                build.reasons.push(reason);
             }
             return Ok(());
         }
@@ -1921,6 +1934,10 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         for name in &names {
             if self.selected.contains_key(*name) {
                 wrong.push(*name);
+            } else if self.builds.contains_key(*name) {
+                // The snapshot builds this name, so no package of it is
+                // selected, whether or not the resolution reached the
+                // build through this provide.
             } else if self.ctx.is_ambiguous(name.as_str())
                 || self
                     .ctx
@@ -1932,6 +1949,35 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
                     .is_some()
             {
                 usable.push(*name);
+            }
+        }
+
+        if usable.is_empty() && wrong.is_empty() {
+            // No published provider can be picked, so a provider the
+            // snapshot builds takes over, with the constraints the view
+            // has learned for it applied to its values.
+            let none = OptionConstraints::default();
+            let want = Want {
+                req: VersionReq::Any,
+                variant: None,
+                dynamic_first: true,
+                options: &none,
+                asked: &[],
+                strict: false,
+            };
+            for name in &names {
+                if self.selected.contains_key(*name) || self.builds.contains_key(*name) {
+                    continue;
+                }
+                if let Some(values) = self.buildable_values(name, &want) {
+                    return self.build(
+                        name,
+                        values,
+                        &want,
+                        Some(Asked::Dependency(by.meta, dep)),
+                        vec![reason],
+                    );
+                }
             }
         }
 

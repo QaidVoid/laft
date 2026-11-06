@@ -355,6 +355,47 @@ fn an_installed_build_without_a_library_names_its_options() {
     );
 }
 
+/// The same view with the requests in the other order: the dependency on
+/// mesa is learned as a constraint and drives the same build.
+#[test]
+fn a_so_dependency_is_met_by_a_pending_build_from_either_order() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0")
+                .options(&[("vulkan", "all")])
+                .provides(&["so:libEGL.so.1"]),
+            pkg("blender 4.5.0").depends(&["mesa{vulkan=amd}"]),
+            pkg("kwin 6.0").depends(&["so:libEGL.so.1"]),
+        ],
+    );
+    let mut i = input("system", vec![req("kwin"), req("blender")], &[]);
+    i.buildable = vec![buildable("mesa", "25.3.0", &[("vulkan", "all")])];
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)])
+        .resolve(&i)
+        .expect("the view resolves");
+    assert!(
+        !r.packages.contains_key(&name("mesa")),
+        "mesa is built, not also selected: {:?}",
+        labels(&r)
+    );
+    let build = r
+        .builds
+        .iter()
+        .find(|b| b.buildable.name == name("mesa"))
+        .expect("mesa is built");
+    assert_eq!(
+        build.values.get("vulkan").map(ToString::to_string),
+        Some("amd".to_owned())
+    );
+    assert!(build.reasons.iter().any(|reason| *reason
+        == Reason::Dependency {
+            by: name("kwin"),
+            dep: "so:libEGL.so.1".parse().unwrap(),
+        }));
+}
+
 /// A provider excluded by a version prefix rather than the option
 /// values: the error carries no note blaming the options.
 #[test]
@@ -937,6 +978,13 @@ fn requests_of_a_missing_name_fail_with_the_available_versions() {
 /// dependency on a name nothing selected may be met by a package that
 /// replaces the name.
 fn check_sound(r: &Resolution<'_>, requests: &[Request], options: &BTreeMap<Name, OptionRequest>) {
+    for build in &r.builds {
+        assert!(
+            !r.packages.contains_key(&build.buildable.name),
+            "{} is both selected and a build",
+            build.buildable.name
+        );
+    }
     for (name, selected) in &r.packages {
         let meta = selected.candidate.meta;
         assert_eq!(&meta.name, name);
@@ -964,18 +1012,31 @@ fn check_sound(r: &Resolution<'_>, requests: &[Request], options: &BTreeMap<Name
                         req.matches(&s.candidate.meta.version, s.candidate.meta.rev)
                             && constraints_hold(&s.candidate.meta.options, opts)
                     }
-                    None => {
-                        *req == VersionReq::Any
-                            && r.packages.values().any(|s| {
-                                s.candidate
-                                    .meta
-                                    .replaces
-                                    .iter()
-                                    .any(|d| matches!(d, Dep::Pkg(x, _, _) if x == n))
-                            })
-                    }
+                    None => match r.builds.iter().find(|b| &b.buildable.name == n) {
+                        Some(b) => {
+                            req.matches(&b.buildable.version, b.buildable.rev)
+                                && constraints_hold(&b.values, opts)
+                        }
+                        None => {
+                            *req == VersionReq::Any
+                                && r.packages.values().any(|s| {
+                                    s.candidate
+                                        .meta
+                                        .replaces
+                                        .iter()
+                                        .any(|d| matches!(d, Dep::Pkg(x, _, _) if x == n))
+                                })
+                        }
+                    },
                 },
-                _ => r.packages.values().any(|s| provides(s.candidate.meta, dep)),
+                _ => {
+                    r.packages.values().any(|s| provides(s.candidate.meta, dep))
+                        || r.builds.iter().any(|b| {
+                            b.reasons.iter().any(
+                                |reason| matches!(reason, Reason::Dependency { dep: d, .. } if d == dep),
+                            )
+                        })
+                }
             };
             assert!(ok, "{name} needs {dep}, which is not satisfied");
         }
@@ -1004,6 +1065,20 @@ fn check_sound(r: &Resolution<'_>, requests: &[Request], options: &BTreeMap<Name
             assert!(
                 constraints_hold_strict(&s.candidate.meta.options, request.pkg.options()),
                 "request {} is met by a candidate without its option values",
+                request.pkg
+            );
+        } else if let Some(b) = r
+            .builds
+            .iter()
+            .find(|b| b.buildable.name == *request.pkg.name())
+        {
+            assert_eq!(b.buildable.variant, request.pkg.variant());
+            if let Some(prefix) = request.pkg.prefix() {
+                assert!(prefix.matches(&b.buildable.version));
+            }
+            assert!(
+                constraints_hold_strict(&b.values, request.pkg.options()),
+                "request {} is met by a build without its option values",
                 request.pkg
             );
         } else {
@@ -2040,6 +2115,45 @@ fn a_buildable_takes_the_preferred_values_of_the_view() {
         r.builds[0].values.get("vaapi"),
         Some(&OptionValue::Tag("amd".into()))
     );
+}
+
+/// A name the snapshot builds is never also selected: a provide
+/// dependency follows the build instead of picking a published package
+/// of the same name.
+#[test]
+fn a_built_name_is_not_also_selected_for_a_provide() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0")
+                .options(&[("vulkan", "all")])
+                .provides(&["so:libEGL.so.1"]),
+            pkg("blender 4.5.0").depends(&["mesa{vulkan=amd}"]),
+            pkg("kwin 6.0").depends(&["so:libEGL.so.1"]),
+        ],
+    );
+    let mut i = input("system", vec![req("blender"), req("kwin")], &[]);
+    i.buildable = vec![buildable("mesa", "25.3.0", &[("vulkan", "all")])];
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)]).resolve(&i).unwrap();
+    assert!(
+        !r.packages.contains_key(&name("mesa")),
+        "mesa is built, so it is not selected: {:?}",
+        r.packages
+            .keys()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(r.builds.len(), 1, "blender still needs its mesa");
+    assert_eq!(
+        r.builds[0].values.get("vulkan"),
+        Some(&OptionValue::Tag("amd".into()))
+    );
+    assert!(r.builds[0].reasons.iter().any(|reason| *reason
+        == Reason::Dependency {
+            by: name("kwin"),
+            dep: "so:libEGL.so.1".parse().unwrap(),
+        }));
 }
 
 #[test]
