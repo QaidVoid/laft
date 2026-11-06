@@ -339,7 +339,10 @@ fn add_dep(deps: &mut Vec<PkgRef>, name: &str) {
 
 /// Checks the option constraints of `deps` against the options that the
 /// named packages declare: every constraint must name an option the target
-/// declares, and for a tag constraint a tag of that option's sum type.
+/// declares, and for a tag constraint a tag of that option's sum type. A
+/// dependency on a name no repository of the run holds as a recipe is not
+/// checked, because its package carries the option values the resolver
+/// reads the constraint against.
 fn check_constraints(cx: &mut Cx<'_>, keys: &[&str], deps: &[PkgRef]) {
     for dep in deps {
         if dep.options().is_empty() {
@@ -355,23 +358,16 @@ fn check_constraints(cx: &mut Cx<'_>, keys: &[&str], deps: &[PkgRef]) {
                 }
             }
             Some(_) => cx.absorb(found),
-            None if found.is_empty() => {
-                let reason = if declares_recipe(cx, dep.name()) {
-                    format!("which {} declares no options", dep.name())
-                } else {
-                    format!(
-                        "which cannot be verified, because no repository of the run holds {}",
-                        dep.name()
-                    )
-                };
+            None if found.is_empty() && declares_recipe(cx, dep.name()) => {
                 for constraint in dep.options().as_slice() {
                     cx.error(
                         keys,
                         "R073",
                         format!(
-                            "the dependency on {} requires {}, {reason}",
+                            "the dependency on {} requires {}, which {} declares no options",
                             dep.name(),
-                            constraint
+                            constraint,
+                            dep.name()
                         ),
                     );
                 }

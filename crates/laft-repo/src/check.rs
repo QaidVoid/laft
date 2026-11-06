@@ -925,6 +925,21 @@ fn option_metadata(input: &Input<'_>, findings: &mut Vec<Finding>) {
     }
 }
 
+/// The option declarations the constraints on `target` are checked
+/// against: the ones the index records for its name, or, when `target` is
+/// a subpackage, for the recipe the package names as its origin.
+fn declarations<'a>(index: &'a Index, target: &Name) -> Option<&'a [laft_index::OptionDecl]> {
+    if let Some(decls) = index.options.get(target) {
+        return Some(decls);
+    }
+    let origin = index
+        .packages
+        .iter()
+        .find(|entry| entry.meta.name == *target)
+        .map(|entry| entry.meta.origin.clone())?;
+    index.options.get(&origin).map(Vec::as_slice)
+}
+
 /// KR015: every option constraint of a dependency names an option and tag
 /// that the target recipe declares.
 fn option_constraints(input: &Input<'_>, findings: &mut Vec<Finding>) {
@@ -947,12 +962,12 @@ fn option_constraints(input: &Input<'_>, findings: &mut Vec<Finding>) {
                     .packages([meta])
                     .detail(format!("the dependency: {dep}"))
             };
-            let index_decls = input.index.options.get(target).map(Vec::as_slice);
+            let index_decls = declarations(input.index, target);
             let base_decls = if index_decls.is_none() {
                 input
                     .bases
                     .iter()
-                    .find_map(|base| base.options.get(target).map(Vec::as_slice))
+                    .find_map(|base| declarations(base, target))
             } else {
                 None
             };

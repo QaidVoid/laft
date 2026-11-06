@@ -236,6 +236,68 @@ fn kr003_a_package_whose_closure_conflicts() {
     );
 }
 
+/// KR015 checks a constraint on a subpackage such as `mesa-dev` against
+/// the option declarations of the recipe it was built from, which the
+/// index records as its origin.
+#[test]
+fn kr015_checks_a_subpackage_constraint_against_its_origin() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let declarations = |index: &mut laft_index::Index| {
+        index.options.insert(
+            "mesa".parse().unwrap(),
+            vec![bool_decl("llvm", true, "Build the LLVM backend.")],
+        );
+    };
+    let packages = |out: &std::path::Path, dep: &str, rev: u32| {
+        [
+            pkg("mesa", "25.1")
+                .option("llvm", laft_core::OptionValue::TRUE)
+                .write(out),
+            pkg("mesa-dev", "25.1")
+                .origin("mesa")
+                .option("llvm", laft_core::OptionValue::TRUE)
+                .write(out),
+            pkg("app", "1.0")
+                .rev(rev)
+                .depends(dep)
+                .file("usr/bin/app", "app")
+                .write(out),
+        ]
+    };
+
+    let repo = dir.path().join("repo");
+    fixture(
+        &repo,
+        "current",
+        0,
+        &packages(&out, "mesa-dev{llvm}", 1),
+        declarations,
+    );
+    let (codes, report, success) = check(&repo, &[]);
+    assert!(codes.is_empty(), "{report}");
+    assert!(success);
+
+    // A constraint the origin does not declare is named.
+    let bad = dir.path().join("bad");
+    fixture(
+        &repo,
+        "current",
+        HOUR,
+        &packages(&bad, "mesa-dev{vdpau}", 2),
+        declarations,
+    );
+    let (codes, report, _) = check(&repo, &[]);
+    assert_eq!(codes, ["KR015"], "{report}");
+    assert!(
+        report["findings"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("does not declare"),
+        "{report}"
+    );
+}
+
 /// Checks an index whose alternatives group `vi` has `vim` with priority
 /// `vim`, `neovim` 0.10.0 with priority 9 and `neovim` 0.11.4 with
 /// priority `neovim`, and `vim` as its default when `default` is set.

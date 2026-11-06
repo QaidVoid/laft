@@ -475,25 +475,38 @@ fn a_constraint_on_a_package_without_options_is_r073() {
     );
 }
 
+/// A constraint on a name whose recipe no repository of the run holds,
+/// because it lies outside the snapshot or is a subpackage such as
+/// `mesa-dev`, is left to the resolver, which checks it against the
+/// recorded option values of the packages it resolves to.
 #[test]
-fn a_constraint_on_a_package_outside_the_run_cannot_be_verified() {
-    let errors = errors(
+fn a_constraint_on_a_name_without_a_recipe_is_left_to_the_resolver() {
+    let dir = laft_test::tempdir();
+    let mesa_options = "## How mesa builds.\ntype Vulkan = amd | intel\n\nstruct Options {\n  ## The X11 libraries.\n  x11: Bool = true\n}\n";
+    let app = recipe(
         "app",
-        &[(
-            "recipes/app/package.stav",
-            &recipe(
-                "app",
-                &format!("{SOURCE}  link_deps = [ghost{{ssl}}]\n  build custom {{}}"),
-            ),
-        )],
+        &format!("{SOURCE}  link_deps = [mesa-dev{{!x11}}, ghost{{ssl}}]\n  build custom {{}}"),
     );
+    let mesa = recipe("mesa", "  build custom {}");
+    let files: Vec<(&str, &str)> = vec![
+        ("recipes/mesa/options.stav", mesa_options),
+        ("recipes/mesa/package.stav", &mesa),
+        ("recipes/app/package.stav", &app),
+    ];
+    let repo = write_repo(&dir.path().join("core"), "core", "", &files);
+    let repos = Repos::open(&[repo]).expect("the repository opens");
+    let recipes = support::evaluate(&repos, "app");
+    let constraints: Vec<(String, String)> = recipes[0]
+        .link_deps
+        .iter()
+        .map(|d| (d.name().to_string(), d.options().to_string()))
+        .collect();
     assert_eq!(
-        errors[0],
-        (
-            "R073".to_owned(),
-            "the dependency on ghost requires ssl, which cannot be verified, because no repository of the run holds ghost"
-                .to_owned()
-        )
+        constraints,
+        [
+            ("ghost".to_owned(), "{ssl}".to_owned()),
+            ("mesa-dev".to_owned(), "{!x11}".to_owned()),
+        ]
     );
 }
 
