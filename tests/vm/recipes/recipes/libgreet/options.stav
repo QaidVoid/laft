@@ -1,0 +1,6 @@
+## How libgreet greets.
+
+struct Options {
+  ## Write the greeting in capital letters.
+  shout: Bool = false
+}

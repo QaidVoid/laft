@@ -1,0 +1,22 @@
+import "laft/options" as opt
+
+package greeting {
+  version  = "1.0"
+  summary  = "A package that installs the text of a greeting"
+  homepage = "https://example.org/greeting"
+  license  = [MIT-0]
+
+  empty = true
+  build custom {}
+  split = []
+
+  phases {
+    install = """
+      mkdir -p "$DESTDIR/usr/share/greeting"
+      {
+        printf '%s\n' "The greeting is #{opt.mood}."
+        #{if opt.twice { "printf '%s\\n' twice" } else { ":" }}
+      } > "$DESTDIR/usr/share/greeting/greeting.txt"
+    """
+  }
+}

@@ -1,16 +1,26 @@
 use super::*;
 
-fn parse(args: &[&str]) -> Result<(bool, System)> {
+fn parse(args: &[&str]) -> Result<(bool, System, bool)> {
     options(args.iter().map(|a| (*a).to_owned()).collect())
 }
 
 #[test]
 fn default_and_base_modes_do_not_require_usable_packages() {
-    assert_eq!(parse(&[]).unwrap(), (false, System::Minimal));
+    assert_eq!(parse(&[]).unwrap(), (false, System::Minimal, false));
     assert_eq!(
         parse(&["--keep", "--self-built", "packages"]).unwrap(),
-        (true, System::SelfBuilt("packages".into()))
+        (true, System::SelfBuilt("packages".into()), false)
     );
+}
+
+#[test]
+fn the_options_mode_runs_alone() {
+    assert_eq!(
+        parse(&["--options"]).unwrap(),
+        (false, System::Minimal, true)
+    );
+    assert!(parse(&["--options", "--usable"]).is_err());
+    assert!(parse(&["--options", "--self-built", "packages"]).is_err());
 }
 
 #[test]
@@ -21,7 +31,7 @@ fn usable_requires_an_explicit_package_directory_in_either_order() {
     ] {
         assert_eq!(
             parse(&args).unwrap(),
-            (false, System::Usable("packages".into()))
+            (false, System::Usable("packages".into()), false)
         );
     }
     for args in [

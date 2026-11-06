@@ -1,0 +1,21 @@
+package hello {
+  version  = "1.0"
+  summary  = "A program whose build view holds libgreet"
+  homepage = "https://example.org/hello"
+  license  = [MIT-0]
+
+  empty = true
+  build custom {}
+  split = []
+
+  link_deps = [libgreet]
+
+  phases {
+    # The libgreet of the build view says which option set it was built
+    # with, so this file records what the view contained.
+    install = """
+      mkdir -p "$DESTDIR/usr/share/hello"
+      cp /usr/lib/libgreet/libgreet.txt "$DESTDIR/usr/share/hello/hello.txt"
+    """
+  }
+}

@@ -12,7 +12,9 @@ publish = false
 workspace = true
 
 [dependencies]
+laft-build.workspace = true
 laft-core.workspace = true
+laft-elf.workspace = true
 laft-pkg.workspace = true
 serde_json.workspace = true
 

@@ -1,0 +1,19 @@
+import "laft/options" as opt
+
+package libgreet {
+  version  = "1.0"
+  summary  = "A library whose greeting voice an option picks"
+  homepage = "https://example.org/libgreet"
+  license  = [MIT-0]
+
+  empty = true
+  build custom {}
+  split = []
+
+  phases {
+    install = """
+      mkdir -p "$DESTDIR/usr/lib/libgreet"
+      printf 'shout=%s\n' "#{opt.shout}" > "$DESTDIR/usr/lib/libgreet/libgreet.txt"
+    """
+  }
+}

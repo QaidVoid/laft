@@ -43,6 +43,7 @@
 mod cpio;
 mod disk;
 mod installer;
+mod options;
 mod packages;
 mod qemu;
 mod system;
@@ -58,10 +59,10 @@ use crate::qemu::{Accel, Boot, Machine};
 use crate::system::System;
 
 /// The result of a step: an error message for the report.
-type Result<T> = std::result::Result<T, String>;
+pub(crate) type Result<T> = std::result::Result<T, String>;
 
 /// An error with `message`.
-fn fail(message: impl Into<String>) -> String {
+pub(crate) fn fail(message: impl Into<String>) -> String {
     message.into()
 }
 
@@ -180,16 +181,17 @@ fn main() -> ExitCode {
             }
         };
     }
-    let (keep, system) = match options(arguments) {
+    let (keep, system, options) = match options(arguments) {
         Ok(options) => options,
         Err(message) => {
             eprintln!(
-                "laft-vmtest: {message}\nusage: laft-vmtest [--keep] [--self-built DIR [--usable]]"
+                "laft-vmtest: {message}\nusage: laft-vmtest [--keep] [--self-built DIR [--usable]] \
+                 [--options]"
             );
             return ExitCode::FAILURE;
         }
     };
-    match test(keep, &system) {
+    match test(keep, &system, options) {
         Ok(()) => {
             eprintln!("laft-vmtest: passed");
             ExitCode::SUCCESS
@@ -201,15 +203,17 @@ fn main() -> ExitCode {
     }
 }
 
-fn options(arguments: Vec<String>) -> Result<(bool, System)> {
+fn options(arguments: Vec<String>) -> Result<(bool, System, bool)> {
     let mut keep = false;
     let mut usable = false;
+    let mut option_scenario = false;
     let mut directory = None;
     let mut args = arguments.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--keep" => keep = true,
             "--usable" => usable = true,
+            "--options" => option_scenario = true,
             "--self-built" if directory.is_none() => {
                 let dir = args
                     .next()
@@ -220,15 +224,19 @@ fn options(arguments: Vec<String>) -> Result<(bool, System)> {
             _ => return Err(fail("unknown or repeated argument")),
         }
     }
-    match (directory, usable) {
-        (Some(dir), true) => Ok((keep, System::Usable(dir))),
-        (Some(dir), false) => Ok((keep, System::SelfBuilt(dir))),
-        (None, false) => Ok((keep, System::Minimal)),
-        (None, true) => Err(fail("--usable requires --self-built DIR")),
+    if option_scenario && (directory.is_some() || usable) {
+        return Err(fail("--options runs alone"));
     }
+    let system = match (directory, usable) {
+        (Some(dir), true) => System::Usable(dir),
+        (Some(dir), false) => System::SelfBuilt(dir),
+        (None, false) => System::Minimal,
+        (None, true) => return Err(fail("--usable requires --self-built DIR")),
+    };
+    Ok((keep, system, option_scenario))
 }
 
-fn test(keep: bool, system: &System) -> Result<()> {
+fn test(keep: bool, system: &System, options: bool) -> Result<()> {
     let paths = Paths::new()?;
     let accel = Accel::detect();
     if accel == Accel::Tcg {
@@ -242,13 +250,25 @@ fn test(keep: bool, system: &System) -> Result<()> {
     } else {
         None
     };
-    install(&paths, accel, &key, &disk, system, fixture.as_ref())?;
+    install(
+        &paths,
+        accel,
+        &key,
+        &disk,
+        system,
+        fixture.as_ref(),
+        options,
+    )?;
     let vars = paths.work.join("vars.fd");
     let _ = fs::remove_file(&vars);
     qemu::prepare_vars(&vars)?;
     first_boot(&paths, accel, &disk, &vars, system, fixture.as_ref())?;
     second_boot(&paths, accel, &disk, &vars, fixture.as_ref())?;
-    third_boot(&paths, accel, &disk, &vars)?;
+    if options {
+        crate::options::boots(&paths, accel, &disk, &vars)?;
+    } else {
+        third_boot(&paths, accel, &disk, &vars)?;
+    }
     if !keep {
         for file in [disk, vars] {
             let _ = fs::remove_file(file);
@@ -265,8 +285,9 @@ fn install(
     disk: &Path,
     system: &System,
     fixture: Option<&usable::Fixture>,
+    copy_repo: bool,
 ) -> Result<()> {
-    let (kernel, initrd) = installer::prepare(paths, key, system, fixture)?;
+    let (kernel, initrd) = installer::prepare(paths, key, system, fixture, copy_repo)?;
     let boot = Boot::Kernel {
         kernel,
         initrd: initrd.clone(),
@@ -305,7 +326,7 @@ fn check_install_result(transcript: &str, log: &Path) -> Result<()> {
 }
 
 /// Starts the installed system from `disk` through the firmware.
-fn start(
+pub(crate) fn start(
     paths: &Paths,
     accel: Accel,
     disk: &Path,
@@ -327,7 +348,7 @@ fn start(
 }
 
 /// Logs in as root on the serial console.
-fn login(machine: &mut Machine) -> Result<()> {
+pub(crate) fn login(machine: &mut Machine) -> Result<()> {
     machine.expect("the getty prompt", "laft-vm login:")?;
     machine.send("root\r")?;
     machine.expect("the password prompt", "Password:")?;
@@ -341,7 +362,7 @@ fn login(machine: &mut Machine) -> Result<()> {
 }
 
 /// Runs `command` in the root shell and returns what it printed.
-fn shell(machine: &mut Machine, command: &str) -> Result<String> {
+pub(crate) fn shell(machine: &mut Machine, command: &str) -> Result<String> {
     // The quotes keep the echo of the typed line from matching the marker.
     machine.send(&format!("echo @@be''gin; {command}; echo @@e''nd\r"))?;
     machine.expect(&format!("the output of `{command}`"), "@@begin")?;
@@ -352,7 +373,7 @@ fn shell(machine: &mut Machine, command: &str) -> Result<String> {
 }
 
 /// Powers the machine off from the root shell and waits until it is off.
-fn power_off(machine: &mut Machine) -> Result<()> {
+pub(crate) fn power_off(machine: &mut Machine) -> Result<()> {
     machine.send("runit-init 0\r")?;
     machine.expect("runit stage 3", "- runit: leave stage: /etc/runit/2")?;
     machine.expect("the power off", "- runit: power off...")?;
@@ -366,7 +387,7 @@ fn power_off(machine: &mut Machine) -> Result<()> {
 
 /// Fails unless `output` lacks `needle`, which describes what `what`
 /// rules out.
-fn check_absent(what: &str, output: &str, needle: &str) -> Result<()> {
+pub(crate) fn check_absent(what: &str, output: &str, needle: &str) -> Result<()> {
     if output.contains(needle) {
         Err(fail(format!("{what}: unexpected {needle:?} in:\n{output}")))
     } else {
@@ -376,7 +397,7 @@ fn check_absent(what: &str, output: &str, needle: &str) -> Result<()> {
 }
 
 /// Fails unless `output` contains `needle`.
-fn check(what: &str, output: &str, needle: &str) -> Result<()> {
+pub(crate) fn check(what: &str, output: &str, needle: &str) -> Result<()> {
     if output.contains(needle) {
         eprintln!("laft-vmtest: ok: {what}");
         Ok(())

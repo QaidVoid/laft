@@ -1,0 +1,10 @@
+## The mood the greeting is in.
+type Mood = calm | loud
+
+struct Options {
+  ## Print the greeting twice.
+  twice: Bool = false
+
+  ## The mood the greeting is in.
+  mood: Mood = calm
+}

@@ -788,7 +788,9 @@ dependencies = [
 name = "laft-vmtest"
 version = "0.1.0"
 dependencies = [
+ "laft-build",
  "laft-core",
+ "laft-elf",
  "laft-pkg",
  "laft-test",
  "serde_json",

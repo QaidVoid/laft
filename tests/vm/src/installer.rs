@@ -69,7 +69,9 @@ poweroff -f
 /// configuration of `system` with `key` as the repository key. The kernel
 /// is the one the installed system boots. The quoted values `"@REPO_KEY@"`
 /// and, with a usable fixture, `"@SSH_KEY@"` are replaced. Comments in the
-/// configuration stay as they are.
+/// configuration stay as they are. With `copy_repo`, the installer copies
+/// the repository onto the installed root, which the option scenario's
+/// second machine reads.
 ///
 /// # Errors
 ///
@@ -79,6 +81,7 @@ pub(crate) fn prepare(
     key: &str,
     system: &System,
     fixture: Option<&crate::usable::Fixture>,
+    copy_repo: bool,
 ) -> Result<(PathBuf, PathBuf)> {
     let unpacked = paths.work.join("unpacked");
     let _ = fs::remove_dir_all(&unpacked);
@@ -112,6 +115,16 @@ pub(crate) fn prepare(
         )
     } else {
         INIT.to_owned()
+    };
+    // The option scenario serves the published repository to a second
+    // machine on the same disk, so the machine keeps a copy of it.
+    let init = if copy_repo {
+        init.replace(
+            "  mount -t vfat /dev/vda1 /mnt/boot &&\n",
+            "  mount -t vfat /dev/vda1 /mnt/boot &&\n  cp -a /repo /mnt/repo &&\n",
+        )
+    } else {
+        init
     };
     archive.add("init", 0o755, Kind::File(init.into_bytes()));
     if let Some(fixture) = fixture {

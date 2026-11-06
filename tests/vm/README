@@ -37,6 +37,25 @@ the host name changed. The machine has no HPET, because with
 UEFI firmware it would leave the CMOS clock without interrupts, which
 hwclock waits for.
 
+Option scenario
+
+    tests/vm/run --options [--keep]
+
+installs the same minimal system and then runs the option scenario on a
+copy of the disk. The repository carries the recipe snapshot of
+tests/vm/recipes, empty stub packages for the base packages of a build
+view, and the `loud` profile beside the plain index; the installer
+copies it onto the disk, and the `laft` package carries `laft-build`.
+The machine fixes options for greeting, libgreet and hello in its
+configuration, refuses to apply without `--build-missing`, builds the
+optioned packages, and rests on a second apply. The build view of hello
+holds the optioned libgreet, which its installed file records. A second
+machine below /srv/guest follows the profile, installs the first
+machine's local build through `laft repo serve` without building, and
+refuses the served repository with a wrong key. The next boots run the
+optioned generation, apply the default option set, boot it, roll back,
+and boot the optioned one again.
+
     tests/vm/run --self-built ~/.cache/laft-bootstrap/build/out
 
 installs the base system that the bootstrap of the recipe repository
