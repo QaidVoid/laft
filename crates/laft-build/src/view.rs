@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use laft_core::{Dep, Name, PkgRef, Provide, Soname, StoreId, Timestamp, Variant};
+use laft_core::{Dep, Name, OptionValue, PkgRef, Provide, Soname, StoreId, Timestamp, Variant};
 use laft_index::{Defaults, Index, IndexEntry};
 use laft_pkg::{Arch, Meta, StaticDep};
 use laft_resolve::{Installed, Repository, Request, ResolveInput, Universe};
@@ -133,17 +133,28 @@ pub fn store_entries(store: &Store) -> Result<Vec<StoreEntry>, BuildError> {
 
 /// The packages of `entries`, which [`store_entries`] read, that builds
 /// may use: every package that a build made, and every seed, a package
-/// whose store id `seeds` holds, whose origin and variant no such package
-/// has. A seed stands in for the packages of its origin only until a build
-/// made some.
+/// whose store id `seeds` holds, whose origin, variant and option values
+/// no such package has. A seed stands in for the packages of its origin
+/// only until a build made some of the same option set.
 pub fn usable(mut entries: Vec<StoreEntry>, seeds: &BTreeSet<StoreId>) -> Vec<StoreEntry> {
-    let built: BTreeSet<(Name, Variant)> = entries
+    let built: BTreeSet<(Name, Variant, BTreeMap<String, OptionValue>)> = entries
         .iter()
         .filter(|e| !seeds.contains(&e.id))
-        .map(|e| (e.meta.origin.clone(), e.meta.variant))
+        .map(|e| {
+            (
+                e.meta.origin.clone(),
+                e.meta.variant,
+                e.meta.options.clone(),
+            )
+        })
         .collect();
     entries.retain(|e| {
-        !seeds.contains(&e.id) || !built.contains(&(e.meta.origin.clone(), e.meta.variant))
+        !seeds.contains(&e.id)
+            || !built.contains(&(
+                e.meta.origin.clone(),
+                e.meta.variant,
+                e.meta.options.clone(),
+            ))
     });
     entries
 }

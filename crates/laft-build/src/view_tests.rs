@@ -392,6 +392,59 @@ fn a_seed_serves_views_until_a_build_makes_a_package_of_its_origin() {
     );
 }
 
+/// A seed stands in for its origin and option set only until a build
+/// makes that set: a build of another option set leaves the seed usable.
+#[test]
+fn a_seed_of_one_option_set_survives_a_build_of_another() {
+    let dir = laft_test::tempdir();
+    let store = Store::at(dir.path().join("store"));
+    let first = dir.path().join("first");
+    let second = dir.path().join("second");
+    let llvm = |on: bool| {
+        [(
+            "llvm".to_owned(),
+            if on {
+                OptionValue::TRUE
+            } else {
+                OptionValue::FALSE
+            },
+        )]
+        .into_iter()
+        .collect::<BTreeMap<String, OptionValue>>()
+    };
+    let seed = TestPkg {
+        options: llvm(true),
+        ..TestPkg::new("mesa")
+    }
+    .add(&store, &first);
+    let seeds = BTreeSet::from([seed]);
+
+    // A build of another option set does not replace the seed.
+    let other = TestPkg {
+        options: llvm(false),
+        ..TestPkg::new("mesa")
+    }
+    .add(&store, &second);
+    let kept = usable(store_entries(&store).unwrap(), &seeds);
+    let ids: BTreeSet<StoreId> = kept.iter().map(|e| e.id).collect();
+    assert!(ids.contains(&seed), "the seed stays usable");
+    assert!(ids.contains(&other));
+
+    // A build of the seed's own option set replaces it.
+    let same = dir.path().join("same");
+    let built = TestPkg {
+        files: &[("usr/share/mesa/other", b"x")],
+        options: llvm(true),
+        ..TestPkg::new("mesa")
+    }
+    .add(&store, &same);
+    assert_ne!(built, seed, "a different build gives another store id");
+    let kept = usable(store_entries(&store).unwrap(), &seeds);
+    let ids: BTreeSet<StoreId> = kept.iter().map(|e| e.id).collect();
+    assert!(!ids.contains(&seed), "the built set replaces the seed");
+    assert!(ids.contains(&built));
+}
+
 #[test]
 fn key_inputs_follow_the_usable_packages() {
     let dir = laft_test::tempdir();
