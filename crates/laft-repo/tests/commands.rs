@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use laft_core::Timestamp;
 use laft_index::{Index, IndexComment, Keys, KeysComment, KeysFetch, Signature};
-use support::{DAY, HOUR, T0, at, fails, keygen, ok, pkg, public, read_index, run, s};
+use support::{DAY, HOUR, T0, at, fails, fixture, keygen, ok, pkg, public, read_index, run, s};
 
 const INDEX: &str = "channels/current/x86_64-v3/index.json.zst";
 
@@ -980,6 +980,53 @@ fn promote_honors_its_gates_and_copies_the_packages() {
     assert_eq!(current.generation, T0 + DAY);
     assert_eq!(current.packages, testing.packages);
     assert_eq!(current.channel.as_str(), "current");
+}
+
+/// Promotion replaces everything the source describes: the target keeps
+/// neither stale option declarations nor a stale recipe snapshot.
+#[test]
+fn promote_carries_the_option_declarations_of_the_source() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let repo = dir.path().join("repo");
+
+    // The source channel declares the options its packages set.
+    let packages = [pkg("hello", "1.0")
+        .option("tool", laft_core::OptionValue::TRUE)
+        .write(&out)];
+    fixture(&repo, "testing", 0, &packages, |index: &mut Index| {
+        index.options.insert(
+            "hello".parse().unwrap(),
+            vec![laft_index::OptionDecl {
+                name: "tool".to_owned(),
+                kind: laft_index::OptionType::Bool("bool".to_owned()),
+                default: laft_core::OptionValue::TRUE,
+                doc: String::new(),
+            }],
+        );
+    });
+
+    // The target still describes a recipe that no longer exists.
+    let stale = pkg("hello", "0.9").write(&out);
+    fixture(&repo, "current", 0, &[stale], |index: &mut Index| {
+        index.options.insert(
+            "hello".parse().unwrap(),
+            vec![laft_index::OptionDecl {
+                name: "legacy".to_owned(),
+                kind: laft_index::OptionType::Bool("bool".to_owned()),
+                default: laft_core::OptionValue::FALSE,
+                doc: String::new(),
+            }],
+        );
+    });
+
+    ok(&["promote", "--repo", s(&repo), "--now", &at(DAY)]);
+    let testing = read_index(&repo, "testing");
+    let current = read_index(&repo, "current");
+    assert_eq!(current.options, testing.options);
+    assert_eq!(current.recipes, testing.recipes);
+    assert_eq!(current.packages, testing.packages);
+    ok(&["check", "--repo", s(&repo), "--channel", "current"]);
 }
 
 #[test]

@@ -25,7 +25,8 @@ pub(crate) struct Gates<'a> {
     pub(crate) check_report: Option<&'a Path>,
 }
 
-/// Replaces the packages and defaults of `to` with those of the current
+/// Replaces the packages, defaults, option declarations, recipe snapshot
+/// and profile of `to` with those of the current
 /// generation of `from`, once every gate holds, checks the result and
 /// writes it as a new generation of `to`.
 ///
@@ -79,6 +80,9 @@ pub(crate) fn run(
     }
     index.packages = source.packages.clone();
     index.defaults = source.defaults.clone();
+    index.options = source.options.clone();
+    index.recipes = source.recipes.clone();
+    index.profile = source.profile.clone();
     index.yanked = yanked.into_values().collect();
     let index = generation::prepare(repo, to, index, options)?;
     let others = repo.other_indexes(to)?;
