@@ -230,6 +230,49 @@ fn why_names_the_option_values_that_moved_off_the_preference() {
     assert_eq!(json["why"][0]["reasons"][1]["preferred"], true);
 }
 
+/// `laft info` shows the option declarations of the recipe and the
+/// option sets that are published.
+#[test]
+fn info_shows_the_option_declarations_and_the_published_sets() {
+    let mesa = |version: &str, x11: bool| {
+        pkg("mesa", version)
+            .file("usr/bin/mesa", b"m")
+            .option("x11", laft_core::OptionValue::Bool(x11))
+    };
+    let fx = fixture!(hello());
+    fx.publish_with_recipes(
+        vec![mesa("1.0", false), mesa("1.1", true)],
+        Some(&mesa_recipes(fx.dir())),
+    );
+    fx.configure(", mesa", "");
+    fx.laft(&["repo", "sync"]).expect(0);
+
+    let info = fx.laft(&["info", "mesa"]).expect(0);
+    assert!(
+        info.stdout
+            .contains("options      x11 (bool, default true) Build against X11."),
+        "{}",
+        info.stdout
+    );
+    assert!(
+        info.stdout.contains("published    x11=false at 1.0-r1"),
+        "{}",
+        info.stdout
+    );
+    assert!(
+        info.stdout.contains("published    x11=true at 1.1-r1"),
+        "{}",
+        info.stdout
+    );
+    let info = fx.laft(&["info", "--json", "mesa"]).expect(0).json();
+    assert_eq!(info["options"][0]["name"], "x11");
+    assert_eq!(info["published"][0]["values"]["x11"], "false");
+    assert_eq!(
+        info["published"][0]["entries"],
+        serde_json::json!(["1.0-r1"])
+    );
+}
+
 /// The recipe sources of a `mesa` package that declares one option.
 fn mesa_recipes(dir: &std::path::Path) -> std::path::PathBuf {
     let recipes = dir.join("recipes-src");
