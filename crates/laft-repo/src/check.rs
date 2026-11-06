@@ -1016,22 +1016,25 @@ fn option_constraints(input: &Input<'_>, findings: &mut Vec<Finding>) {
     }
 }
 
-/// KR013: every publish block and profile names recipes with options,
+/// KR013: every publish set and profile names recipes with options,
 /// options they declare and tags they have.
 fn publish_blocks(input: &Input<'_>, findings: &mut Vec<Finding>) {
     let repos = input.recipes.expect("the check runs with recipes");
     for repo in repos.repos() {
-        for (recipe, set) in &repo.publish {
-            let what = format!("the publish block for {recipe} of repository {}", repo.name);
-            option_set(input, findings, &what, recipe, set);
+        for set in repo.publish.values() {
+            let what = format!(
+                "the publish set {} for {} of repository {}",
+                set.name, set.recipe, repo.name
+            );
+            option_set(input, findings, &what, &set.recipe, &set.options);
         }
         for (profile, member) in &repo.profiles {
-            for (recipe, set) in &member.package {
+            for (recipe, options) in &member.package {
                 let what = format!(
                     "the profile {profile} of repository {} for {recipe}",
                     repo.name
                 );
-                option_set(input, findings, &what, recipe, set);
+                option_set(input, findings, &what, recipe, options);
             }
         }
     }

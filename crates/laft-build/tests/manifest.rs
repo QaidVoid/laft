@@ -30,16 +30,42 @@ fn a_descriptor_declares_publish_sets_and_profiles() {
     let dir = laft_test::tempdir();
     let repos = manifest(
         &dir,
-        "recipe_repo core {}\n\npublish mesa {\n  options {\n    llvm = false\n    vulkan = \"amd\"\n  }\n}\n\nprofile minimal {\n  package mesa {\n    options {\n      x11 = false\n    }\n  }\n}\n",
+        "recipe_repo core {}\n\npublish nollvm {\n  recipe = \"mesa\"\n  options {\n    llvm = false\n    vulkan = \"amd\"\n  }\n}\n\nprofile minimal {\n  package mesa {\n    options {\n      x11 = false\n    }\n  }\n}\n",
     )
     .expect("the descriptor is valid");
     let core = &repos.repos()[0];
-    let mesa = core.publish.get(&name("mesa")).expect("the mesa set");
-    assert_eq!(mesa.get("llvm"), Some(&OptionText::Bool(false)));
-    assert_eq!(mesa.get("vulkan"), Some(&OptionText::Tag("amd".to_owned())));
+    let nollvm = core.publish.get("nollvm").expect("the mesa set");
+    assert_eq!(nollvm.recipe, name("mesa"));
+    assert_eq!(nollvm.options.get("llvm"), Some(&OptionText::Bool(false)));
+    assert_eq!(
+        nollvm.options.get("vulkan"),
+        Some(&OptionText::Tag("amd".to_owned()))
+    );
     let minimal = core.profiles.get("minimal").expect("the profile");
     let mesa = minimal.package.get(&name("mesa")).expect("the mesa values");
     assert_eq!(mesa.get("x11"), Some(&OptionText::Bool(false)));
+}
+
+/// Each `publish` block is one extra option set, so one recipe can have
+/// several of them, each under its own name.
+#[test]
+fn one_recipe_can_have_two_publish_sets() {
+    let dir = laft_test::tempdir();
+    let repos = manifest(
+        &dir,
+        "recipe_repo core {}\n\npublish nollvm {\n  recipe = \"mesa\"\n  options {\n    llvm = false\n  }\n}\n\npublish everything {\n  recipe = \"mesa\"\n  options {\n    llvm = true\n    vulkan = \"all\"\n  }\n}\n",
+    )
+    .expect("the descriptor is valid");
+    let core = &repos.repos()[0];
+    assert_eq!(core.publish.len(), 2);
+    let nollvm = core.publish.get("nollvm").expect("the nollvm set");
+    assert_eq!(nollvm.options.get("llvm"), Some(&OptionText::Bool(false)));
+    let everything = core.publish.get("everything").expect("the other set");
+    assert_eq!(everything.recipe, name("mesa"));
+    assert_eq!(
+        everything.options.get("vulkan"),
+        Some(&OptionText::Tag("all".to_owned()))
+    );
 }
 #[test]
 fn a_descriptor_declares_neither_publish_nor_profiles_by_default() {
@@ -51,14 +77,14 @@ fn a_descriptor_declares_neither_publish_nor_profiles_by_default() {
 }
 
 #[test]
-fn a_publish_or_profile_name_that_is_no_recipe_name_is_invalid() {
+fn a_publish_or_profile_recipe_that_is_invalid_is_refused() {
     let dir = laft_test::tempdir();
     let error = manifest(
         &dir,
-        "recipe_repo core {}\n\npublish Mesa {\n  options {\n    x11 = false\n  }\n}\n",
+        "recipe_repo core {}\n\npublish x11off {\n  recipe = \"Mesa\"\n  options {\n    x11 = false\n  }\n}\n",
     )
     .expect_err("the recipe name is invalid");
-    assert!(error.to_string().contains("core publishes Mesa"), "{error}");
+    assert!(error.to_string().contains("Mesa"), "{error}");
     let dir = laft_test::tempdir();
     let error = manifest(
         &dir,
@@ -78,7 +104,7 @@ fn an_option_value_that_is_no_bool_or_tag_is_rejected() {
     let dir = laft_test::tempdir();
     let error = manifest(
         &dir,
-        "recipe_repo core {}\n\npublish mesa {\n  options {\n    jobs = 3\n  }\n}\n",
+        "recipe_repo core {}\n\npublish jobs3 {\n  recipe = \"mesa\"\n  options {\n    jobs = 3\n  }\n}\n",
     )
     .expect_err("an Int is no option value");
     assert!(

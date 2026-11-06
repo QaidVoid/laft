@@ -55,10 +55,22 @@ pub struct RecipeRepo {
     /// Content addressed source mirrors, tried after a source's own URLs.
     pub source_mirrors: Vec<String>,
     /// The extra option sets the repository publishes, under the name of
-    /// the recipe each set builds.
-    pub publish: BTreeMap<Name, BTreeMap<String, OptionText>>,
+    /// each set, which is its identity in checks and records.
+    pub publish: BTreeMap<String, PublishSet>,
     /// The profiles the repository declares, under the profile name.
     pub profiles: BTreeMap<String, Profile>,
+}
+
+/// One extra option set a repository publishes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishSet {
+    /// The name of the set, the label of its `publish` block.
+    pub name: String,
+    /// The recipe the set builds.
+    pub recipe: Name,
+    /// The option values of the set. An option left out keeps its
+    /// declared default.
+    pub options: BTreeMap<String, OptionText>,
 }
 
 /// An ordered set of recipe repositories, lowest priority first, and the
@@ -558,19 +570,29 @@ fn descriptor(path: &Path) -> Result<RecipeRepo, Error> {
     })
 }
 
-/// The extra option sets of a descriptor, under the recipe each set
-/// builds, with every recipe name checked.
+/// The extra option sets of a descriptor, under the name of each set,
+/// with every recipe name checked.
 fn publish_sets(
     repo: &Name,
     sets: BTreeMap<String, schema::PublishSet>,
-) -> Result<BTreeMap<Name, BTreeMap<String, OptionText>>, Error> {
+) -> Result<BTreeMap<String, PublishSet>, Error> {
     let problem = |message: String| Error::Problems(vec![Problem::new("R004", message)]);
     let mut out = BTreeMap::new();
-    for (recipe, set) in sets {
-        let recipe: Name = recipe
-            .parse()
-            .map_err(|e| problem(format!("{repo} publishes {recipe}, which is invalid: {e}")))?;
-        out.insert(recipe, set.options);
+    for (name, set) in sets {
+        let recipe: Name = set.recipe.parse().map_err(|e| {
+            problem(format!(
+                "{repo} publishes the set {name} for {}, which is invalid: {e}",
+                set.recipe
+            ))
+        })?;
+        out.insert(
+            name.clone(),
+            PublishSet {
+                name,
+                recipe,
+                options: set.options,
+            },
+        );
     }
     Ok(out)
 }

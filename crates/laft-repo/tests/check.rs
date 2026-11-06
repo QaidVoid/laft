@@ -1259,7 +1259,7 @@ fn kr013_names_a_recipe_no_repository_defines() {
     fs::create_dir_all(recipes.join("recipes/hello")).expect("writable");
     fs::write(
         recipes.join("recipes.stav"),
-        "recipe_repo core {}\n\npublish ghost {\n  options {\n    tool = false\n  }\n}\n",
+        "recipe_repo core {}\n\npublish ghost-check {\n  recipe = \"ghost\"\n  options {\n    tool = false\n  }\n}\n",
     )
     .expect("writable");
     fs::write(
@@ -1388,7 +1388,7 @@ fn kr013_a_publish_block_or_profile_the_recipes_do_not_declare() {
     fs::create_dir_all(unknown.join("recipes/hello")).expect("writable");
     fs::write(
         unknown.join("recipes.stav"),
-        "recipe_repo core {}\n\npublish hello {\n  options {\n    nope = false\n  }\n}\n",
+        "recipe_repo core {}\n\npublish tooloff {\n  recipe = \"hello\"\n  options {\n    nope = false\n  }\n}\n",
     )
     .expect("writable");
     fs::write(
@@ -1409,7 +1409,7 @@ fn kr013_a_publish_block_or_profile_the_recipes_do_not_declare() {
     fs::create_dir_all(without.join("recipes/zlib")).expect("writable");
     fs::write(
         without.join("recipes.stav"),
-        "recipe_repo core {}\n\npublish zlib {\n  options {\n    tool = false\n  }\n}\n",
+        "recipe_repo core {}\n\npublish tooloff {\n  recipe = \"zlib\"\n  options {\n    tool = false\n  }\n}\n",
     )
     .expect("writable");
     fs::write(
@@ -1442,7 +1442,7 @@ fn kr013_a_publish_block_or_profile_the_recipes_do_not_declare() {
     .expect("writable");
     fs::write(
         valid.join("recipes.stav"),
-        "recipe_repo core {}\n\npublish hello {\n  options {\n    tool = false\n  }\n}\n",
+        "recipe_repo core {}\n\npublish tooloff {\n  recipe = \"hello\"\n  options {\n    tool = false\n  }\n}\n",
     )
     .expect("writable");
     let (codes, report, success) = check(&repo, &["--recipes", s(&valid)]);

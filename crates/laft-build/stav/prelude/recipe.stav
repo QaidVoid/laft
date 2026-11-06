@@ -12,8 +12,10 @@ struct Recipes {
 struct RecipeRepos {
   ## The descriptor. Block label: the repository name.
   repos: Map<Str, RecipeRepo> = {} block recipe_repo
-  ## Extra option sets the repository publishes. Block label: the recipe
-  ## the set is of. An option left out keeps its declared default.
+  ## Extra option sets the repository publishes. Block label: the name of
+  ## the set, which is also its identity in checks and records. `recipe`
+  ## names the recipe the set builds. An option left out keeps its
+  ## declared default.
   publish: Map<Str, PublishSet> = {} block publish
   ## Named option sets across many recipes, published as complete
   ## indexes. Block label: the profile name.
@@ -89,11 +91,20 @@ struct RecipeRepo {
   source_mirrors:  List<Str> = []
 }
 
-## One extra option set of one recipe, or the values of a profile for
-## one recipe. Each entry sets one option: the Bool literal of a `Bool`
-## option, or the tag of its type as a string.
+## One extra option set of one recipe. The label of its `publish` block
+## names the set.
 struct PublishSet {
-  ## The option values of the set.
+  ## The recipe the set builds.
+  recipe: Str
+  ## The option values of the set. Each entry sets one option: the Bool
+  ## literal of a `Bool` option, or the tag of its type as a string.
+  options: Map<Str, Data> = {}
+}
+
+## The option values of a profile for one recipe. Block label: the recipe
+## name. Each entry sets one option: the Bool literal of a `Bool` option,
+## or the tag of its type as a string.
+struct ProfileSet {
   options: Map<Str, Data> = {}
 }
 
@@ -101,7 +112,7 @@ struct PublishSet {
 ## name.
 struct Profile {
   ## The option values of the recipe.
-  package: Map<Str, PublishSet> = {} block package
+  package: Map<Str, ProfileSet> = {} block package
 }
 
 ## A build configuration of a package.

@@ -19,10 +19,19 @@ pub(crate) struct RecipeRepo {
     pub(crate) source_mirrors: Vec<String>,
 }
 
-/// A `publish` block or the `package` entry of a `profile` block.
+/// A `publish` block: one named extra option set for one recipe.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PublishSet {
+    pub(crate) recipe: String,
+    pub(crate) options: BTreeMap<String, crate::repo::OptionText>,
+}
+
+/// The `package` entry of a `profile` block: the option values of one
+/// recipe.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProfileSet {
     pub(crate) options: BTreeMap<String, crate::repo::OptionText>,
 }
 
@@ -30,7 +39,7 @@ pub(crate) struct PublishSet {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Profile {
-    pub(crate) package: BTreeMap<String, PublishSet>,
+    pub(crate) package: BTreeMap<String, ProfileSet>,
 }
 
 /// A `package` block.
