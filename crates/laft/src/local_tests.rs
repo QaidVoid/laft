@@ -8,6 +8,14 @@ use laft_core::{Blake3Hash, OptionValue};
 use laft_index::{Index, PublicKey, Signature};
 use laft_pkg::{Compression, Manifest, Meta, scan, write_package};
 
+/// The package `file` with its buildinfo, as `add` takes them.
+fn package_of(file: &Path, buildinfo: &Path) -> PackageFile {
+    PackageFile {
+        path: file.to_path_buf(),
+        buildinfo: buildinfo.to_path_buf(),
+    }
+}
+
 /// The metadata of one test package.
 fn meta(name: &str) -> Meta {
     Meta {
@@ -74,16 +82,43 @@ fn write_package_file(meta: &Meta, out: &Path) -> (PathBuf, PathBuf, laft_core::
     .expect("the package writes");
     fs::write(&path, &bytes).expect("writable");
     let buildinfo = out.join(format!("{}.buildinfo.json", identity.file_name()));
-    let info = serde_json::json!({
-        "format": 1,
-        "package": {"name": meta.name, "version": meta.version, "rev": meta.rev,
-            "variant": meta.variant},
-        "recipe_repos": [{"name": "core", "commit": "4be1", "dirty": false}],
-        "outputs": [{"name": meta.name, "variant": meta.variant,
-            "id": manifest.store_id(), "file": identity.file_name()}],
-    });
-    fs::write(&buildinfo, serde_json::to_vec(&info).expect("serializes")).expect("writable");
-    (path, buildinfo, manifest.store_id())
+    let id = manifest.store_id();
+    let info = laft_build::Buildinfo {
+        format: laft_build::BUILDINFO_FORMAT,
+        package: laft_build::BuiltPackage {
+            name: meta.name.clone(),
+            version: meta.version.clone(),
+            rev: meta.rev,
+            variant: meta.variant,
+        },
+        build_key: Blake3Hash::of(b"key"),
+        plan_hash: Blake3Hash::of(b"plan"),
+        recipe_repos: Vec::new(),
+        sources: Vec::new(),
+        vendors: Vec::new(),
+        patches: Vec::new(),
+        toolchain_epoch: 1,
+        abi_epoch: 0,
+        build_view: Vec::new(),
+        env: Default::default(),
+        outputs: vec![laft_build::Output {
+            name: meta.name.clone(),
+            variant: meta.variant,
+            id,
+            file: identity.file_name(),
+        }],
+        abi: Default::default(),
+        host: laft_build::BuildinfoHost {
+            laft_build: "0.1.0".into(),
+            kernel: "test".into(),
+            jobs: 1,
+            started: "2026-01-01T00:00:00Z".parse().expect("a timestamp"),
+            finished: "2026-01-01T00:00:01Z".parse().expect("a timestamp"),
+        },
+        bootstrap: false,
+    };
+    fs::write(&buildinfo, info.to_json()).expect("writable");
+    (path, buildinfo, id)
 }
 
 #[test]
@@ -151,10 +186,10 @@ fn an_added_package_is_listed_by_a_signed_index() {
     let dir = laft_test::tempdir();
     let out = dir.path().join("build/out");
     fs::create_dir_all(&out).expect("writable");
-    let (file, _buildinfo, id) = write_package_file(&meta("mesa"), &out);
+    let (file, buildinfo, id) = write_package_file(&meta("mesa"), &out);
     let local = Local::of(&dir.path().join("root"));
     local
-        .add(std::slice::from_ref(&file))
+        .add(&[package_of(&file, &buildinfo)])
         .expect("the package is added");
     let index = local.index().expect("readable").expect("an index");
     assert_eq!(index.packages.len(), 1);
@@ -197,11 +232,20 @@ fn adding_a_package_again_adds_nothing() {
     let dir = laft_test::tempdir();
     let out = dir.path().join("build/out");
     fs::create_dir_all(&out).expect("writable");
-    let (file, _, _) = write_package_file(&meta("mesa"), &out);
+    let (file, buildinfo, _) = write_package_file(&meta("mesa"), &out);
     let local = Local::of(&dir.path().join("root"));
-    assert_eq!(local.add(std::slice::from_ref(&file)).expect("added"), 1);
     assert_eq!(
-        local.add(std::slice::from_ref(&file)).expect("added again"),
+        local
+            .add(&[package_of(&file, &buildinfo)])
+            .expect("added")
+            .len(),
+        1
+    );
+    assert_eq!(
+        local
+            .add(&[package_of(&file, &buildinfo)])
+            .expect("added again")
+            .len(),
         0
     );
     let index = local.index().expect("readable").expect("an index");
@@ -219,6 +263,128 @@ fn adding_a_package_again_adds_nothing() {
 }
 
 #[test]
+fn a_symlink_at_a_package_path_is_refused() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("build/out");
+    fs::create_dir_all(&out).expect("writable");
+    let (file, _, _) = write_package_file(&meta("mesa"), &out);
+    let link = out.join("linked.lpkg");
+    std::os::unix::fs::symlink(&file, &link).expect("the symlink is created");
+    let local = Local::of(&dir.path().join("root"));
+    let error = local
+        .add(&[PackageFile {
+            path: link.clone(),
+            buildinfo: link,
+        }])
+        .expect_err("a symlinked package path is refused");
+    assert!(error.message.contains("symlink"), "{}", error.message);
+    assert!(local.index().expect("readable").is_none());
+}
+
+#[test]
+fn a_package_file_with_setuid_mode_lands_as_0644_in_the_pool() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("build/out");
+    fs::create_dir_all(&out).expect("writable");
+    let (file, buildinfo, id) = write_package_file(&meta("mesa"), &out);
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o4755)).expect("chmod");
+    let local = Local::of(&dir.path().join("root"));
+    local
+        .add(&[package_of(&file, &buildinfo)])
+        .expect("the package is added");
+    let pool = dir
+        .path()
+        .join("root")
+        .join("laft/local/pool")
+        .join(format!("{id}.lpkg"));
+    assert_eq!(
+        fs::metadata(&pool)
+            .expect("the pool file exists")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o644,
+        "the pool file has the mode of the source"
+    );
+    let info = dir
+        .path()
+        .join("root")
+        .join("laft/local/buildinfo")
+        .join(format!("{id}.json"));
+    assert_eq!(
+        fs::metadata(&info)
+            .expect("the buildinfo exists")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o644,
+        "the published buildinfo has another mode"
+    );
+    assert_eq!(
+        fs::read(&info).expect("readable"),
+        fs::read(&buildinfo).expect("readable"),
+        "the published buildinfo is not the checked file"
+    );
+}
+
+#[test]
+fn a_fifo_at_a_package_path_is_refused_without_hanging() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("build/out");
+    fs::create_dir_all(&out).expect("writable");
+    let (file, _, _) = write_package_file(&meta("mesa"), &out);
+    let fifo = out.join(file.file_name().expect("a file name"));
+    fs::remove_file(&fifo).expect("removed");
+    rustix::fs::mkfifoat(
+        rustix::fs::CWD,
+        &fifo,
+        rustix::fs::Mode::from_raw_mode(0o600),
+    )
+    .expect("the fifo is created");
+    let local = Local::of(&dir.path().join("root"));
+    let (done, received) = std::sync::mpsc::channel();
+    let root = dir.path().join("root");
+    let path = fifo.clone();
+    std::thread::spawn(move || {
+        let local = Local::of(&root);
+        done.send(
+            local
+                .add(&[PackageFile {
+                    path: path.clone(),
+                    buildinfo: path,
+                }])
+                .is_err(),
+        )
+        .expect("sending");
+    });
+    let refused = received
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("add returns instead of hanging on the fifo");
+    assert!(refused, "the fifo is refused");
+    assert!(local.index().expect("readable").is_none());
+}
+
+#[test]
+fn a_buildinfo_naming_other_outputs_is_refused() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("build/out");
+    fs::create_dir_all(&out).expect("writable");
+    let (file, buildinfo, id) = write_package_file(&meta("mesa"), &out);
+    let other = laft_core::StoreId::from_manifest_hash(&Blake3Hash::of(b"another package"));
+    let mut info = laft_build::Buildinfo::from_json(&fs::read(&buildinfo).expect("readable"))
+        .expect("a buildinfo");
+    info.outputs[0].id = other;
+    fs::write(&buildinfo, info.to_json()).expect("writable");
+    let local = Local::of(&dir.path().join("root"));
+    let error = local
+        .add(&[package_of(&file, &buildinfo)])
+        .expect_err("a buildinfo with other outputs is refused");
+    assert!(error.message.contains(&id.to_string()), "{}", error.message);
+    assert!(local.index().expect("readable").is_none());
+}
+
+#[test]
 fn a_corrupt_package_is_refused_and_nothing_is_added() {
     let dir = laft_test::tempdir();
     let out = dir.path().join("build/out");
@@ -230,7 +396,10 @@ fn a_corrupt_package_is_refused_and_nothing_is_added() {
     fs::write(&file, &bytes).expect("writable");
     let local = Local::of(&dir.path().join("root"));
     let error = local
-        .add(&[file])
+        .add(&[PackageFile {
+            path: file.clone(),
+            buildinfo: file,
+        }])
         .expect_err("a corrupt package is refused");
     assert!(error.message.contains("mesa"), "{}", error.message);
     assert!(local.index().expect("readable").is_none());

@@ -1,16 +1,65 @@
 //! Filesystem helpers shared by the store, assembly, transactions and GC.
 
+use std::fmt;
 use std::fs::{self, DirBuilder, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt, symlink};
 use std::path::Path;
 
-use rustix::fs::{AtFlags, CWD, Timespec, Timestamps};
+use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags, Timespec, Timestamps};
+use rustix::io::Errno;
 
 use crate::error::{Result, corrupt, io};
 
 /// The mode of every directory in a store entry, view or generation.
 pub(crate) const SEALED_DIR: u32 = 0o555;
+
+/// Reads at most `max` bytes of the regular file `path`. The file is
+/// opened without following a symlink at `path` and without blocking on a
+/// FIFO, so a swapped path can neither point the read outside the tree,
+/// hang the caller, nor exhaust its memory. A symlink, a non-regular file,
+/// or a file larger than `max` bytes is refused.
+///
+/// # Errors
+///
+/// Fails when the file cannot be opened or read, with
+/// [`io::ErrorKind::InvalidInput`] when `path` is a symlink or not a
+/// regular file, and with [`io::ErrorKind::InvalidData`] when it is larger
+/// than `max`.
+pub fn read_regular(path: &Path, max: u64) -> io::Result<Vec<u8>> {
+    let file = rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    )
+    .map_err(|errno| match errno {
+        Errno::LOOP => refused(io::ErrorKind::InvalidInput, "is a symlink"),
+        errno => io::Error::from(errno),
+    })?;
+    let stat = rustix::fs::fstat(&file).map_err(io::Error::from)?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+        return Err(refused(
+            io::ErrorKind::InvalidInput,
+            "is not a regular file",
+        ));
+    }
+    let size = u64::try_from(stat.st_size).unwrap_or(u64::MAX);
+    if size > max {
+        return Err(refused(
+            io::ErrorKind::InvalidData,
+            format!("is {size} bytes, over the limit of {max} bytes"),
+        ));
+    }
+    let mut bytes = Vec::new();
+    File::from(file)
+        .take(max + 1)
+        .read_to_end(&mut bytes)
+        .map(|_| bytes)
+}
+
+fn refused(kind: io::ErrorKind, reason: impl fmt::Display) -> io::Error {
+    io::Error::new(kind, reason.to_string())
+}
 
 /// Writes `bytes` to `path` so that a crash leaves either the old file or
 /// the new one: a temporary file in the same directory is written, synced

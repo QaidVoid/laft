@@ -1,17 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufReader};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use laft_core::{Blake3Hash, Name, StoreId, system_gid, system_uid};
 use laft_pkg::{Entry, Manifest, Meta, Reader};
-use rustix::fs::{FileType, Mode, OFlags};
-use rustix::io::Errno;
 
 use crate::error::{Error, Result, corrupt, io};
+use crate::fsx::read_regular;
 use crate::{PackageInput, PackageRecord, fsx, view};
+
+/// The most bytes a manifest or metadata file of one entry may take.
+const ENTRY_MAX_BYTES: u64 = 64 << 20;
 
 /// The directory inside an entry that holds its documents.
 const DOCS_DIR: &str = ".laft";
@@ -185,7 +187,7 @@ impl Store {
     /// when the entry's directory name is not the one its manifest yields.
     pub fn manifest(&self, dir_name: &str) -> Result<Manifest> {
         let path = self.entry_path(dir_name)?.join(MANIFEST_PATH);
-        let bytes = fs::read(&path).map_err(|e| missing(dir_name, &path, e))?;
+        let bytes = read_entry_file(dir_name, &path)?;
         let manifest = Manifest::from_json(&bytes)?;
         if entry_dir_name(&manifest) != dir_name {
             return Err(corrupt(&path, "the manifest belongs to a different entry"));
@@ -213,7 +215,7 @@ impl Store {
     /// Reads the metadata of entry `dir_name`, whose manifest is `manifest`.
     fn meta_of(&self, dir_name: &str, manifest: &Manifest) -> Result<Meta> {
         let path = self.path(dir_name).join(META_PATH);
-        let bytes = fs::read(&path).map_err(io(&path))?;
+        let bytes = read_regular(&path, ENTRY_MAX_BYTES).map_err(io(&path))?;
         if Blake3Hash::of(&bytes) != *manifest.meta_hash() {
             return Err(corrupt(
                 &path,
@@ -398,24 +400,27 @@ pub(crate) fn entry_dir_name(manifest: &Manifest) -> String {
 /// blocking on a FIFO, so a corrupt entry can neither point the read
 /// outside the store nor hang the add.
 fn read_manifest(path: &Path) -> Result<Vec<u8>> {
-    let file = rustix::fs::open(
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-        Mode::empty(),
-    )
-    .map_err(|errno| match errno {
-        Errno::NOENT => corrupt(path, "the entry has no manifest"),
-        Errno::LOOP => corrupt(path, "the manifest is a symlink"),
-        errno => io(path)(errno),
-    })?;
-    let stat = rustix::fs::fstat(&file).map_err(io(path))?;
-    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
-        return Err(corrupt(path, "the manifest is not a regular file"));
+    match read_regular(path, ENTRY_MAX_BYTES) {
+        Ok(bytes) => Ok(bytes),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            Err(corrupt(path, "the entry has no manifest"))
+        }
+        Err(e) if e.kind() == io::ErrorKind::InvalidInput => Err(corrupt(path, e)),
+        Err(e) => Err(io(path)(e)),
     }
-    let mut file = File::from(file);
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(io(path))?;
-    Ok(bytes)
+}
+
+/// Reads a file of entry `dir_name` at `path` without following a symlink
+/// and without blocking on a FIFO, bounded by [`ENTRY_MAX_BYTES`]. A
+/// missing file is a missing entry, and a symlink or another non-regular
+/// file is a corrupt entry.
+fn read_entry_file(dir_name: &str, path: &Path) -> Result<Vec<u8>> {
+    match read_regular(path, ENTRY_MAX_BYTES) {
+        Ok(bytes) => Ok(bytes),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Err(Error::MissingEntry(dir_name.into())),
+        Err(e) if e.kind() == io::ErrorKind::InvalidInput => Err(corrupt(path, e)),
+        Err(e) => Err(io(path)(e)),
+    }
 }
 
 fn missing(dir_name: &str, path: &Path, e: io::Error) -> Error {

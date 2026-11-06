@@ -36,7 +36,7 @@ use std::process::Command;
 use laft_build::{BuildRoot, Builder, Mode, Repos, SourceCache};
 use laft_core::{Blake3Hash, Name, OptionConstraint, OptionValue, PkgRef};
 
-use crate::env::{Env, RepoIndex};
+use crate::env::{ARCH, Env, RepoIndex};
 use crate::failure::{Failure, exit};
 use crate::local::{Local, write_new};
 use crate::resolve::{SnapshotMap, SnapshotSource};
@@ -642,7 +642,7 @@ impl<'a> Run<'a> {
         }
         files.sort();
         let local = Local::of(self.env.root.path());
-        local.add(&files)?;
+        local.add(&package_files(&files))?;
         let mut names: Vec<Name> = Vec::new();
         for request in requests {
             if !names.contains(&request.name) {
@@ -708,6 +708,37 @@ fn seed_arguments(root: &Path, files: &[&Path]) -> Vec<String> {
     ];
     arguments.extend(files.iter().map(|f| f.to_string_lossy().into_owned()));
     arguments
+}
+
+/// The package files of `paths`, each with the buildinfo written next to
+/// it: `<file>.buildinfo.json`, or the one laft-build writes, which is
+/// named without the architecture.
+fn package_files(paths: &[PathBuf]) -> Vec<crate::local::PackageFile> {
+    paths
+        .iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_owned();
+            let stem = name.strip_suffix(".lpkg").unwrap_or(&name);
+            let without_arch = stem
+                .strip_suffix(&format!(".{ARCH}"))
+                .unwrap_or(stem)
+                .to_owned();
+            let sibling = path.with_file_name(format!("{name}.buildinfo.json"));
+            let buildinfo = if sibling.is_file() {
+                sibling
+            } else {
+                path.with_file_name(format!("{without_arch}.buildinfo.json"))
+            };
+            crate::local::PackageFile {
+                path: path.clone(),
+                buildinfo,
+            }
+        })
+        .collect()
 }
 
 /// The groups in an order in which every group comes after the groups

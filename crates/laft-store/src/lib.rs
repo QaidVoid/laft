@@ -53,6 +53,7 @@ mod test_support;
 
 pub use activation::Activation;
 pub use error::{Conflict, Error, Result};
+pub use fsx::read_regular;
 pub use gc::{Decision, GcPlan, GcPolicy, Subject, plan_gc, remove_generations};
 pub use generation::{
     CarriedModule, CarryOver, ConfigFile, ConfigRecord, EtcRecord, Generation, GenerationInput,

@@ -96,8 +96,20 @@ impl Db {
     }
 }
 
+/// Reads the record at `path`, through at most the one symlink the
+/// database itself writes (`latest/<item>`): the target is opened without
+/// following another symlink, as a regular file of at most
+/// [`RECORD_MAX_BYTES`], so a swapped link can neither point the read
+/// outside the tree, hang the caller, nor exhaust its memory.
 fn read(path: &Path) -> Result<Option<Stored>, BuildError> {
-    match fs::read(path) {
+    let direct = match fs::read_link(path) {
+        Ok(link) => path.parent().unwrap_or(Path::new(".")).join(link),
+        Err(e) if e.kind() == io::ErrorKind::InvalidInput => path.to_path_buf(),
+        // The item has no latest build yet.
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(io(path)(e)),
+    };
+    match laft_store::read_regular(&direct, RECORD_MAX_BYTES) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map(Some)
             .map_err(|e| BuildError::problem("B044", format!("{}: {e}", path.display()))),
@@ -105,6 +117,9 @@ fn read(path: &Path) -> Result<Option<Stored>, BuildError> {
         Err(e) => Err(io(path)(e)),
     }
 }
+
+/// The most bytes a build record may take.
+const RECORD_MAX_BYTES: u64 = 16 << 20;
 
 #[cfg(test)]
 #[path = "db_tests.rs"]

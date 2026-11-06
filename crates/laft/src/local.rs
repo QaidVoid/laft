@@ -13,14 +13,18 @@
 //! and the store id is recomputed from the manifest. The step that adds
 //! results runs as root; the builds themselves never do.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::BufReader;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::process;
 
-use laft_core::{Name, Timestamp};
+use laft_build::Buildinfo;
+use laft_core::{Name, StoreId, Timestamp, Variant};
 use laft_index::{Index, PublicKey, Signature};
-use laft_pkg::Reader;
+use laft_pkg::{Meta, Reader};
+use laft_store::read_regular;
 use minisign::{KeyPair, SecretKey, SecretKeyBox};
 
 use crate::env::{ARCH, RepoIndex};
@@ -34,6 +38,33 @@ const KEEP_SNAPSHOTS: usize = 5;
 
 /// The suffix of a signature file.
 const SIG: &str = ".minisig";
+
+/// The most bytes a package file may take when it is added.
+const PACKAGE_MAX_BYTES: u64 = 4 << 30;
+
+/// The most bytes a buildinfo file may take when it is added.
+const BUILDINFO_MAX_BYTES: u64 = 4 << 20;
+
+/// A package file with the buildinfo of the build that made it.
+#[derive(Debug, Clone)]
+pub(crate) struct PackageFile {
+    /// The package file.
+    pub(crate) path: PathBuf,
+    /// The buildinfo file, which names the outputs of the build.
+    pub(crate) buildinfo: PathBuf,
+}
+
+/// The identity and option values of a package that entered the local
+/// repository.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AddedPackage {
+    /// The package.
+    pub(crate) name: Name,
+    /// The variant.
+    pub(crate) variant: Variant,
+    /// The recorded option values.
+    pub(crate) options: BTreeMap<String, laft_core::OptionValue>,
+}
 
 /// The local repository of a system root.
 #[derive(Debug, Clone)]
@@ -179,25 +210,29 @@ impl Local {
         read_optional(&self.entry())
     }
 
-    /// Verifies every package file of `packages` and adds the new ones to
-    /// the pool and to a new signed index generation. A package the index
+    /// Verifies every package of `packages` and adds the new ones to the
+    /// pool and to a new signed index generation. A package the index
     /// already lists is left as it is, and so is its file in the pool.
+    /// The package file and its buildinfo are opened without following a
+    /// symlink and are size-capped, the buildinfo must name the package's
+    /// outputs, and the pool gets the bytes that were checked, with mode
+    /// `0644`.
     ///
-    /// Returns how many packages were added.
+    /// Returns what was added.
     ///
     /// # Errors
     ///
-    /// Fails when a file is not a valid package, when the same package is
-    /// listed with another store id, or when the index or the key cannot
-    /// be used.
-    pub(crate) fn add(&self, packages: &[PathBuf]) -> Result<usize, Failure> {
+    /// Fails when a file is not a valid package, when its buildinfo does
+    /// not name its outputs, when the same package is listed with another
+    /// store id, or when the index or the key cannot be used.
+    pub(crate) fn add(&self, packages: &[PackageFile]) -> Result<Vec<AddedPackage>, Failure> {
         let mut index = self.index()?.unwrap_or_else(empty_index);
-        let mut staged = Vec::new();
-        for path in packages {
-            let bytes =
-                fs::read(path).map_err(|e| self.failed(format!("{}: {e}", path.display())))?;
+        let mut staged: Vec<(StoreId, Vec<u8>, Meta, Vec<u8>)> = Vec::new();
+        for package in packages {
+            let bytes = read_regular(&package.path, PACKAGE_MAX_BYTES)
+                .map_err(|e| self.failed(format!("{}: {e}", package.path.display())))?;
             let reader = Reader::new(BufReader::new(bytes.as_slice()))
-                .map_err(|e| self.failed(format!("{}: {e}", path.display())))?;
+                .map_err(|e| self.failed(format!("{}: {e}", package.path.display())))?;
             let meta = reader.meta().clone();
             let id = reader.manifest().store_id();
             let same = |e: &laft_index::IndexEntry| {
@@ -222,37 +257,36 @@ impl Local {
                 }
                 None => {}
             }
-            staged.push((
-                path.clone(),
-                id,
-                bytes.len(),
-                laft_core::Blake3Hash::of(&bytes),
-                meta,
-            ));
+            let info = self.checked_buildinfo(&package.buildinfo, &meta, id)?;
+            staged.push((id, bytes, meta, info));
         }
-        let added = staged.len();
-        for (path, id, size, blake3, meta) in &staged {
+        let added = staged
+            .iter()
+            .map(|(_, _, meta, _)| AddedPackage {
+                name: meta.name.clone(),
+                variant: meta.variant,
+                options: meta.options.clone(),
+            })
+            .collect::<Vec<_>>();
+        for (id, bytes, meta, info) in &staged {
             let pool = self.pool(*id);
             fs::create_dir_all(pool.parent().expect("the pool has a parent"))
                 .map_err(|e| self.failed(format!("{}: {e}", pool.display())))?;
-            fs::copy(path, &pool).map_err(|e| self.failed(format!("{}: {e}", path.display())))?;
-            if let Some(source) = buildinfo_of(path) {
-                let target = self.repo.join(format!("buildinfo/{id}.json"));
-                fs::create_dir_all(target.parent().expect("buildinfo has a parent"))
-                    .map_err(|e| self.failed(format!("{}: {e}", target.display())))?;
-                fs::copy(&source, &target)
-                    .map_err(|e| self.failed(format!("{}: {e}", source.display())))?;
-            }
+            write_file(&pool, bytes, 0o644)?;
+            let target = self.repo.join(format!("buildinfo/{id}.json"));
+            fs::create_dir_all(target.parent().expect("buildinfo has a parent"))
+                .map_err(|e| self.failed(format!("{}: {e}", target.display())))?;
+            write_file(&target, info, 0o644)?;
             index.packages.push(laft_index::IndexEntry {
                 meta: meta.clone(),
                 id: *id,
                 file: format!("pool/{id}.lpkg"),
-                size: *size as u64,
-                blake3: *blake3,
+                size: bytes.len() as u64,
+                blake3: laft_core::Blake3Hash::of(bytes),
             });
         }
-        if added == 0 {
-            return Ok(0);
+        if staged.is_empty() {
+            return Ok(added);
         }
         index.packages.sort_by(|a, b| {
             (&a.meta.name, &a.meta.version, a.meta.rev, a.meta.variant).cmp(&(
@@ -268,6 +302,29 @@ impl Local {
             Timestamp::from_secs(index.timestamp.as_secs() + laft_index::MAX_VALIDITY_SECS);
         self.write(index)?;
         Ok(added)
+    }
+
+    /// Reads the buildinfo at `path`, parses it, and checks that it names
+    /// the package `meta` with the store id `id` among its outputs.
+    /// Returns its exact bytes, for the published copy.
+    fn checked_buildinfo(&self, path: &Path, meta: &Meta, id: StoreId) -> Result<Vec<u8>, Failure> {
+        let bytes = read_regular(path, BUILDINFO_MAX_BYTES)
+            .map_err(|e| self.failed(format!("{}: {e}", path.display())))?;
+        let info = Buildinfo::from_json(&bytes)
+            .map_err(|e| self.failed(format!("{}: {e}", path.display())))?;
+        let named = info
+            .outputs
+            .iter()
+            .any(|o| o.name == meta.name && o.variant == meta.variant && o.id == id);
+        if !named {
+            return Err(self.failed(format!(
+                "{} does not name {} {} with the store id {id}",
+                path.display(),
+                meta.name,
+                meta.version
+            )));
+        }
+        Ok(bytes)
     }
 
     /// The path of the entry point of the local index.
@@ -450,13 +507,6 @@ fn public_of(secret: &SecretKey) -> Result<minisign::PublicKey, Failure> {
         .map_err(|e| Failure::new(exit::FAILURE, format!("the local key: {e}")))
 }
 
-/// The buildinfo file written next to the package `path`, when it exists.
-fn buildinfo_of(path: &Path) -> Option<PathBuf> {
-    let name = path.file_name()?.to_string_lossy().into_owned();
-    let buildinfo = path.with_file_name(format!("{name}.buildinfo.json"));
-    buildinfo.is_file().then_some(buildinfo)
-}
-
 /// The path of the signature file of `path`.
 fn signed(path: &Path) -> PathBuf {
     PathBuf::from(format!("{}{SIG}", path.display()))
@@ -482,28 +532,31 @@ fn empty_index() -> Index {
     }
 }
 
-/// Writes `bytes` to `path`, which appears complete or not at all, with
-/// mode `0o644`.
+/// Writes `bytes` to `path` with the mode `mode`, creating its parent
+/// directories. The file appears complete or not at all: it is written to
+/// a temporary file only this process owns, with mode `0600` until the
+/// final mode is set, then renamed into place.
 pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
     write_file(path, bytes, 0o644)
 }
 
-/// Writes `bytes` to `path` with the mode `mode`, creating its parent
-/// directories.
 fn write_file(path: &Path, bytes: &[u8], mode: u32) -> Result<(), Failure> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)
             .map_err(|e| Failure::new(exit::FAILURE, format!("{}: {e}", dir.display())))?;
     }
-    let tmp = path.with_file_name(format!(
-        ".{}.laft-tmp",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-    ));
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    let tmp = path.with_file_name(format!(".{name}.{}.laft-tmp", process::id()));
     let write = || -> std::io::Result<()> {
         {
-            let mut file = fs::File::create(&tmp)?;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp)?;
             std::io::Write::write_all(&mut file, bytes)?;
             file.set_permissions(fs::Permissions::from_mode(mode))?;
             file.sync_all()?;
