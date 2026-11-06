@@ -200,17 +200,67 @@ fn entry(meta: laft_pkg::Meta, id: &str) -> laft_index::IndexEntry {
 }
 
 #[test]
-fn buildables_take_the_newest_entry_and_the_higher_priority_breaks_a_tie() {
-    let low = repo_index(
-        "low",
-        1,
+fn buildables_come_from_the_repository_that_owns_the_name() {
+    // The overlay owns mesa: the highest priority that lists it, even
+    // though core publishes a newer version with a snapshot.
+    let overlay = repo_index(
+        "overlay",
+        10,
         vec![entry(meta_of("mesa", "25.1.0", &[]), "low")],
+        BTreeMap::from([(
+            "mesa".parse().expect("a name"),
+            vec![bool_decl("llvm", false)],
+        )]),
+        true,
+    );
+    let core = repo_index(
+        "core",
+        0,
+        vec![entry(meta_of("mesa", "25.3.0", &[]), "high")],
         BTreeMap::from([(
             "mesa".parse().expect("a name"),
             vec![bool_decl("llvm", true)],
         )]),
         true,
     );
+    let found = buildables(&[overlay, core]).0;
+    assert_eq!(found.len(), 1);
+    let mesa = &found[0];
+    assert_eq!(mesa.version.to_string(), "25.1.0");
+    assert_eq!(mesa.rev, 1);
+    assert_eq!(mesa.variant, Variant::default());
+    assert_eq!(
+        mesa.defaults.get("llvm"),
+        Some(&laft_core::OptionValue::Bool(false))
+    );
+}
+
+#[test]
+fn a_name_owned_by_a_repository_without_a_snapshot_is_not_buildable() {
+    // bare owns mesa and publishes no snapshot, so no repository builds
+    // it, whatever the lower priority repositories carry.
+    let bare = repo_index(
+        "bare",
+        7,
+        vec![entry(meta_of("mesa", "25.3.0", &[]), "bare")],
+        BTreeMap::new(),
+        false,
+    );
+    let high = repo_index(
+        "high",
+        5,
+        vec![entry(meta_of("mesa", "25.2.0", &[]), "high")],
+        BTreeMap::from([(
+            "mesa".parse().expect("a name"),
+            vec![bool_decl("llvm", true)],
+        )]),
+        true,
+    );
+    assert!(buildables(&[high, bare]).0.is_empty());
+}
+
+#[test]
+fn a_priority_tie_gives_the_name_to_the_greater_repository_name() {
     let high = repo_index(
         "high",
         5,
@@ -221,34 +271,48 @@ fn buildables_take_the_newest_entry_and_the_higher_priority_breaks_a_tie() {
         )]),
         true,
     );
-    let no_snapshot = repo_index(
-        "bare",
-        7,
-        vec![entry(meta_of("mesa", "25.3.0", &[]), "bare")],
-        BTreeMap::new(),
-        false,
-    );
     let twin = repo_index(
         "twin",
         5,
-        vec![entry(meta_of("mesa", "25.2.0", &[]), "high")],
+        vec![entry(meta_of("mesa", "25.1.0", &[]), "low")],
         BTreeMap::from([(
             "mesa".parse().expect("a name"),
             vec![bool_decl("llvm", true)],
         )]),
         true,
     );
-    let found = buildables(&[low, no_snapshot, high, twin]).0;
+    let found = buildables(&[high, twin]).0;
     assert_eq!(found.len(), 1);
-    let mesa = &found[0];
-    assert_eq!(mesa.name.as_str(), "mesa");
-    assert_eq!(mesa.version.to_string(), "25.2.0");
-    assert_eq!(mesa.rev, 1);
-    assert_eq!(mesa.variant, Variant::default());
+    // twin owns mesa: the same priority, the greater name.
+    assert_eq!(found[0].version.to_string(), "25.1.0");
     assert_eq!(
-        mesa.defaults.get("llvm"),
+        found[0].defaults.get("llvm"),
         Some(&laft_core::OptionValue::Bool(true))
     );
+}
+
+#[test]
+fn the_owner_contributes_its_newest_entry() {
+    let core = repo_index(
+        "core",
+        1,
+        vec![
+            entry(meta_of("mesa", "25.1.0", &[]), "low"),
+            entry(
+                laft_pkg::Meta {
+                    rev: 2,
+                    ..meta_of("mesa", "25.2.0", &[])
+                },
+                "high",
+            ),
+        ],
+        BTreeMap::new(),
+        true,
+    );
+    let found = buildables(&[core]).0;
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].version.to_string(), "25.2.0");
+    assert_eq!(found[0].rev, 2);
 }
 
 #[test]

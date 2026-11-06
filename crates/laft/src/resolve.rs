@@ -117,25 +117,45 @@ pub(crate) struct SnapshotSource {
 /// variant.
 pub(crate) type SnapshotMap = BTreeMap<(Name, Variant), SnapshotSource>;
 
-/// Only a repository that publishes a snapshot contributes. The newest
-/// entry wins for a name and variant; a tie goes to the repository with
-/// the higher priority, then to the greater name, as the option
-/// declarations do. The declared defaults of the winning repository are
-/// the values a build starts from.
+/// Only a repository that publishes a snapshot contributes. The buildable
+/// of a name comes from the repository that owns it: the highest
+/// priority that lists the name, ties by the greater repository name, as
+/// the option declarations do. An owner without a snapshot leaves the
+/// name to no buildable at all, whatever lower priorities carry. Within
+/// the owner, the newest entry wins. The declared defaults of the owner
+/// are the values a build starts from.
 ///
 /// The second value maps every buildable name and variant to the recipe
 /// snapshot that would build it, which [`crate::builds`] fetches and
 /// unpacks.
 pub(crate) fn buildables(indexes: &[RepoIndex]) -> (Vec<Buildable>, SnapshotMap) {
-    let mut by_priority: Vec<&RepoIndex> = indexes
-        .iter()
-        .filter(|repo| repo.accepted.index.recipes.is_some())
-        .collect();
-    by_priority.sort_by_key(|repo| (repo.repo.priority, repo.name.clone()));
+    let mut by_priority: Vec<&RepoIndex> = indexes.iter().collect();
+    by_priority.sort_by_key(|repo| {
+        (
+            std::cmp::Reverse(repo.repo.priority),
+            std::cmp::Reverse(repo.name.clone()),
+        )
+    });
+    let mut owner: BTreeMap<&laft_core::Name, &RepoIndex> = BTreeMap::new();
     let mut newest: BTreeMap<(Name, Variant), (&laft_index::IndexEntry, &RepoIndex)> =
         BTreeMap::new();
-    for repo in by_priority {
+    for repo in &by_priority {
         for entry in &repo.accepted.index.packages {
+            match owner.entry(&entry.meta.name) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(repo);
+                }
+                std::collections::btree_map::Entry::Occupied(slot)
+                    if slot.get().name != repo.name =>
+                {
+                    continue;
+                }
+                std::collections::btree_map::Entry::Occupied(_) => {}
+            }
+            // The owner builds the name only when it publishes a snapshot.
+            if repo.accepted.index.recipes.is_none() {
+                continue;
+            }
             fn rank(e: &laft_index::IndexEntry) -> (&laft_core::Version, u32) {
                 (&e.meta.version, e.meta.rev)
             }
