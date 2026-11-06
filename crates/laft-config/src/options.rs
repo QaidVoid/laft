@@ -395,23 +395,17 @@ fn origin_of(checked: &stav::Checked, evaluated: &Evaluated, path: &AttrPath) ->
 fn complete(contributions: Contributions, options: &IndexOptions) -> OptionValues {
     let mut contributions = contributions;
     for (pkg, values) in &options.profile {
-        let fixed = &contributions.fixed.get(pkg);
         let entry = contributions.preferred.entry(pkg.clone()).or_default();
         for (opt, value) in values {
-            if !fixed.is_some_and(|f| f.contains_key(opt)) {
-                entry.entry(opt.clone()).or_insert_with(|| value.clone());
-            }
+            entry.entry(opt.clone()).or_insert_with(|| value.clone());
         }
     }
     for (pkg, decls) in &options.options {
-        let fixed = &contributions.fixed.get(pkg);
         let entry = contributions.preferred.entry(pkg.clone()).or_default();
         for decl in decls {
-            if !fixed.is_some_and(|f| f.contains_key(&decl.name)) {
-                entry
-                    .entry(decl.name.clone())
-                    .or_insert_with(|| decl.default.clone());
-            }
+            entry
+                .entry(decl.name.clone())
+                .or_insert_with(|| decl.default.clone());
         }
     }
     OptionValues {

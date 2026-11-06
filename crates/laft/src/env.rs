@@ -645,6 +645,13 @@ fn as_seen_from(root: &Path, loaded: &mut Loaded) {
     for request in config.packages.iter_mut().chain(views) {
         inside(&mut request.origin);
     }
+    for view in loaded.options.values_mut() {
+        for settings in view.fixed.values_mut() {
+            for setting in settings.values_mut() {
+                inside(&mut setting.origin);
+            }
+        }
+    }
 }
 
 /// The path `path`, or a location that starts with one, as the system

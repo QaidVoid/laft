@@ -233,9 +233,11 @@ fn values_collect_fixed_preferred_and_profile_contributions() {
         OptionValue::Tag("amd".to_owned()),
         "the profile of the index is preferred"
     );
-    assert!(
-        !system.preferred[&name].contains_key("llvm"),
-        "a fixed value has no preferred value beside it"
+    assert_eq!(
+        system.preferred[&name]["llvm"],
+        OptionValue::Bool(true),
+        "the declared default stays preferred beside a fixed value, so \
+         the fixed setting can be explained as a deviation"
     );
 }
 
@@ -268,8 +270,9 @@ fn values_prefer_nothing_a_fixed_value_already_holds() {
     );
     let system = &values[&"system".parse::<Name>().expect("a name")];
     assert_eq!(system.fixed[&name]["llvm"].value, OptionValue::Bool(false));
-    assert!(
-        !system.preferred[&name].contains_key("llvm"),
-        "a fixed value has no preferred value beside it"
+    assert_eq!(
+        system.preferred[&name]["llvm"],
+        OptionValue::Bool(false),
+        "the profile's value stays preferred beside a fixed one"
     );
 }

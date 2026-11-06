@@ -220,7 +220,11 @@ fn profile_values_are_preferred_and_lose_to_the_configuration() {
     let loaded = load("package.mesa.llvm = false", &options).expect("loads");
     let values = &loaded.options[&"system".parse::<Name>().expect("a name")];
     assert_eq!(values.fixed[mesa]["llvm"].value, OptionValue::Bool(false));
-    assert!(!values.preferred[mesa].contains_key("llvm"));
+    assert_eq!(
+        values.preferred[mesa]["llvm"],
+        OptionValue::Bool(false),
+        "the profile's value stays preferred beside the fixed value"
+    );
 }
 
 #[test]
@@ -245,7 +249,11 @@ fn every_view_resolves_from_the_system_and_merges_over_it() {
         web.fixed[mesa]["vulkan"].value,
         OptionValue::Tag("amd".to_owned())
     );
-    assert!(!web.preferred[mesa].contains_key("vulkan"));
+    assert_eq!(
+        web.preferred[mesa]["vulkan"],
+        OptionValue::Tag("all".to_owned()),
+        "the declared default stays preferred beside the fixed value"
+    );
     let bare = &loaded.options[&"bare".parse::<Name>().expect("a name")];
     assert_eq!(
         bare.fixed[mesa]["vulkan"].value,
@@ -253,7 +261,11 @@ fn every_view_resolves_from_the_system_and_merges_over_it() {
         "inherit = none governs package requests, not option values"
     );
     assert_eq!(bare.preferred[mesa]["llvm"], OptionValue::Bool(false));
-    assert!(!bare.preferred[mesa].contains_key("vulkan"));
+    assert_eq!(
+        bare.preferred[mesa]["vulkan"],
+        OptionValue::Tag("all".to_owned()),
+        "the declared default stays preferred beside the fixed value"
+    );
     let system = &loaded.options[&"system".parse::<Name>().expect("a name")];
     assert_eq!(
         system.fixed[mesa]["vulkan"].value,
@@ -266,13 +278,22 @@ fn every_view_resolves_from_the_system_and_merges_over_it() {
 fn a_view_default_does_not_lift_a_fixed_value_of_the_system() {
     let body = concat!(
         "package.mesa.llvm = false\n",
-        "view web { package.mesa.llvm = default(true) }\n",
+        "view web { package.mesa.vulkan = default(intel) }\n",
     );
     let loaded = load(body, &mesa_options()).expect("loads");
     let mesa = &"mesa".parse::<Name>().expect("a name");
     let web = &loaded.options[&"web".parse::<Name>().expect("a name")];
     assert_eq!(web.fixed[mesa]["llvm"].value, OptionValue::Bool(false));
-    assert!(!web.preferred[mesa].contains_key("llvm"));
+    assert_eq!(
+        web.preferred[mesa]["vulkan"],
+        OptionValue::Tag("intel".to_owned()),
+        "the view's default holds for the options nothing fixes"
+    );
+    assert_eq!(
+        web.preferred[mesa]["llvm"],
+        OptionValue::Bool(true),
+        "the declared default stays preferred beside the fixed value"
+    );
 }
 
 #[test]

@@ -378,6 +378,17 @@ pub(crate) fn reasons(reasons: &[laft_resolve::Reason]) -> Vec<laft_store::Reaso
                 by: by.clone(),
                 dep: dep.to_string(),
             },
+            laft_resolve::Reason::OptionMoved {
+                option,
+                chosen,
+                preferred,
+                why,
+            } => laft_store::Reason::OptionMoved {
+                option: option.clone(),
+                chosen: chosen.clone(),
+                preferred: preferred.clone(),
+                why: why.clone(),
+            },
         })
         .collect()
 }

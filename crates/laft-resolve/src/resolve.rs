@@ -2144,20 +2144,72 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         warnings
     }
 
-    fn into_packages(self) -> BTreeMap<Name, Selected<'a>> {
-        self.selected
+    fn into_packages(mut self) -> BTreeMap<Name, Selected<'a>> {
+        let selected = std::mem::take(&mut self.selected);
+        let labels: BTreeMap<Name, String> = selected
+            .iter()
+            .map(|(name, sel)| (name.clone(), Package::of(sel.candidate.meta).to_string()))
+            .collect();
+        selected
             .into_iter()
             .map(|(name, sel)| {
+                let Sel {
+                    candidate,
+                    mut reasons,
+                    kept,
+                } = sel;
+                reasons.extend(self.deviations(&name, &candidate.meta.options, &reasons, &labels));
                 (
                     name,
                     Selected {
-                        candidate: sel.candidate,
-                        reasons: sel.reasons,
-                        kept_installed: sel.kept,
+                        candidate,
+                        reasons,
+                        kept_installed: kept,
                     },
                 )
             })
             .collect()
+    }
+
+    /// The reasons for the chosen build's option values that differ from
+    /// the view's preferred values: a fixed setting overrode the
+    /// preference, or a satisfied dependency demanded another value. A
+    /// difference nothing asked for is not attributable, so it gets no
+    /// reason.
+    fn deviations(
+        &self,
+        name: &Name,
+        chosen: &BTreeMap<String, OptionValue>,
+        reasons: &[Reason],
+        labels: &BTreeMap<Name, String>,
+    ) -> Vec<Reason> {
+        let Some(request) = self.ctx.input.options.get(name) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (option, value) in chosen {
+            let Some(preferred) = request.preferred.get(option) else {
+                continue;
+            };
+            if preferred == value {
+                continue;
+            }
+            let why = if let Some(fixed) = request.fixed.get(option) {
+                format!("set at {}", fixed.origin)
+            } else {
+                let Some(why) = demanded_by(reasons, labels, option, value) else {
+                    continue;
+                };
+                why
+            };
+            out.push(Reason::OptionMoved {
+                option: option.clone(),
+                chosen: value.clone(),
+                preferred: preferred.clone(),
+                why,
+            });
+        }
+        out
     }
 
     fn builds(&self) -> Vec<BuildRequest> {
@@ -2173,6 +2225,33 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             })
             .collect()
     }
+}
+
+/// The satisfied dependency that demands `value` for `option`, as
+/// `needed by <package> (<dependency>)`.
+fn demanded_by(
+    reasons: &[Reason],
+    labels: &BTreeMap<Name, String>,
+    option: &str,
+    value: &OptionValue,
+) -> Option<String> {
+    for reason in reasons {
+        let Reason::Dependency { by, dep } = reason else {
+            continue;
+        };
+        let Dep::Pkg(_, _, opts) = dep else {
+            continue;
+        };
+        if opts
+            .as_slice()
+            .iter()
+            .any(|c| c.name() == option && c.matches(value))
+        {
+            let by = labels.get(by).cloned().unwrap_or_else(|| by.to_string());
+            return Some(format!("needed by {by} ({dep})"));
+        }
+    }
+    None
 }
 
 fn yanked(

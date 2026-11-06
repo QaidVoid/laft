@@ -195,6 +195,41 @@ fn gens_show_prints_the_option_values_of_each_package() {
     assert_eq!(mesa["options"]["x11"], false);
 }
 
+/// `laft why` shows the option values that differ from their preferred
+/// values, with the fixed setting that overrode the preference.
+#[test]
+fn why_names_the_option_values_that_moved_off_the_preference() {
+    let mesa = pkg("mesa", "1.0")
+        .file("usr/bin/mesa", b"m")
+        .option("x11", laft_core::OptionValue::Bool(false));
+    let fx = fixture!(hello());
+    fx.publish_with_recipes(vec![mesa], Some(&mesa_recipes(fx.dir())));
+    fx.configure(", mesa", "");
+    fx.laft(&["repo", "sync"]).expect(0);
+    fx.configure(", mesa", "  package.mesa.x11 = false\n");
+    fx.laft(&["apply", "-y"]).expect(0);
+
+    let why = fx.laft(&["why", "mesa"]).expect(0);
+    assert!(
+        why.stdout.contains("mesa 1.0-r1 (x11=false)"),
+        "{}",
+        why.stdout
+    );
+    assert!(
+        why.stdout
+            .contains("x11=false      set at /etc/laft/system.stav:"),
+        "{}",
+        why.stdout
+    );
+    let json = fx.laft(&["why", "--json", "mesa"]).expect(0).json();
+    assert_eq!(json["why"][0]["options"]["x11"], false);
+    assert_eq!(json["why"][0]["reasons"][0]["kind"], "requested");
+    assert_eq!(json["why"][0]["reasons"][1]["kind"], "option_moved");
+    assert_eq!(json["why"][0]["reasons"][1]["option"], "x11");
+    assert_eq!(json["why"][0]["reasons"][1]["chosen"], false);
+    assert_eq!(json["why"][0]["reasons"][1]["preferred"], true);
+}
+
 /// The recipe sources of a `mesa` package that declares one option.
 fn mesa_recipes(dir: &std::path::Path) -> std::path::PathBuf {
     let recipes = dir.join("recipes-src");

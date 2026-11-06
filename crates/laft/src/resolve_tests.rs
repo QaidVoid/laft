@@ -346,3 +346,22 @@ fn the_options_of_a_view_become_the_fixed_and_preferred_values_of_the_resolver()
     );
     assert!(option_request(&laft_config::OptionValues::default()).is_empty());
 }
+
+#[test]
+fn store_reasons_carry_the_option_deviation() {
+    let reasons = crate::resolve::reasons(&[laft_resolve::Reason::OptionMoved {
+        option: "vulkan".into(),
+        chosen: laft_core::OptionValue::Tag("all".into()),
+        preferred: laft_core::OptionValue::Tag("amd".into()),
+        why: "needed by blender 4.5.0-r1 (mesa{vulkan=all})".into(),
+    }]);
+    assert_eq!(
+        reasons,
+        vec![laft_store::Reason::OptionMoved {
+            option: "vulkan".into(),
+            chosen: laft_core::OptionValue::Tag("all".into()),
+            preferred: laft_core::OptionValue::Tag("amd".into()),
+            why: "needed by blender 4.5.0-r1 (mesa{vulkan=all})".into(),
+        }]
+    );
+}

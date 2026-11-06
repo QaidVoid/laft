@@ -358,6 +358,110 @@ fn a_hint_for_two_differing_options_names_both() {
     );
 }
 
+/// A fixed value that differs from the preferred one names the setting's
+/// origin in the reason.
+#[test]
+fn a_fixed_value_off_the_preference_names_its_origin() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0")
+                .options(&[("vulkan", "amd")])
+                .provides(&["so:libEGL_mesa.so.0"]),
+            pkg("kwin 6.3.0").depends(&["so:libEGL_mesa.so.0"]),
+        ],
+    );
+    let mut request = fixed("mesa", &[("vulkan", "amd", "/etc/laft/system.stav:12:3")]).1;
+    request
+        .preferred
+        .insert("vulkan".to_owned(), "all".parse().expect("valid value"));
+    let i = input_with(
+        "system",
+        vec![req("kwin")],
+        &[],
+        &[("mesa".parse().expect("valid"), request)],
+    );
+    let r = universe(&[(&core, 0)]).resolve(&i).expect("resolves");
+    assert!(
+        r.packages[&name("mesa")]
+            .reasons
+            .contains(&Reason::OptionMoved {
+                option: "vulkan".into(),
+                chosen: "amd".parse().expect("valid value"),
+                preferred: "all".parse().expect("valid value"),
+                why: "set at /etc/laft/system.stav:12:3".into(),
+            })
+    );
+}
+
+/// A dependency that demands another value than the preferred one names
+/// itself in the reason.
+#[test]
+fn a_dependency_moving_a_value_off_the_preference_names_itself() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0")
+                .options(&[("vulkan", "amd")])
+                .provides(&["so:libEGL_mesa.so.0"]),
+            pkg("app 1").depends(&["mesa{vulkan=amd}"]),
+            pkg("kwin 6.3.0").depends(&["so:libEGL_mesa.so.0"]),
+        ],
+    );
+    let request = OptionRequest {
+        fixed: BTreeMap::new(),
+        preferred: BTreeMap::from([("vulkan".to_owned(), "all".parse().expect("valid value"))]),
+    };
+    let i = input_with(
+        "system",
+        vec![req("app"), req("kwin")],
+        &[],
+        &[("mesa".parse().expect("valid"), request)],
+    );
+    let r = universe(&[(&core, 0)]).resolve(&i).expect("resolves");
+    assert!(
+        r.packages[&name("mesa")]
+            .reasons
+            .contains(&Reason::OptionMoved {
+                option: "vulkan".into(),
+                chosen: "amd".parse().expect("valid value"),
+                preferred: "all".parse().expect("valid value"),
+                why: "needed by app 1-r1 (mesa{vulkan=amd})".into(),
+            })
+    );
+}
+
+/// A value at its preferred value has no deviation reason.
+#[test]
+fn a_value_at_its_preference_has_no_reason() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0")
+                .options(&[("vulkan", "all")])
+                .provides(&["so:libEGL_mesa.so.0"]),
+            pkg("kwin 6.3.0").depends(&["so:libEGL_mesa.so.0"]),
+        ],
+    );
+    let request = OptionRequest {
+        fixed: BTreeMap::new(),
+        preferred: BTreeMap::from([("vulkan".to_owned(), "all".parse().expect("valid value"))]),
+    };
+    let i = input_with(
+        "system",
+        vec![req("kwin")],
+        &[],
+        &[("mesa".parse().expect("valid"), request)],
+    );
+    let r = universe(&[(&core, 0)]).resolve(&i).expect("resolves");
+    assert!(
+        r.packages[&name("mesa")]
+            .reasons
+            .iter()
+            .all(|reason| !matches!(reason, Reason::OptionMoved { .. }))
+    );
+}
+
 #[test]
 fn requests_for_two_variants_conflict() {
     let core = index("core", vec![pkg("rg 14 static")]);
@@ -1955,10 +2059,18 @@ fn a_dependency_moves_a_free_option_off_the_preferred_value() {
     assert_eq!(labels(&r), ["blender 4.5.0-r1", "mesa 25.1.0-r1"]);
     assert_eq!(
         r.packages[&name("mesa")].reasons,
-        vec![Reason::Dependency {
-            by: name("blender"),
-            dep: "mesa{vulkan=all}".parse().expect("a dependency"),
-        }],
+        vec![
+            Reason::Dependency {
+                by: name("blender"),
+                dep: "mesa{vulkan=all}".parse().expect("a dependency"),
+            },
+            Reason::OptionMoved {
+                option: "vulkan".into(),
+                chosen: "all".parse().expect("a value"),
+                preferred: "amd".parse().expect("a value"),
+                why: "needed by blender 4.5.0-r1 (mesa{vulkan=all})".into(),
+            },
+        ],
         "`laft why mesa` names blender and its constraint as the reason"
     );
 }

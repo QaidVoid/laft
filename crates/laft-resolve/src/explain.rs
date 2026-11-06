@@ -66,6 +66,19 @@ pub enum Reason {
         /// `so:libz.so.1`.
         dep: Dep,
     },
+    /// The chosen build has an option value that differs from the view's
+    /// preferred value.
+    OptionMoved {
+        /// The option whose value differs.
+        option: String,
+        /// The value the chosen build has.
+        chosen: OptionValue,
+        /// The value the view prefers.
+        preferred: OptionValue,
+        /// Why the view took the other value: the fixed setting with its
+        /// origin, or the dependency that demanded it.
+        why: String,
+    },
 }
 
 /// A constraint the resolver learned from a conflict and kept while it
@@ -245,6 +258,7 @@ impl Chain {
                             queue.push_back(by.clone());
                         }
                     }
+                    Reason::OptionMoved { .. } => {}
                 }
             }
         }

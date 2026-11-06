@@ -835,5 +835,6 @@ pub(crate) fn reason_text(reason: &laft_resolve::Reason) -> String {
     match reason {
         laft_resolve::Reason::Requested { text, .. } => text.clone(),
         laft_resolve::Reason::Dependency { by, dep } => format!("a dependency of {by}: {dep}"),
+        laft_resolve::Reason::OptionMoved { .. } => String::new(),
     }
 }
