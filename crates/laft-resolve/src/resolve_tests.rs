@@ -431,6 +431,42 @@ fn a_dependency_moving_a_value_off_the_preference_names_itself() {
     );
 }
 
+/// A request constraint that moves a value off the preference names its
+/// request in the reason.
+#[test]
+fn a_request_moving_a_value_off_the_preference_names_itself() {
+    let core = index(
+        "core",
+        vec![
+            pkg("mesa 25.2.0")
+                .options(&[("vulkan", "amd")])
+                .provides(&["so:libEGL_mesa.so.0"]),
+            pkg("kwin 6.3.0").depends(&["so:libEGL_mesa.so.0"]),
+        ],
+    );
+    let request = OptionRequest {
+        fixed: BTreeMap::new(),
+        preferred: BTreeMap::from([("vulkan".to_owned(), "all".parse().expect("valid value"))]),
+    };
+    let i = input_with(
+        "system",
+        vec![req_at("mesa{vulkan=amd}", "laft.stav:4:9"), req("kwin")],
+        &[],
+        &[("mesa".parse().expect("valid"), request)],
+    );
+    let r = universe(&[(&core, 0)]).resolve(&i).expect("resolves");
+    assert!(
+        r.packages[&name("mesa")]
+            .reasons
+            .contains(&Reason::OptionMoved {
+                option: "vulkan".into(),
+                chosen: "amd".parse().expect("valid value"),
+                preferred: "all".parse().expect("valid value"),
+                why: "asked at laft.stav:4:9 (mesa{vulkan=amd})".into(),
+            })
+    );
+}
+
 /// A value at its preferred value has no deviation reason.
 #[test]
 fn a_value_at_its_preference_has_no_reason() {

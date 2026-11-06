@@ -2173,9 +2173,9 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
 
     /// The reasons for the chosen build's option values that differ from
     /// the view's preferred values: a fixed setting overrode the
-    /// preference, or a satisfied dependency demanded another value. A
-    /// difference nothing asked for is not attributable, so it gets no
-    /// reason.
+    /// preference, a satisfied dependency demanded another value, or a
+    /// request constraint did. A difference nothing asked for is not
+    /// attributable, so it gets no reason.
     fn deviations(
         &self,
         name: &Name,
@@ -2186,6 +2186,7 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         let Some(request) = self.ctx.input.options.get(name) else {
             return Vec::new();
         };
+        let normalized = self.requests.iter().find(|r| &r.name == name);
         let mut out = Vec::new();
         for (option, value) in chosen {
             let Some(preferred) = request.preferred.get(option) else {
@@ -2196,11 +2197,19 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             }
             let why = if let Some(fixed) = request.fixed.get(option) {
                 format!("set at {}", fixed.origin)
-            } else {
-                let Some(why) = demanded_by(reasons, labels, option, value) else {
-                    continue;
-                };
+            } else if let Some(why) = demanded_by(reasons, labels, option, value) {
                 why
+            } else if let Some((origin, text)) = normalized.and_then(|r| {
+                r.options
+                    .as_slice()
+                    .iter()
+                    .zip(&r.asked)
+                    .find(|(c, _)| c.name() == option && c.matches(value))
+                    .map(|(_, asked)| (&asked.0, &asked.1))
+            }) {
+                format!("asked at {origin} ({text})")
+            } else {
+                continue;
             };
             out.push(Reason::OptionMoved {
                 option: option.clone(),

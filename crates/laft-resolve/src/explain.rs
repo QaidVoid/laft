@@ -76,7 +76,8 @@ pub enum Reason {
         /// The value the view prefers.
         preferred: OptionValue,
         /// Why the view took the other value: the fixed setting with its
-        /// origin, or the dependency that demanded it.
+        /// origin, the dependency that demanded it, or the request that
+        /// asked for it.
         why: String,
     },
 }
