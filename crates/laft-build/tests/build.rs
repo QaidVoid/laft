@@ -1240,3 +1240,67 @@ fn an_options_recipe_builds_every_option_set_into_its_own_package() {
         assert!(text.contains(value), "{text}");
     }
 }
+
+/// The `-dev` subpackage depends on the exact option set of its main
+/// package, so a view that constrains the library pairs it with the
+/// matching `-dev` build.
+#[test]
+fn a_dev_subpackage_depends_on_the_option_set_of_its_main_package() {
+    for tool in ["bash", "mkdir", "printf"] {
+        if !Path::new("/usr/bin").join(tool).exists() && !Path::new("/bin").join(tool).exists() {
+            println!("skipping: {tool} is missing");
+            return;
+        }
+    }
+    let dir = laft_test::tempdir();
+    let repo = support::write_repo(
+        &dir.path().join("core"),
+        "core",
+        "",
+        &[
+            (
+                "recipes/optapp/options.stav",
+                "## How the daemon ships.\ntype Mode = safe | fast\n\nstruct Options {\n  ## The mode the daemon starts in.\n  mode: Mode = safe\n  ## Ship the extra command line tool.\n  tool: Bool = true\n}\n",
+            ),
+            (
+                "recipes/optapp/package.stav",
+                "import \"laft/options\" as opt\n\npackage optapp {\n  version = \"1.0\"\n  summary = \"The options package in #{opt.mode} mode\"\n  license = [MIT]\n  empty = true\n  build custom {}\n  phases {\n    install = \"mkdir -p \\\"$DESTDIR/usr/include\\\" && printf 'x' > \\\"$DESTDIR/usr/include/optapp.h\\\"\"\n  }\n}\n",
+            ),
+        ],
+    );
+    let repos = Repos::open(&[repo]).expect("the repository opens");
+    let name = support::name("optapp");
+    let config = Config {
+        offline: true,
+        ..Config::new(dir.path().join("cache"))
+    };
+    let recipe: Recipe = repos
+        .evaluate_with(&name, &BTreeMap::new())
+        .expect("the option set evaluates")
+        .recipes
+        .remove(0);
+    let root = BuildRoot::new(dir.path().join("root"));
+    let cache = SourceCache::new(root.sources(), Fetcher::new(config.clone()));
+    let builder = Builder::new(&repos, &cache, &root, Mode::Bootstrap("/".into()));
+    let inputs = builder.key_inputs(&recipe).unwrap();
+    let outcome = match builder.build(&recipe, &inputs, None) {
+        Ok(outcome) => outcome,
+        Err(e) => panic!("the build fails: {e}"),
+    };
+    let dev = outcome
+        .packages
+        .iter()
+        .map(|p| (p, entries(p).0))
+        .find(|(_, meta)| meta.name.as_str() == "optapp-dev")
+        .expect("the dev split ships the header");
+    let exact = format!(
+        "optapp={}-r{}{{mode=safe,tool}}",
+        recipe.version, recipe.rev
+    );
+    assert!(
+        dev.1.depends.iter().any(|d| d.to_string() == exact),
+        "{}: {:?}",
+        exact,
+        dev.1.depends
+    );
+}

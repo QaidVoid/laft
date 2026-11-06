@@ -5,7 +5,7 @@ use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
-use laft_core::{Blake3Hash, Dep, PkgRef, Provide, VersionReq};
+use laft_core::{Blake3Hash, Dep, OptionValue, PkgRef, Provide, VersionReq};
 use laft_pkg::{Abi, Arch, Compression, Entry, Manifest, Meta, StaticDep};
 
 use crate::error::{BuildError, io};
@@ -118,7 +118,20 @@ pub fn package(
     let mut depends: Vec<Dep> = detected_deps;
     depends.extend(declared.deps.iter().map(dep));
     if automatic_main || explicit.is_some_and(|s| s.depends_on_main) {
-        let exact = format!("{}={}-r{}", recipe.name, recipe.version, recipe.rev);
+        let mut exact = format!("{}={}-r{}", recipe.name, recipe.version, recipe.rev);
+        if !recipe.option_values.is_empty() {
+            let set = recipe
+                .option_values
+                .iter()
+                .map(|(option, value)| match value {
+                    OptionValue::Bool(true) => option.clone(),
+                    OptionValue::Bool(false) => format!("!{option}"),
+                    OptionValue::Tag(tag) => format!("{option}={tag}"),
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            exact.push_str(&format!("{{{set}}}"));
+        }
         depends.push(exact.parse().map_err(|e| {
             BuildError::problem("B116", format!("{exact} is not a dependency: {e}"))
         })?);
