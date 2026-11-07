@@ -159,7 +159,7 @@ fn guest_config() -> String {
            '  repo core {' '    url = \"file:///repo\"' \"    key = \\\"$corekey\\\"\" \
            '    profile = \"loud\"' '  }' '  repo first {' \
            '    url = \"http://127.0.0.1:7979\"' '    allow_http = true' \
-           \"    key = \\\"$localkey\\\"\" '  }' '}' \
+           '    channel = \"local\"' \"    key = \\\"$localkey\\\"\" '  }' '}' \
            > /srv/guest/etc/laft/system.stav && echo config-ok"
 }
 
