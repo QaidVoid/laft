@@ -10,8 +10,9 @@ use crate::{Result, fail, run, run_with_input};
 /// The size of the EFI system partition, in MiB.
 const ESP_MIB: u64 = 128;
 
-/// The size of the root partition, in MiB.
-const ROOT_MIB: u64 = 768;
+/// The size of the root partition, in MiB. The option scenario builds in
+/// the machine, whose build root wants 10 GiB free.
+const ROOT_MIB: u64 = 12288;
 
 /// Where the first partition starts, in MiB.
 const FIRST_MIB: u64 = 1;
