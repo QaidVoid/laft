@@ -70,6 +70,33 @@ fn index_copies_packages_by_store_id_and_signs_a_new_generation() {
     );
 }
 
+#[test]
+fn index_refuses_a_pool_file_with_other_bytes_than_the_new_build() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let data = "a".repeat(300 * 1024);
+    let file = pkg("hello", "1.0")
+        .file("usr/share/hello/data", &data)
+        .write(&out);
+    let repo = dir.path().join("repo");
+    let entry = support::entry(&file);
+    let mut bytes = fs::read(&file).expect("the package file is readable");
+    let rotted = bytes.len() - 8;
+    bytes[rotted] ^= 0xff;
+    fs::create_dir_all(repo.join("pool")).expect("writable");
+    fs::write(repo.join(&entry.file), &bytes).expect("writable");
+    let key = keygen(dir.path(), "online");
+    let now = at(0);
+    let mut args = index_args(&repo, "current", &now);
+    args.extend(["--key", s(&key), s(&out)]);
+    let (stdout, stderr) = fails(&args);
+    assert!(stderr.contains("with other bytes"), "{stdout}\n{stderr}");
+    assert!(
+        !repo.join(INDEX).exists(),
+        "the rotted pool file publishes no index"
+    );
+}
+
 /// Writes a recipe repository declaring the profile `minimal`, which sets
 /// `x11 = false` on mesa.
 fn profile_repo(dir: &Path) -> PathBuf {

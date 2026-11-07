@@ -167,10 +167,23 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
                 other.id
             )));
         }
-        let mut entry = package.entry();
+        let entry = package.entry();
         let pool = repo.pool(*id);
         if fsx::size(&pool)?.is_some() {
-            (entry.size, entry.blake3) = fsx::hash_file(&pool)?;
+            let (size, blake3) = fsx::hash_file(&pool)?;
+            if (size, blake3) != (package.size, package.blake3) {
+                return Err(Error::new(format!(
+                    "{}: the pool already holds {id} with other bytes: \
+                     {} is {} bytes with {blake3}, the new build is {} bytes with {}; \
+                     remove {} and run again",
+                    package.path.display(),
+                    pool.display(),
+                    size,
+                    package.size,
+                    package.blake3,
+                    pool.display(),
+                )));
+            }
         } else {
             staged.insert(*id, package.path.clone());
         }
