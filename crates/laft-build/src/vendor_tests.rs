@@ -308,3 +308,17 @@ fn pack(dir: &Path, files: &[(&str, &[u8])]) -> PathBuf {
     std::fs::write(&packed, &bytes).unwrap();
     packed
 }
+
+/// Packing refuses an entry path the unpacker refuses, so a vendored
+/// tarball never pins a tree its unpacking cannot read back.
+#[test]
+fn packing_refuses_entry_paths_the_unpacker_refuses() {
+    let dir = laft_test::tempdir();
+    let root = dir.path().join("src");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("good"), b"x").unwrap();
+    fs::write(root.join("a\nb"), b"x").unwrap();
+    let error = normalized_tarball(&root, &dir.path().join("v.tar"))
+        .expect_err("the control-character path is refused");
+    assert!(error.to_string().contains("B024"), "{error}");
+}

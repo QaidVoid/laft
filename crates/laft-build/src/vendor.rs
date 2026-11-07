@@ -38,6 +38,9 @@ pub fn normalized_tarball(dir: &Path, file: &Path) -> Result<(), BuildError> {
     let mut builder = tar::Builder::new(BufWriter::new(out));
     for (rel, kind) in fsx::walk(dir)?.into_iter().filter(|(rel, _)| !vcs(rel)) {
         let path = dir.join(&rel);
+        if plain_rel(Path::new(&rel)).is_none() {
+            return Err(refused(file, &rel, "the path is not a plain relative path"));
+        }
         let mut header = tar::Header::new_ustar();
         header.set_mtime(SOURCE_DATE_EPOCH);
         header.set_uid(0);
