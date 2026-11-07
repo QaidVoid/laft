@@ -291,6 +291,41 @@ fn a_priority_tie_gives_the_name_to_the_greater_repository_name() {
     );
 }
 
+/// The local repository is never an owner: it publishes no snapshot, so
+/// a name it lists with its owner keeps the owner's buildable. Before
+/// the ownership rule, the implicit local repository took the name away
+/// and nothing could build it again.
+#[test]
+fn the_local_repository_never_takes_a_buildable_from_its_owner() {
+    let local = repo_index(
+        "local",
+        i64::MAX,
+        vec![entry(meta_of("mesa", "25.1.0", &[]), "local")],
+        BTreeMap::from([(
+            "mesa".parse().expect("a name"),
+            vec![bool_decl("llvm", false)],
+        )]),
+        false,
+    );
+    let core = repo_index(
+        "core",
+        0,
+        vec![entry(meta_of("mesa", "25.3.0", &[]), "core")],
+        BTreeMap::from([(
+            "mesa".parse().expect("a name"),
+            vec![bool_decl("llvm", true)],
+        )]),
+        true,
+    );
+    let found = buildables(&[local, core]).0;
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].version.to_string(), "25.3.0");
+    assert_eq!(
+        found[0].defaults.get("llvm"),
+        Some(&laft_core::OptionValue::Bool(true))
+    );
+}
+
 #[test]
 fn the_owner_contributes_its_newest_entry() {
     let core = repo_index(

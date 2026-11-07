@@ -123,7 +123,8 @@ pub(crate) type SnapshotMap = BTreeMap<(Name, Variant), SnapshotSource>;
 /// the option declarations do. An owner without a snapshot leaves the
 /// name to no buildable at all, whatever lower priorities carry. Within
 /// the owner, the newest entry wins. The declared defaults of the owner
-/// are the values a build starts from.
+/// are the values a build starts from. The implicit local repository is
+/// never an owner, so the names it lists stay with their owners.
 ///
 /// The second value maps every buildable name and variant to the recipe
 /// snapshot that would build it, which [`crate::builds`] fetches and
@@ -140,6 +141,10 @@ pub(crate) fn buildables(indexes: &[RepoIndex]) -> (Vec<Buildable>, SnapshotMap)
     let mut newest: BTreeMap<(Name, Variant), (&laft_index::IndexEntry, &RepoIndex)> =
         BTreeMap::new();
     for repo in &by_priority {
+        // The local repository never owns a name and never builds one.
+        if repo.name.as_str() == "local" {
+            continue;
+        }
         for entry in &repo.accepted.index.packages {
             match owner.entry(&entry.meta.name) {
                 std::collections::btree_map::Entry::Vacant(slot) => {
