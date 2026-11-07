@@ -2,6 +2,8 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use rustix::io::Errno;
+
 /// Declares [`Step`] with the description of each step, so that the list
 /// of codes a sandbox child may send cannot miss a variant.
 macro_rules! steps {
@@ -136,6 +138,21 @@ impl Error {
     pub fn io_error(&self) -> Option<&io::Error> {
         self.source.as_ref()
     }
+
+    /// Whether the failure is the way a kernel or a security policy refuses
+    /// unprivileged user namespaces, which shows up as `EPERM`, `EACCES`,
+    /// `ENOSPC` or `ENOSYS` at the step that creates the namespaces or
+    /// maps the build user. A failure at any later step says nothing about
+    /// the namespaces even with one of those errnos.
+    pub fn refuses_namespaces(&self) -> bool {
+        matches!(self.step, Step::Unshare | Step::MapIds)
+            && self.io_error().is_some_and(|error| {
+                matches!(
+                    Errno::from_io_error(error),
+                    Some(Errno::PERM | Errno::ACCESS | Errno::NOSPC | Errno::NOSYS)
+                )
+            })
+    }
 }
 
 impl fmt::Display for Error {
@@ -158,3 +175,7 @@ impl std::error::Error for Error {
             .map(|source| source as &(dyn std::error::Error + 'static))
     }
 }
+
+#[cfg(test)]
+#[path = "error_tests.rs"]
+mod tests;
