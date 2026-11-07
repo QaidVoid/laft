@@ -679,8 +679,20 @@ fn alternatives(index: &Index, packages: &[Loaded<'_>], findings: &mut Vec<Findi
 }
 
 /// The identity a revision must not be reused for: the name, version,
-/// revision, variant and option values of a build.
+/// revision, variant, architecture and option values of a build.
 type Identity<'a> = (
+    &'a Name,
+    &'a Version,
+    u32,
+    Variant,
+    laft_pkg::Arch,
+    &'a BTreeMap<String, OptionValue>,
+);
+
+/// The values a withdrawn revision was published under. A yank row does
+/// not record the package's architecture, so a withdrawn revision blocks
+/// a new build of the same values whatever its architecture.
+type WithdrawnIdentity<'a> = (
     &'a Name,
     &'a Version,
     u32,
@@ -697,7 +709,7 @@ fn revisions(input: &Input<'_>, findings: &mut Vec<Finding>) {
         return;
     }
     let mut published: HashMap<Identity<'_>, BTreeSet<StoreId>> = HashMap::new();
-    let mut withdrawn: HashMap<Identity<'_>, BTreeSet<StoreId>> = HashMap::new();
+    let mut withdrawn: HashMap<WithdrawnIdentity<'_>, BTreeSet<StoreId>> = HashMap::new();
     for index in input.published.into_iter().chain(input.others) {
         if index.profile.is_some() {
             continue;
@@ -705,7 +717,7 @@ fn revisions(input: &Input<'_>, findings: &mut Vec<Finding>) {
         for e in &index.packages {
             let m = &e.meta;
             published
-                .entry((&m.name, &m.version, m.rev, m.variant, &m.options))
+                .entry((&m.name, &m.version, m.rev, m.variant, m.arch, &m.options))
                 .or_default()
                 .insert(e.id);
         }
@@ -718,9 +730,9 @@ fn revisions(input: &Input<'_>, findings: &mut Vec<Finding>) {
     }
     for entry in &input.index.packages {
         let m = &entry.meta;
-        let identity = (&m.name, &m.version, m.rev, m.variant, &m.options);
+        let identity = (&m.name, &m.version, m.rev, m.variant, m.arch, &m.options);
         let published_ids = published.get(&identity);
-        let withdrawn_ids = withdrawn.get(&identity);
+        let withdrawn_ids = withdrawn.get(&(&m.name, &m.version, m.rev, m.variant, &m.options));
         let others: Vec<&StoreId> = published_ids
             .into_iter()
             .chain(withdrawn_ids)

@@ -133,6 +133,12 @@ impl Pkg {
         self
     }
 
+    /// Sets the architecture the package is built for.
+    pub(crate) fn arch(mut self, arch: Arch) -> Self {
+        self.meta.arch = arch;
+        self
+    }
+
     /// Writes buildinfo that marks the build as made from a dirty recipe
     /// tree.
     pub(crate) fn dirty(mut self) -> Self {

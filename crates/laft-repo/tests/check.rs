@@ -446,6 +446,26 @@ fn kr005_the_same_revision_with_other_option_values_is_another_build() {
 }
 
 #[test]
+fn kr005_an_any_arch_build_is_not_the_same_revision_as_the_arch_build() {
+    let dir = laft_test::tempdir();
+    let repo = dir.path().join("repo");
+    let any = pkg("hello", "1.0")
+        .arch(laft_pkg::Arch::Any)
+        .file("usr/bin/hello", "one")
+        .write(&dir.path().join("a"));
+    let v3 = pkg("hello", "1.0")
+        .file("usr/bin/hello", "two")
+        .write(&dir.path().join("b"));
+    fixture(&repo, "testing", 0, &[any], |_| {});
+    fixture(&repo, "current", 0, &[v3], |_| {});
+    let (codes, report, _) = check(&repo, &[]);
+    assert!(
+        !codes.contains(&"KR005".to_owned()),
+        "the architecture is part of the identity: {report}"
+    );
+}
+
+#[test]
 fn kr006_a_downgrade_is_only_a_warning() {
     let dir = laft_test::tempdir();
     let out = dir.path().join("out");

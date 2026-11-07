@@ -152,12 +152,13 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
         }
         if let Some(other) = index.packages.iter().find(|e| {
             let m = &e.meta;
-            (&m.name, &m.version, m.rev, m.variant, &m.options)
+            (&m.name, &m.version, m.rev, m.variant, m.arch, &m.options)
                 == (
                     &meta.name,
                     &meta.version,
                     meta.rev,
                     meta.variant,
+                    meta.arch,
                     &meta.options,
                 )
         }) {
