@@ -280,6 +280,24 @@ fn one_peer_cannot_hold_the_server() {
     );
 }
 
+/// A deadline that is over stops the header read: a client that trickles
+/// bytes cannot hold its slot past the deadline.
+#[test]
+fn an_over_deadline_stops_the_header_read() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bound");
+    let addr = listener.local_addr().expect("an address");
+    let _client = TcpStream::connect(addr).expect("connected");
+    let (stream, _) = listener.accept().expect("accepted");
+    let mut reader = BufReader::new(stream);
+    let started = Instant::now();
+    let error = read_line(&mut reader, &Deadline::over()).expect_err("the deadline is over");
+    assert_eq!(error, Status::BadRequest);
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the read returns at once, not after the between-bytes timeout"
+    );
+}
+
 #[test]
 fn a_connection_past_its_deadline_is_dropped() {
     let dir = laft_test::tempdir();

@@ -124,9 +124,6 @@ impl Serve {
             let root = Arc::clone(&root);
             thread::spawn(move || {
                 let line = handle(stream, &root, &Deadline::start());
-                if !quiet {
-                    eprintln!("{line}");
-                }
                 live.fetch_sub(1, Ordering::Relaxed);
                 if let Some(peer) = peer {
                     let mut counts = peers.lock().expect("the peer counts cannot be poisoned");
@@ -136,6 +133,9 @@ impl Serve {
                             counts.remove(&peer);
                         }
                     }
+                }
+                if !quiet {
+                    let _ = writeln!(std::io::stderr(), "{line}");
                 }
             });
         }
@@ -210,6 +210,9 @@ fn handle(stream: TcpStream, root: &Path, deadline: &Deadline) -> String {
 /// Reads one line of at most [`MAX_HEADER`] bytes, so that a client
 /// cannot make the server buffer without bound.
 fn read_line(reader: &mut BufReader<TcpStream>, deadline: &Deadline) -> Result<String, Status> {
+    if deadline.expired() {
+        return Err(Status::BadRequest);
+    }
     arm(reader.get_ref(), deadline);
     let mut buf = Vec::new();
     (&mut *reader)
