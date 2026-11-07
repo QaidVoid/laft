@@ -503,7 +503,7 @@ fn run_steps(
             Work::Packages(packages) => {
                 let mut found = Vec::new();
                 for package in packages {
-                    found.extend(recipes(repos, package)?);
+                    found.extend(recipes(runner.options, repos, package)?);
                 }
                 runner.packages(step, &tag, &found, previous, progress)?
             }
@@ -547,10 +547,22 @@ fn step_key(
     Ok(Blake3Hash::of(&bytes))
 }
 
-/// The recipes of `package` in `repos`, in the variant it names.
-fn recipes(repos: &Repos, package: &PkgRef) -> Result<Vec<Recipe>, BuildError> {
+/// The recipes of `package` in `repos`, in the variant it names, evaluated
+/// with the fixed option values the stage was given for it, so the
+/// packages it plans carry the values the views fix.
+fn recipes(
+    options: &StageOptions,
+    repos: &Repos,
+    package: &PkgRef,
+) -> Result<Vec<Recipe>, BuildError> {
+    let mut set = BTreeMap::new();
+    if let Some(request) = options.options.values.get(package.name()) {
+        for (option, fixed) in &request.fixed {
+            set.insert(option.clone(), fixed.value.clone());
+        }
+    }
     let evaluation = repos
-        .evaluate(package.name())
+        .evaluate_with(package.name(), &set)
         .map_err(|e| BuildError::problem("R060", e.to_string()))?;
     let found: Vec<Recipe> = evaluation
         .recipes

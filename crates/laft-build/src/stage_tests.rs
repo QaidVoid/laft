@@ -302,7 +302,7 @@ fn a_stage_of_packages_unpacks_the_packages_it_makes_into_the_root() {
     assert_eq!(packages.len(), 1, "{packages:?}");
     assert!(packages[0].starts_with("greet-1-r1."), "{packages:?}");
     let repos = Repos::open(&[&stage.recipes]).unwrap();
-    let recipe = recipes(&repos, &"greet".parse().unwrap())
+    let recipe = recipes(&options(dir.path()), &repos, &"greet".parse().unwrap())
         .unwrap()
         .remove(0);
     let item = Item::of(&recipe);
@@ -758,7 +758,7 @@ fn a_root_step_builds_inside_the_root_with_laft_build() {
     assert_eq!(fs::read_to_string(root.join("greeting")).unwrap(), "hi\n");
     assert!(dir.path().join("build/written").is_file());
     let repos = Repos::open(&[&stage.recipes]).unwrap();
-    let recipe = recipes(&repos, &"greet".parse().unwrap())
+    let recipe = recipes(&options, &repos, &"greet".parse().unwrap())
         .unwrap()
         .remove(0);
     let item = Item::of(&recipe);
@@ -1900,4 +1900,47 @@ fn keyed_alpha(dir: &Path, workers: usize) -> Result<String, BuildError> {
         .unwrap()
         .expect("the database records the build");
     Ok(alpha.record.key.to_string())
+}
+
+/// A `--set` value reaches the evaluation a stage plans its packages
+/// with, so the recipes it builds record the values the views fix.
+#[test]
+fn a_set_value_reaches_the_packages_a_stage_plans() {
+    let dir = laft_test::tempdir();
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(repo.join("recipes/greet")).unwrap();
+    fs::write(repo.join("recipes.stav"), "recipe_repo t {}\n").unwrap();
+    fs::write(
+        repo.join("recipes/greet/options.stav"),
+        "struct Options {\n  ## Extra tooling.\n  tool: Bool = false\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.join("recipes/greet/package.stav"),
+        "import \"laft/options\" as opt\npackage greet {\n  version = \"1\"\n  summary = \"Greets\"\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .unwrap();
+    let stage = Stage::load(&write_stage(dir.path(), STEPS)).unwrap();
+    let repos = Repos::open(&[&stage.recipes]).unwrap();
+    let mut run = options(dir.path());
+    run.options.values.insert(
+        "greet".parse().unwrap(),
+        laft_resolve::OptionRequest {
+            fixed: BTreeMap::from([(
+                "tool".to_owned(),
+                laft_resolve::FixedValue {
+                    value: laft_core::OptionValue::TRUE,
+                    origin: "--set".to_owned(),
+                },
+            )]),
+            preferred: BTreeMap::new(),
+        },
+    );
+    let found = recipes(&run, &repos, &"greet".parse::<PkgRef>().unwrap()).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].option_values.get("tool"),
+        Some(&laft_core::OptionValue::TRUE),
+        "the stage plans greet with the fixed value"
+    );
 }
