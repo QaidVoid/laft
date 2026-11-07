@@ -70,6 +70,16 @@ impl Pkg {
         self
     }
 
+    pub(crate) fn options(mut self, opts: &[(&str, &str)]) -> Self {
+        for (option, value) in opts {
+            self.meta.options.insert(
+                (*option).to_owned(),
+                value.parse().expect("valid option value"),
+            );
+        }
+        self
+    }
+
     pub(crate) fn file(mut self, path: &str, content: &str) -> Self {
         self.files.push((path.into(), content.as_bytes().to_vec()));
         self

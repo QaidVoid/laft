@@ -843,6 +843,80 @@ fn yank_moves_the_package_to_yanked_in_a_new_generation() {
     assert!(stderr.contains("was yanked"), "{stderr}");
 }
 
+/// The sibling option set of a yanked revision publishes: one set of a
+/// revision can be withdrawn while another stays available.
+#[test]
+fn the_sibling_option_set_of_a_yanked_revision_publishes() {
+    let dir = laft_test::tempdir();
+    let recipes = dir.path().join("recipes-src");
+    fs::create_dir_all(recipes.join("recipes/mesa")).expect("writable");
+    fs::write(recipes.join("recipes.stav"), "recipe_repo core {}\n").expect("writable");
+    fs::write(
+        recipes.join("recipes/mesa/options.stav"),
+        "struct Options {\n  ## Build against LLVM.\n  llvm: Bool = true\n}\n",
+    )
+    .expect("writable");
+    fs::write(
+        recipes.join("recipes/mesa/package.stav"),
+        "import \"laft/options\" as opt\n\npackage mesa {\n  version = \"25.1\"\n  summary = if opt.llvm { \"LLVM\" } else { \"GCC\" }\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    )
+    .expect("writable");
+    let yanked_out = dir.path().join("yanked");
+    let sibling_out = dir.path().join("sibling");
+    let yanked = pkg("mesa", "25.1")
+        .options(&[("llvm", "true")])
+        .write(&yanked_out);
+    let sibling = pkg("mesa", "25.1")
+        .options(&[("llvm", "false")])
+        .write(&sibling_out);
+    let repo = dir.path().join("repo");
+    let add = |file: &Path, offset: u64| {
+        let now = at(offset);
+        let mut args = index_args(&repo, "current", &now);
+        args.push("--recipes");
+        args.push(s(&recipes));
+        args.push(s(file.parent().expect("the package file has a directory")));
+        run(&args)
+    };
+    assert!(add(&yanked, 0).status.success());
+    ok(&[
+        "yank",
+        "--repo",
+        s(&repo),
+        "--channel",
+        "current",
+        "mesa",
+        "25.1",
+        "--reason",
+        "bad build",
+        "--now",
+        &at(HOUR),
+    ]);
+    let output = add(&sibling, 2 * HOUR);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    let index = read_index(&repo, "current");
+    assert_eq!(index.packages.len(), 1);
+    assert_eq!(
+        index.packages[0]
+            .meta
+            .options
+            .get("llvm")
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("false")
+    );
+    assert_eq!(index.yanked.len(), 1);
+    assert_eq!(
+        index.yanked[0]
+            .options
+            .get("llvm")
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("true")
+    );
+}
+
 #[test]
 fn a_yanked_revision_is_refused_until_its_yank_expires() {
     let dir = laft_test::tempdir();

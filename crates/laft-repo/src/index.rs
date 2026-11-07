@@ -120,7 +120,7 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
         .yanked
         .iter()
         .filter(|y| generation::retained(y, request.options.now))
-        .map(|y| (&y.name, &y.version, y.rev, y.variant))
+        .map(|y| (&y.name, &y.version, y.rev, y.variant, &y.options))
         .collect();
     let mut staged = BTreeMap::new();
     let mut added = 0;
@@ -135,7 +135,13 @@ pub(crate) fn run(request: &Request<'_>) -> Result<Outcome> {
                 channel.arch
             )));
         }
-        if yanked.contains(&(&meta.name, &meta.version, meta.rev, meta.variant)) {
+        if yanked.contains(&(
+            &meta.name,
+            &meta.version,
+            meta.rev,
+            meta.variant,
+            &meta.options,
+        )) {
             return Err(Error::new(format!(
                 "{} was yanked from {channel}, so publish a new revision instead",
                 label(meta)
