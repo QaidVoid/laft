@@ -88,7 +88,8 @@ pub struct BuildGraph {
 enum Resolved {
     Item(Item),
     /// A recipe of the run provides the name, but not in this variant.
-    NoVariant(Name),
+    /// Carries the reference as written and the variants the run builds.
+    NoVariant(String, Vec<Variant>),
     External,
 }
 
@@ -203,9 +204,15 @@ impl BuildGraph {
                 .collect();
             match matching.first() {
                 None => Resolved::External,
-                Some(first) => match matching.iter().find(|i| i.variant == r.variant()) {
+                Some(_) => match matching.iter().find(|i| i.variant == r.variant()) {
                     Some(item) => Resolved::Item((**item).clone()),
-                    None => Resolved::NoVariant(first.name.clone()),
+                    None => {
+                        let mut built: Vec<Variant> =
+                            matching.iter().map(|item| item.variant).collect();
+                        built.sort();
+                        built.dedup();
+                        Resolved::NoVariant(r.to_string(), built)
+                    }
                 },
             }
         };
@@ -219,10 +226,19 @@ impl BuildGraph {
                         Resolved::Item(dep) => {
                             edges.insert(dep);
                         }
-                        Resolved::NoVariant(name) => problems.push(Problem::new(
-                            "R020",
-                            format!("{item} {verb} {name}, which has no {} variant", r.variant()),
-                        )),
+                        Resolved::NoVariant(reference, built) => {
+                            let built = built
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            problems.push(Problem::new(
+                                "R020",
+                                format!(
+                                    "{item} {verb} {reference}, which the run builds only as {built}"
+                                ),
+                            ))
+                        }
                         Resolved::External if published(r) => {}
                         Resolved::External => {
                             unsatisfied.push((item.clone(), verb.to_owned(), r.clone()))

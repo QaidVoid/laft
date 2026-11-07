@@ -60,7 +60,10 @@ fn a_static_build_links_only_static_libraries() {
     let messages: Vec<String> = problems.iter().map(ToString::to_string).collect();
     assert_eq!(
         messages,
-        ["error[R020]: ripgrep:static links against pcre2, which has no static variant"]
+        [concat!(
+            "error[R020]: ripgrep:static links against pcre2:static, ",
+            "which the run builds only as dynamic"
+        )]
     );
 }
 

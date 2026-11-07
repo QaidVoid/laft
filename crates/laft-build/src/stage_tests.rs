@@ -1474,6 +1474,44 @@ fn a_seed_served_forward_dependency_rebuilds_once_and_never_again() {
     );
 }
 
+/// A store step refuses a reference to a name the step itself builds in
+/// another variant, even when a seed provides the variant, and the
+/// refusal names the reference and the variants the step builds.
+#[test]
+fn a_store_step_refuses_a_variant_only_the_store_provides() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = linked_stage(
+        dir.path(),
+        r#"    { name = "build", packages = [base, greet] },"#,
+    );
+    fs::write(
+        stage.recipes.join("recipes/greet/package.stav"),
+        RECIPE.replace(
+            "  build custom {}",
+            "  build custom {}\n  env = { LD_LIBRARY_PATH = \"/usr/lib\" }\n  link_deps = [base:static]",
+        ),
+    )
+    .unwrap();
+    store_with_host_tools(dir.path());
+    let root = BuildRoot::new(dir.path().join("build"));
+    let (seeded, _) = crate::test_support::TestPkg {
+        variant: laft_core::Variant::Static,
+        ..crate::test_support::TestPkg::new("base")
+    }
+    .write(dir.path());
+    crate::seed::seed(&root, &seeded).unwrap();
+    let result = run_with(dir.path(), &stage, &store_options(dir.path()));
+    let error = result.unwrap_err();
+    assert_eq!(error.code(), Some("R020"), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "error[R020]: greet links against base:static, which the run builds only as dynamic"
+    );
+}
+
 /// Records that `package`'s latest build took `seconds`, as its record
 /// would after a build of that length.
 fn record_took_seconds(dir: &Path, package: &str, seconds: u64) {
