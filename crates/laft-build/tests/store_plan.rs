@@ -12,14 +12,14 @@ use laft_fetch::{Config, Fetcher};
 use laft_pkg::{Compression, Manifest, Meta, scan, write_package};
 use support::SOURCE;
 
-/// Writes the package `name` at 1.0 with `options` and seeds it into
-/// `root`, as a repository would.
-fn seed_with(root: &BuildRoot, name: &str, options: &[(&str, OptionValue)]) {
+/// Writes the package `name` at `version` with `options` and seeds it
+/// into `root`, as a repository would.
+fn seed_with(root: &BuildRoot, name: &str, version: &str, options: &[(&str, OptionValue)]) {
     let payload = laft_test::tempdir();
     let mut meta = Meta {
         format: laft_pkg::FORMAT,
         name: name.parse().expect("a valid name"),
-        version: "1.0".parse().expect("a valid version"),
+        version: version.parse().expect("a valid version"),
         rev: 1,
         variant: Variant::default(),
         arch: laft_pkg::Arch::X86_64V3,
@@ -83,7 +83,7 @@ fn a_plan_counts_only_the_option_set_that_holds() {
     // The store holds greet with the tool on, which does not satisfy the
     // dependency that refuses the tool.
     let root = BuildRoot::new(dir.path().join("root"));
-    seed_with(&root, "greet", &[("tool", OptionValue::TRUE)]);
+    seed_with(&root, "greet", "1.0", &[("tool", OptionValue::TRUE)]);
 
     let config = Config {
         offline: true,
@@ -100,4 +100,82 @@ fn a_plan_counts_only_the_option_set_that_holds() {
     let reference = &unsatisfied[0];
     assert_eq!(reference.name().as_str(), "greet");
     assert_eq!(reference.options().to_string(), "{!tool}");
+}
+
+#[test]
+fn a_plan_demands_the_prefix_a_link_dependency_names() {
+    let dir = laft_test::tempdir();
+    let repo = support::write_repo(
+        dir.path().join("core").as_path(),
+        "core",
+        "",
+        &[(
+            "recipes/hello/package.stav",
+            &support::recipe(
+                "hello",
+                &format!("{SOURCE}  build_deps = [greet@1]\n  build custom {{}}"),
+            ),
+        )],
+    );
+    let repos = Repos::open(&[repo]).expect("the repository opens");
+
+    // The store holds greet at 2.0, which the prefix refuses, so the plan
+    // must leave greet@1 unsatisfied for the run to build.
+    let root = BuildRoot::new(dir.path().join("root"));
+    seed_with(&root, "greet", "2.0", &[]);
+
+    let config = Config {
+        offline: true,
+        ..Config::new(dir.path().join("cache"))
+    };
+    let cache = SourceCache::new(root.sources(), Fetcher::new(config));
+    let builder = Builder::new(&repos, &cache, &root, Mode::Store);
+    let none = BTreeSet::new();
+    let recipes = support::evaluate(&repos, "hello");
+    let (_, _, unsatisfied) = builder
+        .plan_open(recipes, &root.db(), &none, &none)
+        .expect("the plan scans");
+    assert_eq!(unsatisfied.len(), 1, "{unsatisfied:?}");
+    let reference = &unsatisfied[0];
+    assert_eq!(reference.name().as_str(), "greet");
+    assert_eq!(reference.to_string(), "greet@1");
+}
+
+#[test]
+fn a_plan_demands_the_options_a_link_dependency_records() {
+    let dir = laft_test::tempdir();
+    let repo = support::write_repo(
+        dir.path().join("core").as_path(),
+        "core",
+        "",
+        &[(
+            "recipes/hello/package.stav",
+            &support::recipe(
+                "hello",
+                &format!("{SOURCE}  build_deps = [greet{{tool}}]\n  build custom {{}}"),
+            ),
+        )],
+    );
+    let repos = Repos::open(&[repo]).expect("the repository opens");
+
+    // The store holds greet without the tool option recorded, which the
+    // view refuses, so the plan must leave greet{tool} unsatisfied.
+    let root = BuildRoot::new(dir.path().join("root"));
+    seed_with(&root, "greet", "1.0", &[]);
+
+    let config = Config {
+        offline: true,
+        ..Config::new(dir.path().join("cache"))
+    };
+    let cache = SourceCache::new(root.sources(), Fetcher::new(config));
+    let builder = Builder::new(&repos, &cache, &root, Mode::Store);
+    let none = BTreeSet::new();
+    let recipes = support::evaluate(&repos, "hello");
+    let (_, _, unsatisfied) = builder
+        .plan_open(recipes, &root.db(), &none, &none)
+        .expect("the plan scans");
+    assert_eq!(unsatisfied.len(), 1, "{unsatisfied:?}");
+    let reference = &unsatisfied[0];
+    assert_eq!(reference.name().as_str(), "greet");
+    assert_eq!(reference.options().to_string(), "{tool}");
 }

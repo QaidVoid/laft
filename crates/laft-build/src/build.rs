@@ -540,12 +540,31 @@ impl<'a> Builder<'a> {
             _ => Vec::new(),
         };
         let unresolved = !matches!(self.mode, Mode::Store);
+        let values = if matches!(self.mode, Mode::Store) {
+            Some(self.view_options()?)
+        } else {
+            None
+        };
+        // What counts as published is what a build view accepts: the
+        // prefix and constraints of the reference hold, and the values
+        // the views fix are recorded.
         let published = |r: &PkgRef| {
             unresolved
                 || entries.iter().any(|e| {
                     e.meta.name == *r.name()
                         && e.meta.variant == r.variant()
-                        && r.options().hold(&e.meta.options)
+                        && r.prefix().is_none_or(|p| p.matches(&e.meta.version))
+                        && r.options()
+                            .as_slice()
+                            .iter()
+                            .all(|c| e.meta.options.get(c.name()).is_some_and(|v| c.matches(v)))
+                        && values.as_ref().is_none_or(|values| {
+                            values.values.get(r.name()).is_none_or(|request| {
+                                request.fixed.iter().all(|(option, fixed)| {
+                                    e.meta.options.get(option) == Some(&fixed.value)
+                                })
+                            })
+                        })
                 })
         };
         let (graph, unsatisfied) = if open {
