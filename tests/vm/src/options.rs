@@ -160,6 +160,7 @@ fn guest_config() -> String {
            '    profile = \"loud\"' '  }' '  repo local {' \
            '    url = \"http://127.0.0.1:7979\"' '    allow_http = true' \
            \"    key = \\\"$localkey\\\"\" '  }' \
+           '  boot { microcode = force(off) }' \
            '  fs \"/\" { device = \"UUID=11111111-1111-1111-1111-111111111111\", \
            fstype = ext4, fsck = false }' \
            '  fs \"/boot\" { device = \"UUID=1A2B-3C4D\", fstype = vfat }' '}' \
