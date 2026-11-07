@@ -396,6 +396,41 @@ fn a_so_dependency_is_met_by_a_pending_build_from_either_order() {
         }));
 }
 
+/// A replacement is not selected when the replacer is already a pending
+/// build: the pass resolves the name once, either as a build or as a
+/// published package, never both.
+#[test]
+fn a_replacement_is_not_selected_when_the_replacer_is_a_pending_build() {
+    let mut core = index(
+        "core",
+        vec![
+            pkg("y 1.0")
+                .options(&[("vulkan", "intel")])
+                .replaces(&["x"]),
+            pkg("app 1.0").depends(&["y{vulkan=amd}"]),
+            pkg("b 1.0").depends(&["x"]),
+        ],
+    );
+    core.options
+        .insert(name("y"), vec![decl_bool("vulkan", "intel")]);
+    let mut i = input("system", vec![req("app"), req("b")], &[]);
+    i.buildable = vec![buildable("y", "25.3.0", &[("vulkan", "intel")])];
+    i.allow_builds = true;
+    let r = universe(&[(&core, 0)])
+        .resolve(&i)
+        .expect("the view resolves");
+    assert!(
+        r.builds.iter().any(|b| b.buildable.name == name("y")),
+        "app builds y, which publishes no amd set: {:?}",
+        labels(&r)
+    );
+    assert!(
+        !r.packages.contains_key(&name("y")),
+        "the replacement must not select y on top of its build: {:?}",
+        labels(&r)
+    );
+}
+
 /// A provider excluded by a version prefix rather than the option
 /// values: the error carries no note blaming the options.
 #[test]

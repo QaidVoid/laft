@@ -1855,9 +1855,29 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
         by: Candidate<'a>,
         reason: Reason,
     ) -> Result<(), Stop<'a>> {
+        let Dep::Pkg(_, _, opts) = dep else {
+            return Err(self.replacement_unsatisfied(dep, to, by));
+        };
         if let Some(sel) = self.selected.get_mut(to) {
             if satisfies(sel.candidate.meta, dep) {
                 sel.reasons.push(reason);
+                return Ok(());
+            }
+            return Err(Stop::Conflict {
+                error: None,
+                options: vec![
+                    Fact::Require {
+                        name: to,
+                        dep,
+                        by: by.meta,
+                    },
+                    Fact::Avoid(by),
+                ],
+            });
+        }
+        if let Some(build) = self.builds.get_mut(to) {
+            if constraints_hold(&build.values, opts) {
+                build.reasons.push(reason);
                 return Ok(());
             }
             return Err(Stop::Conflict {
@@ -1878,13 +1898,17 @@ impl<'p, 'u, 'a> Pass<'p, 'u, 'a> {
             self.required.entry(to).or_default().push(dep);
             return Ok(());
         }
+        Err(self.replacement_unsatisfied(dep, to, by))
+    }
+
+    fn replacement_unsatisfied(&self, dep: &'a Dep, to: &'a Name, by: Candidate<'a>) -> Stop<'a> {
         let error = ErrorKind::Unsatisfied {
             dep: dep.clone(),
             by: Package::of(by.meta),
             chain: self.chain_selected(&by.meta.name),
             available: self.ctx.available(to.as_str()),
         };
-        Err(Stop::failed(error, vec![Fact::Avoid(by)]))
+        Stop::failed(error, vec![Fact::Avoid(by)])
     }
 
     fn satisfy_provide(
