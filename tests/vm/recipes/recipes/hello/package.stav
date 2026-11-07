@@ -1,3 +1,5 @@
+import "laft/options" as opt
+
 package hello {
   version  = "1.0"
   summary  = "A program whose build view holds libgreet"
@@ -13,10 +15,12 @@ package hello {
 
   phases {
     # The libgreet of the build view says which option set it was built
-    # with, so this file records what the view contained.
+    # with, so hello.txt records what the view contained, and banner.txt
+    # records whether the option was on.
     install = """
       mkdir -p "$DESTDIR/usr/share/hello"
       cp /usr/lib/libgreet/libgreet.txt "$DESTDIR/usr/share/hello/hello.txt"
+      #{if opt.banner { "printf '%s\\n' 'The banner flies.' > \"$DESTDIR/usr/share/hello/banner.txt\"" } else { ":" }}
     """
   }
 }

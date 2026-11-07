@@ -67,11 +67,14 @@ fn builds(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<()> {
         &text,
         "The greeting is loud.\r\ntwice\r\n",
     )?;
-    let hello = shell(&mut machine, "cat /usr/share/hello/hello.txt")?;
+    let hello = shell(
+        &mut machine,
+        "cat /usr/share/hello/banner.txt /usr/share/hello/hello.txt",
+    )?;
     check(
         "the build view held the optioned libgreet",
         &hello,
-        "shout=true\r\n",
+        "The banner flies.\r\nshout=true\r\n",
     )?;
 
     let again = shell(&mut machine, "laft apply --yes; echo again-status=$?")?;
@@ -170,11 +173,14 @@ fn boots_optioned(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Resu
         &text,
         "The greeting is loud.",
     )?;
-    let hello = shell(&mut machine, "cat /usr/share/hello/hello.txt")?;
+    let hello = shell(
+        &mut machine,
+        "cat /usr/share/hello/banner.txt /usr/share/hello/hello.txt",
+    )?;
     check(
         "the optioned generation boots hello",
         &hello,
-        "shout=true\r\n",
+        "The banner flies.\r\nshout=true\r\n",
     )?;
 
     let calm = shell(
@@ -240,11 +246,14 @@ fn boots_rolled_back(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> R
         &text,
         "The greeting is loud.",
     )?;
-    let hello = shell(&mut machine, "cat /usr/share/hello/hello.txt")?;
+    let hello = shell(
+        &mut machine,
+        "cat /usr/share/hello/banner.txt /usr/share/hello/hello.txt",
+    )?;
     check(
         "the rolled back generation boots hello",
         &hello,
-        "shout=true\r\n",
+        "The banner flies.\r\nshout=true\r\n",
     )?;
     power_off(&mut machine)
 }
@@ -257,7 +266,8 @@ fn fix_options(machine: &mut Machine) -> Result<()> {
         "sed -i -e 's/laft\\]/laft, greeting, hello]/' -e '$d' /etc/laft/system.stav && \
          printf '%s\\n' '  package {' '    greeting {' '      mood = loud' \
          '      twice = true' '    }' '    libgreet {' '      shout = true' '    }' \
-         '  }' '}' >> /etc/laft/system.stav && echo options-ok",
+         '    hello {' '      banner = true' '    }' '  }' '}' \
+         >> /etc/laft/system.stav && echo options-ok",
     )?;
     Ok(())
 }

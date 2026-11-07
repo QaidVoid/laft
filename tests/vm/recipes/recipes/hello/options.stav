@@ -1,0 +1,6 @@
+## How hello writes its greeting file.
+
+struct Options {
+  ## Write a banner line above the copied greeting.
+  banner: Bool = false
+}
