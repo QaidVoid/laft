@@ -30,9 +30,12 @@ system {
     microcode = force(off)
   }
 
-  # busybox stands in for udev: mdev populates /dev from sysfs.
+  # busybox stands in for udev. Devtmpfs already carries every device with
+  # its usual modes, and mdev without a configuration would take each one
+  # to root and mode 660, which would leave the build account without
+  # /dev/null, so the trigger only satisfies the services that wait for it.
   service udevd { enable = false }
-  service udev-trigger { up = ["/usr/bin/mdev", "-s"] }
+  service udev-trigger { up = ["/usr/bin/true"] }
 
   # This system has no session tracker.
   service turnstiled { enable = false }
