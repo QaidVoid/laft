@@ -300,12 +300,12 @@ fn an_added_package_is_listed_by_a_signed_index() {
         .join(format!("root/laft/local/buildinfo/{id}.json"));
     assert!(info.is_file(), "{} is missing", info.display());
     let bytes = fs::read(dir.path().join(format!(
-        "root/laft/local/channels/local/{}/index.json.zst",
+        "root/laft/local/channels/current/{}/index.json.zst",
         ARCH
     )))
     .expect("the index exists");
     let signature = fs::read_to_string(dir.path().join(format!(
-        "root/laft/local/channels/local/{}/index.json.zst.minisig",
+        "root/laft/local/channels/current/{}/index.json.zst.minisig",
         ARCH
     )))
     .expect("the index is signed");
@@ -317,7 +317,9 @@ fn an_added_package_is_listed_by_a_signed_index() {
             .verifies(&bytes, &decoded),
         "the signature verifies"
     );
-    Index::decode(&bytes).expect("a valid index");
+    let decoded_index = Index::decode(&bytes).expect("a valid index");
+    assert_eq!(decoded_index.repo.to_string(), "local");
+    assert_eq!(decoded_index.channel.to_string(), "current");
 }
 
 #[test]
@@ -344,10 +346,10 @@ fn adding_a_package_again_adds_nothing() {
     let index = local.index().expect("readable").expect("an index");
     assert_eq!(index.generation, 1);
     assert_eq!(index.packages.len(), 1);
-    let snapshots = fs::read_dir(
-        dir.path()
-            .join(format!("root/laft/local/channels/local/{}/snapshots", ARCH)),
-    )
+    let snapshots = fs::read_dir(dir.path().join(format!(
+        "root/laft/local/channels/current/{}/snapshots",
+        ARCH
+    )))
     .expect("readable")
     .filter_map(Result::ok)
     .filter(|e| e.file_name().to_string_lossy().ends_with(".json.zst"))

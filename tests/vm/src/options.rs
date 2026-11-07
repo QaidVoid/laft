@@ -131,8 +131,8 @@ fn serve_and_second_machine(machine: &mut Machine) -> Result<()> {
         &format!(
             "sed -i 's/^    key = \"[^\"]*\"$/    key = \"{WRONG_KEY}\"/' \
              /srv/guest/etc/laft/system.stav && \
-             laft --root /srv/guest repo reset first && \
-             laft --root /srv/guest repo sync first; echo wrong-status=$?"
+             laft --root /srv/guest repo reset local && \
+             laft --root /srv/guest repo sync local; echo wrong-status=$?"
         ),
     )?;
     check_absent(
@@ -157,9 +157,9 @@ fn guest_config() -> String {
         + "mkdir -p /srv/guest/etc/laft && "
         + "printf '%s\\n' 'system {' '  hostname = \"guest\"' '  packages = [greeting]' \
            '  repo core {' '    url = \"file:///repo\"' \"    key = \\\"$corekey\\\"\" \
-           '    profile = \"loud\"' '  }' '  repo first {' \
+           '    profile = \"loud\"' '  }' '  repo local {' \
            '    url = \"http://127.0.0.1:7979\"' '    allow_http = true' \
-           '    channel = local' \"    key = \\\"$localkey\\\"\" '  }' '}' \
+           \"    key = \\\"$localkey\\\"\" '  }' '}' \
            > /srv/guest/etc/laft/system.stav && echo config-ok"
 }
 

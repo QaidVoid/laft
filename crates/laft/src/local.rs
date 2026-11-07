@@ -30,8 +30,14 @@ use minisign::{KeyPair, SecretKey, SecretKeyBox};
 use crate::env::{ARCH, RepoIndex};
 use crate::failure::{Failure, exit};
 
-/// The name of the repository and of the channel of its indexes.
-const CHANNEL: &str = "local";
+/// The name of the local repository, which its index declares and a
+/// client that serves or follows it names.
+const NAME: &str = "local";
+
+/// The channel the local repository publishes. A served local repository
+/// is followed like any other, so it publishes the channel a client
+/// follows when the configuration names none.
+const CHANNEL: &str = "current";
 
 /// How many index generations of the local repository are kept.
 const KEEP_SNAPSHOTS: usize = 5;
@@ -174,7 +180,7 @@ impl Local {
         let url = format!("file://{}", self.repo.display());
         let mirrors = laft_fetch::Mirrors::new(&url, &Vec::<String>::new(), true)
             .map_err(|e| self.failed(format!("{url}: {e}")))?;
-        let name = CHANNEL.parse::<Name>().expect("a valid name");
+        let name = NAME.parse::<Name>().expect("a valid name");
         let record = laft_index::IndexRecord {
             channel: index.channel.clone(),
             profile: None,
@@ -549,11 +555,12 @@ fn signed(path: &Path) -> PathBuf {
 
 /// The index of a repository that has nothing in it yet.
 fn empty_index() -> Index {
-    let name = CHANNEL.parse::<Name>().expect("a valid name");
+    let name = NAME.parse::<Name>().expect("a valid name");
+    let channel = CHANNEL.parse::<Name>().expect("a valid channel");
     Index {
         format: Index::FORMAT,
-        repo: name.clone(),
-        channel: name,
+        repo: name,
+        channel,
         arch: ARCH,
         generation: 0,
         timestamp: Timestamp::now(),
