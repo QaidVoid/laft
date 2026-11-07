@@ -89,6 +89,11 @@ fn builds(paths: &Paths, accel: Accel, disk: &Path, vars: &Path) -> Result<()> {
 /// machine, with the profile of the repository, and refuses the served
 /// repository with a wrong key.
 fn serve_and_second_machine(machine: &mut Machine) -> Result<()> {
+    // The minimal system installs no network package set, so nothing
+    // brings the loopback interface up, and the served repository listens
+    // on it.
+    let up = shell(machine, "ip link set lo up; echo lo-status=$?")?;
+    check("the loopback interface is up", &up, "lo-status=0")?;
     let serve = shell(
         machine,
         "laft repo serve --listen 127.0.0.1:7979 >/tmp/serve.log 2>&1 & echo serve-pid=$!",
