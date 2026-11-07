@@ -1198,6 +1198,30 @@ fn kr012_reports_one_option_without_effect_among_used_ones() {
     assert!(!message.contains("used"), "{report}");
 }
 
+/// An option the truncated enumeration never set is not reported as
+/// without effect: it was never evaluated at all.
+#[test]
+fn kr012_does_not_report_an_option_it_could_not_evaluate() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("out");
+    let packages = [pkg("app", "1.0").file("usr/bin/app", "app").write(&out)];
+    let repo = dir.path().join("repo");
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let recipes = pair_repo(
+        dir.path(),
+        &["a", "b", "c", "d", "e", "f", "g"],
+        "import \"laft/options\" as opt\n\npackage hello {\n  version = \"1.0\"\n  summary = if opt.a && opt.b && opt.c && opt.d && opt.e && opt.f && opt.g { \"all\" } else { \"plain\" }\n  license = [MIT]\n  empty = true\n  build custom {}\n}\n",
+    );
+    let (codes, report, success) = check(&repo, &["--recipes", s(&recipes)]);
+    assert_eq!(codes, ["KR012"], "{report}");
+    assert!(success, "a warning does not fail the check");
+    let message = report["findings"][0]["message"].as_str().unwrap();
+    assert_eq!(
+        message, "option without effect: hello: a, b, c, d, e, f",
+        "the seventh option was never in an evaluated set: {report}"
+    );
+}
+
 #[test]
 fn kr012_reports_an_effect_that_needs_two_options() {
     let dir = laft_test::tempdir();

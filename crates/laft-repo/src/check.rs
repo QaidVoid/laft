@@ -1205,10 +1205,12 @@ fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
         for decl in &decls.declarations {
             let mut has_effect = false;
             let mut undecided = false;
+            let mut considered = false;
             for set in &combinations {
                 if !set.contains_key(&decl.name) {
                     continue;
                 }
+                considered = true;
                 let mut base = set.clone();
                 base.remove(&decl.name);
                 match (hashes.get(set), hashes.get(&base)) {
@@ -1223,7 +1225,9 @@ fn option_effect(input: &Input<'_>, findings: &mut Vec<Finding>) {
                     }
                 }
             }
-            if !has_effect && !undecided {
+            // A capped enumeration can leave an option without a single
+            // combination, which says nothing about its effect.
+            if !has_effect && !undecided && !(truncated && !considered) {
                 useless.push(decl.name.as_str());
             }
         }
