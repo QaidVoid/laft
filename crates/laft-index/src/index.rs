@@ -13,6 +13,16 @@ use serde_json::{Map, Value};
 
 use crate::{Error, ErrorKind, IndexComment, MAX_SAFE_INTEGER};
 
+/// The sort key that [`Index::validate`] requires for `packages` and
+/// `yanked`: by name, then by version and revision descending, then by
+/// variant and option values.
+type OrderKey<'a> = (
+    &'a Name,
+    Reverse<(&'a Version, u32)>,
+    Variant,
+    &'a BTreeMap<String, OptionValue>,
+);
+
 /// The largest index a client decompresses: 256 MiB.
 pub const MAX_INDEX_SIZE: u64 = 256 << 20;
 
@@ -196,6 +206,21 @@ pub struct IndexEntry {
     pub blake3: Blake3Hash,
 }
 
+impl IndexEntry {
+    /// The order [`Index::validate`] requires, so that every writer sorts
+    /// entries exactly like the format.
+    pub fn cmp_order(&self, other: &Self) -> std::cmp::Ordering {
+        entry_order_key(&self.meta).cmp(&entry_order_key(&other.meta))
+    }
+}
+
+/// The sort key of [`IndexEntry`]: by name, then by version and revision
+/// descending, then by variant and option values.
+fn entry_order_key(meta: &Meta) -> OrderKey<'_> {
+    let m = meta;
+    (&m.name, Reverse((&m.version, m.rev)), m.variant, &m.options)
+}
+
 /// A withdrawn package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -219,6 +244,24 @@ pub struct Yank {
     pub reason: String,
     /// When it was withdrawn.
     pub time: Timestamp,
+}
+
+impl Yank {
+    /// The order [`Index::validate`] requires, so that every writer sorts
+    /// withdrawn packages exactly like the format.
+    pub fn cmp_order(&self, other: &Self) -> std::cmp::Ordering {
+        yank_order_key(self).cmp(&yank_order_key(other))
+    }
+}
+
+/// The sort key of [`Yank`], like [`entry_order_key`].
+fn yank_order_key(yank: &Yank) -> OrderKey<'_> {
+    (
+        &yank.name,
+        Reverse((&yank.version, yank.rev)),
+        yank.variant,
+        &yank.options,
+    )
 }
 
 impl Index {
@@ -382,18 +425,11 @@ impl Index {
         }
         /// The sort key of a package in `packages` or a yank in
         /// `yanked`.
-        type OrderKey<'a> = (
-            &'a Name,
-            Reverse<(&'a Version, u32)>,
-            Variant,
-            &'a BTreeMap<String, OptionValue>,
-        );
         fn order(e: &IndexEntry) -> OrderKey<'_> {
-            let m = &e.meta;
-            (&m.name, Reverse((&m.version, m.rev)), m.variant, &m.options)
+            entry_order_key(&e.meta)
         }
         fn yank_order(y: &Yank) -> OrderKey<'_> {
-            (&y.name, Reverse((&y.version, y.rev)), y.variant, &y.options)
+            yank_order_key(y)
         }
         if self
             .packages

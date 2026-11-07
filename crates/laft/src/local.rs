@@ -298,14 +298,7 @@ impl Local {
         if staged.is_empty() {
             return Ok(added);
         }
-        index.packages.sort_by(|a, b| {
-            (&a.meta.name, &a.meta.version, a.meta.rev, a.meta.variant).cmp(&(
-                &b.meta.name,
-                &b.meta.version,
-                b.meta.rev,
-                b.meta.variant,
-            ))
-        });
+        index.packages.sort_by(laft_index::IndexEntry::cmp_order);
         index.generation += 1;
         index.timestamp = Timestamp::now();
         index.expires =

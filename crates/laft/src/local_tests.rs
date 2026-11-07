@@ -358,6 +358,63 @@ fn adding_a_package_again_adds_nothing() {
 }
 
 #[test]
+fn a_newer_version_of_a_listed_package_is_added() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("build/out");
+    fs::create_dir_all(&out).expect("writable");
+    let older = Meta {
+        version: "25.1".parse().expect("a version"),
+        ..meta("mesa")
+    };
+    let newer = Meta {
+        version: "25.2".parse().expect("a version"),
+        ..meta("mesa")
+    };
+    let local = Local::of(&dir.path().join("root"));
+    for m in [&older, &newer] {
+        let (file, buildinfo, _) = write_package_file(m, &out);
+        local.add(&[package_of(&file, &buildinfo)]).expect("added");
+    }
+    let index = local.index().expect("readable").expect("an index");
+    assert_eq!(
+        index
+            .packages
+            .iter()
+            .map(|e| e.meta.version.to_string())
+            .collect::<Vec<_>>(),
+        ["25.2", "25.1"],
+        "{index:?}"
+    );
+}
+
+#[test]
+fn the_option_sets_of_one_revision_stay_in_the_index_order() {
+    let dir = laft_test::tempdir();
+    let out = dir.path().join("build/out");
+    fs::create_dir_all(&out).expect("writable");
+    let with_llvm = meta("mesa");
+    let default = Meta {
+        options: BTreeMap::new(),
+        ..meta("mesa")
+    };
+    let local = Local::of(&dir.path().join("root"));
+    for m in [&with_llvm, &default] {
+        let (file, buildinfo, _) = write_package_file(m, &out);
+        local.add(&[package_of(&file, &buildinfo)]).expect("added");
+    }
+    let index = local.index().expect("readable").expect("an index");
+    assert_eq!(
+        index
+            .packages
+            .iter()
+            .map(|e| e.meta.options.is_empty())
+            .collect::<Vec<_>>(),
+        [true, false],
+        "{index:?}"
+    );
+}
+
+#[test]
 fn a_symlink_at_a_package_path_is_refused() {
     let dir = laft_test::tempdir();
     let out = dir.path().join("build/out");

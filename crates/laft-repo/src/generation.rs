@@ -5,8 +5,6 @@
 //! entry point, then the entry point's signature. Snapshots beyond the
 //! number to keep are removed last, oldest first.
 
-use std::cmp::Reverse;
-
 use laft_core::Timestamp;
 use laft_index::{Index, IndexComment, KeyId, Keys, Yank, next_generation};
 
@@ -73,29 +71,8 @@ fn last_generation(repo: &Repository, channel: &Channel) -> Result<Option<u64>> 
 /// dynamic before static, then by option values, and yanked packages the
 /// same way.
 pub(crate) fn sort(index: &mut Index) {
-    index.packages.sort_by(|a, b| {
-        let key = |e: &laft_index::IndexEntry| {
-            let m = &e.meta;
-            (
-                m.name.clone(),
-                Reverse((m.version.clone(), m.rev)),
-                m.variant,
-                m.options.clone(),
-            )
-        };
-        key(a).cmp(&key(b))
-    });
-    index.yanked.sort_by(|a, b| {
-        let key = |y: &laft_index::Yank| {
-            (
-                y.name.clone(),
-                Reverse((y.version.clone(), y.rev)),
-                y.variant,
-                y.options.clone(),
-            )
-        };
-        key(a).cmp(&key(b))
-    });
+    index.packages.sort_by(laft_index::IndexEntry::cmp_order);
+    index.yanked.sort_by(laft_index::Yank::cmp_order);
 }
 
 /// Writes `index` as the new generation of `channel`, signed with `signer`

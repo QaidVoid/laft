@@ -4,7 +4,6 @@
 // Each test binary uses a different part of this module.
 #![allow(dead_code)]
 
-use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -267,16 +266,7 @@ pub(crate) fn fixture(
         }
         index.packages.push(entry);
     }
-    index.packages.sort_by(|a, b| {
-        let key = |e: &IndexEntry| {
-            (
-                e.meta.name.clone(),
-                Reverse((e.meta.version.clone(), e.meta.rev)),
-                e.meta.variant,
-            )
-        };
-        key(a).cmp(&key(b))
-    });
+    index.packages.sort_by(IndexEntry::cmp_order);
     edit(&mut index);
     write_index(repo, &index);
     index
