@@ -175,7 +175,6 @@ pub(crate) fn check(input: &Input<'_>) -> Report {
         option_effect(input, &mut findings);
     }
     findings.sort_by(|a, b| (&a.code, &a.message).cmp(&(&b.code, &b.message)));
-    findings.dedup();
     let errors = findings.iter().filter(|f| f.level == Level::Error).count();
     Report {
         repo: input.index.repo.clone(),

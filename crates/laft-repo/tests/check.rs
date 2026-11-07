@@ -628,6 +628,32 @@ fn kr011_a_payload_with_a_generated_file() {
 }
 
 #[test]
+fn kr011_two_option_sets_are_reported_separately() {
+    let dir = laft_test::tempdir();
+    let repo = dir.path().join("repo");
+    let schema = (
+        "usr/share/glib-2.0/schemas/org.gtk.Settings.xml",
+        "<schemalist/>",
+    );
+    let packages = [
+        pkg("mesa", "25.1")
+            .option("llvm", laft_core::OptionValue::Bool(true))
+            .file(schema.0, schema.1)
+            .file("usr/share/glib-2.0/schemas/gschemas.compiled", "cache")
+            .write(&dir.path().join("out1")),
+        pkg("mesa", "25.1")
+            .option("llvm", laft_core::OptionValue::Bool(false))
+            .file(schema.0, schema.1)
+            .file("usr/share/glib-2.0/schemas/gschemas.compiled", "cache")
+            .write(&dir.path().join("out2")),
+    ];
+    fixture(&repo, "current", 0, &packages, |_| {});
+    let (codes, report, _) = check(&repo, &[]);
+    let kr011 = codes.iter().filter(|c| **c == "KR011").count();
+    assert_eq!(kr011, 2, "{report}");
+}
+
+#[test]
 fn ci001_a_dirty_build_unless_allowed() {
     let dir = laft_test::tempdir();
     let repo = dir.path().join("repo");
