@@ -86,10 +86,20 @@ pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
     let laft_out = paths.work.join("packages");
     let _ = fs::remove_dir_all(&laft_out);
     laft_package(&paths.bin, &laft_out)?;
-    let stubs = paths.work.join("stubs");
-    let _ = fs::remove_dir_all(&stubs);
-    build_view_stubs(&stubs)?;
-    let (defaults, loud) = scenario_builds(paths, &stubs)?;
+    // The build-view stubs and the option scenario serve the minimal
+    // system, whose machine builds packages locally and whose second
+    // machine follows the loud profile. A self-built system publishes the
+    // packages of the bootstrap, and they own the libraries the host's
+    // tools pull into the stubs, so the two cannot share an index.
+    let fixture = if system.self_built().is_none() {
+        let stubs = paths.work.join("stubs");
+        let _ = fs::remove_dir_all(&stubs);
+        build_view_stubs(&stubs)?;
+        let (defaults, loud) = scenario_builds(paths, &stubs)?;
+        Some((stubs, defaults, loud))
+    } else {
+        None
+    };
 
     let keys = paths.work.join("keys");
     let repo = paths.work.join("repo");
@@ -111,44 +121,40 @@ pub(crate) fn build(paths: &Paths, system: &System) -> Result<String> {
     // The plain index serves the installed system. The profile index of
     // the option scenario sits beside it and carries the same snapshot,
     // so both machines can build from it.
-    run(repo_tool()
-        .args(["index", "--repo"])
-        .arg(&repo)
-        .args([
-            "--name",
-            "core",
-            "--channel",
-            "current",
-            "--allow-bootstrap",
-            "--key",
-        ])
-        .arg(key.with_extension("key"))
-        .arg("--recipes")
-        .arg(&recipes)
-        .arg(&published)
-        .arg(&laft_out)
-        .arg(&stubs)
-        .arg(&defaults))?;
-    run(repo_tool()
-        .args(["index", "--repo"])
-        .arg(&repo)
-        .args([
-            "--name",
-            "core",
-            "--channel",
-            "current",
-            "--allow-bootstrap",
-            "--key",
-        ])
-        .arg(key.with_extension("key"))
-        .arg("--recipes")
-        .arg(&recipes)
-        .arg("--profile")
-        .arg("loud")
-        .arg(&published)
-        .arg(&laft_out)
-        .arg(&stubs)
-        .arg(&loud))?;
+    let base = || {
+        let mut command = repo_tool();
+        command
+            .args(["index", "--repo"])
+            .arg(&repo)
+            .args([
+                "--name",
+                "core",
+                "--channel",
+                "current",
+                "--allow-bootstrap",
+                "--key",
+            ])
+            .arg(key.with_extension("key"))
+            .arg("--recipes")
+            .arg(&recipes)
+            .arg(&published)
+            .arg(&laft_out);
+        command
+    };
+    match fixture {
+        Some((stubs, defaults, loud)) => {
+            let mut plain = base();
+            plain.arg(&stubs).arg(&defaults);
+            run(&mut plain)?;
+            let mut profiled = base();
+            profiled.args(["--profile", "loud"]).arg(&stubs).arg(&loud);
+            run(&mut profiled)?;
+        }
+        None => {
+            let mut plain = base();
+            run(&mut plain)?;
+        }
+    }
     run(repo_tool().arg("publish").arg(&repo).arg(&www))?;
     let public = key.with_extension("pub");
     let text =
