@@ -155,7 +155,8 @@ fn guest_config() -> String {
         + "corekey=$(sed -n 's/^    key = \"\\(.*\\)\"$/\\1/p' /etc/laft/system.stav | head -1) && "
         + "localkey=$(laft repo key local) && "
         + "mkdir -p /srv/guest/etc/laft && "
-        + "printf '%s\\n' 'system {' '  hostname = \"guest\"' '  packages = [greeting]' \
+        + "printf '%s\\n' 'system {' '  hostname = \"guest\"' \
+           '  packages = [busybox:static, greeting]' \
            '  repo core {' '    url = \"file:///repo\"' \"    key = \\\"$corekey\\\"\" \
            '    profile = \"loud\"' '  }' '  repo local {' \
            '    url = \"http://127.0.0.1:7979\"' '    allow_http = true' \
