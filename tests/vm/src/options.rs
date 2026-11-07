@@ -131,7 +131,7 @@ fn serve_and_second_machine(machine: &mut Machine) -> Result<()> {
         &format!(
             "sed -i 's/^    key = \"[^\"]*\"$/    key = \"{WRONG_KEY}\"/' \
              /srv/guest/etc/laft/system.stav && \
-             laft --root /srv/guest repo reset local && \
+             laft --root /srv/guest repo reset --yes local && \
              laft --root /srv/guest repo sync local; echo wrong-status=$?"
         ),
     )?;
