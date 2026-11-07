@@ -14,8 +14,8 @@ use crate::{Root, fsx};
 /// Every command that writes under the root holds it, so transactions,
 /// recovery and garbage collection never overlap. It is an advisory lock on
 /// `laft/state/lock`, released when the `Lock` is dropped or the process
-/// exits, and the holder is recorded in `laft/state/lock.info` so that a
-/// waiting command can say who it waits for.
+/// exits, and the holder is recorded in `laft/state/lock.info`, when the
+/// root is writable, so that a waiting command can say who it waits for.
 ///
 /// ```no_run
 /// use laft_store::{Error, Root};
@@ -102,7 +102,11 @@ impl Root {
             started: Timestamp::now(),
         };
         let path = self.lock_info_path();
-        fsx::write_atomic(&path, &to_json(&path, &info)?, 0o644)?;
+        if let Err(e) = fsx::write_atomic(&path, &to_json(&path, &info)?, 0o644)
+            && !holder_record_optional(&e)
+        {
+            return Err(e);
+        }
         Ok(Lock {
             root: self.clone(),
             _file: file,
@@ -115,6 +119,16 @@ impl Root {
 
     fn lock_info_path(&self) -> PathBuf {
         self.state_dir().join("lock.info")
+    }
+}
+
+/// Whether a failed holder record leaves the lock valid: the record is a
+/// diagnostic for a waiting command, and a read-only root holds the lock
+/// without one, as the lock file itself is opened read-only.
+fn holder_record_optional(error: &Error) -> bool {
+    match error {
+        Error::Io { source, .. } => source.kind() == std::io::ErrorKind::ReadOnlyFilesystem,
+        _ => false,
     }
 }
 

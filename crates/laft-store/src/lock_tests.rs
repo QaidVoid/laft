@@ -1,7 +1,9 @@
+use std::io;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::Error;
+use crate::lock::holder_record_optional;
 use crate::test_support::Env;
 
 #[test]
@@ -36,4 +38,15 @@ fn lock_waits_until_the_holder_releases_it() {
             .recv_timeout(Duration::from_secs(10))
             .expect("the waiter gets the lock");
     });
+}
+
+#[test]
+fn a_read_only_root_records_no_holder_but_keeps_the_lock_valid() {
+    let read_only = |code: i32| Error::Io {
+        path: "/laft/state/lock.info".into(),
+        source: io::Error::from_raw_os_error(code),
+    };
+    assert!(holder_record_optional(&read_only(30)));
+    assert!(!holder_record_optional(&read_only(13)));
+    assert!(!holder_record_optional(&Error::Busy(None)));
 }
