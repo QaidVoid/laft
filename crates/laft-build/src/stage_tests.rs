@@ -1391,6 +1391,28 @@ fn a_store_step_builds_packages_whose_seed_dependencies_cycle() {
     );
 }
 
+/// Records that `package`'s latest build took `seconds`, as its record
+/// would after a build of that length.
+fn record_took_seconds(dir: &Path, package: &str, seconds: u64) {
+    let latest = dir.join("build/db/latest");
+    let entry = fs::read_dir(&latest)
+        .unwrap()
+        .find_map(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&format!("{package}+"))
+                .then(|| entry.path())
+        })
+        .expect("the package has a record");
+    let target = latest.join(fs::read_link(&entry).unwrap());
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&target).unwrap()).unwrap();
+    record["record"]["seconds"] = serde_json::json!(seconds);
+    fs::write(&target, serde_json::to_vec(&record).unwrap()).unwrap();
+}
+
 #[test]
 fn a_store_step_skips_the_packages_that_are_still_done_after_another_changes() {
     if no_shell() {
@@ -1435,6 +1457,13 @@ fn a_store_step_skips_the_packages_that_are_still_done_after_another_changes() {
         .unwrap()
         .replace("Lies beneath", "Lies above");
     fs::write(&base, text).unwrap();
+
+    // Under load a build can take a second where the one before took
+    // none, so the records of base and greet can carry different
+    // durations. The recorded durations must not order the run at one
+    // worker: the plan order holds, base is done first, greet stays up
+    // to date, and the failing top starts last.
+    record_took_seconds(dir.path(), "greet", 5);
 
     let (second, result) = states_and_result(dir.path(), &stage, &store_options(dir.path()), true);
     let error = result.unwrap_err();
@@ -1497,23 +1526,7 @@ fn a_slow_previous_build_keeps_the_serial_order_at_one_worker() {
     // Greet's previous build took a few seconds, so its weight is below
     // the scheduler's default duration for a build that never ran, as a
     // build can under load. The failing top must not start before it.
-    let latest = dir.path().join("build/db/latest");
-    let entry = fs::read_dir(&latest)
-        .unwrap()
-        .find_map(|entry| {
-            let entry = entry.unwrap();
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("greet+")
-                .then(|| entry.path())
-        })
-        .expect("greet has a record");
-    let target = latest.join(fs::read_link(&entry).unwrap());
-    let mut record: serde_json::Value =
-        serde_json::from_slice(&fs::read(&target).unwrap()).unwrap();
-    record["record"]["seconds"] = serde_json::json!(5);
-    fs::write(&target, serde_json::to_vec(&record).unwrap()).unwrap();
+    record_took_seconds(dir.path(), "greet", 5);
 
     let (second, result) = states_and_result(dir.path(), &stage, &store_options(dir.path()), true);
     let error = result.unwrap_err();
