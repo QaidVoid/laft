@@ -1391,6 +1391,89 @@ fn a_store_step_builds_packages_whose_seed_dependencies_cycle() {
     );
 }
 
+/// A store step whose forward dependency is served by a seed rebuilds the
+/// dependent once, when the package the step built replaces the seed, and
+/// a rerun after that rebuilds nothing.
+#[test]
+fn a_seed_served_forward_dependency_rebuilds_once_and_never_again() {
+    if no_shell() {
+        return;
+    }
+    let dir = laft_test::tempdir();
+    let stage = host_tools_stage(
+        dir.path(),
+        r#"    { name = "build", packages = [first, second] },"#,
+    );
+    // `first` links against `second`, which the step builds after it, so
+    // the seed stands in for `second` until the step reaches it. The seed
+    // provides a soname the built `second` does not, like a seed from an
+    // older build would, so the package the step builds gives `first` a
+    // new key.
+    fs::create_dir_all(stage.recipes.join("recipes/first")).unwrap();
+    fs::write(
+        stage.recipes.join("recipes/first/package.stav"),
+        RECIPE
+            .replace("greet", "first")
+            .replace("greeting", "first-file")
+            .replace(
+                "  build custom {}",
+                "  build custom {}\n  env = { LD_LIBRARY_PATH = \"/usr/lib\" }\n  link_deps = [second]",
+            ),
+    )
+    .unwrap();
+    fs::create_dir_all(stage.recipes.join("recipes/second")).unwrap();
+    fs::write(
+        stage.recipes.join("recipes/second/package.stav"),
+        RECIPE
+            .replace("greet", "second")
+            .replace("greeting", "second-file")
+            .replace(
+                "  build custom {}",
+                "  build custom {}\n  env = { LD_LIBRARY_PATH = \"/usr/lib\" }",
+            ),
+    )
+    .unwrap();
+    store_with_host_tools(dir.path());
+    let root = BuildRoot::new(dir.path().join("build"));
+    let (seeded, _) = crate::test_support::TestPkg {
+        provides: &["so:libsecond.so.9"],
+        ..crate::test_support::TestPkg::new("second")
+    }
+    .write(dir.path());
+    crate::seed::seed(&root, &seeded).unwrap();
+    let first = run_with(dir.path(), &stage, &store_options(dir.path()));
+    if refused(&first) {
+        return;
+    }
+    let first = first.expect("the step builds both packages");
+    assert!(
+        first.iter().all(|(_, s)| *s == StageState::Done),
+        "{first:?}"
+    );
+
+    // The migration rerun: `first` recorded its key over the seed, and
+    // the built `second` now stands in its place.
+    let (second, result) = states_and_result(dir.path(), &stage, &store_options(dir.path()), true);
+    result.expect("the rerun builds");
+    assert_eq!(
+        second,
+        [
+            ("build".to_owned(), StageState::Done),
+            ("build".to_owned(), StageState::UpToDate),
+        ],
+        "first rebuilds once over the package that replaced the seed",
+    );
+
+    // After that one rebuild the keys are stable: a rerun rebuilds
+    // nothing.
+    let third = run_with(dir.path(), &stage, &store_options(dir.path()))
+        .expect("the run after the migration succeeds");
+    assert!(
+        third.iter().all(|(_, s)| *s == StageState::UpToDate),
+        "{third:?}"
+    );
+}
+
 /// Records that `package`'s latest build took `seconds`, as its record
 /// would after a build of that length.
 fn record_took_seconds(dir: &Path, package: &str, seconds: u64) {
